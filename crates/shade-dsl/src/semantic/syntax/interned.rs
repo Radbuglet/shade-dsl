@@ -30,7 +30,7 @@ pub enum ValueKind<'gcx> {
     /// A function definition. For instance, in...
     ///
     /// ```text
-    /// const my_func = fn(comptime foo: Ty1, bar: Ty2) -> Ty3 { ... }
+    /// const my_func = fn<foo: Ty1>(bar: Ty2) -> Ty3 { ... }
     /// ```
     ///
     /// ...`my_func` would take on this value.
@@ -178,8 +178,8 @@ pub enum TyKind<'gcx> {
     Runtime(TyRuntime<'gcx>),
 
     /// A type which has not yet been resolved. The resolution of this type is potentially context
-    /// dependent since the `provided_comptimes` list may depend on locals defined by the current
-    /// instance being resolved.
+    /// dependent since the `generics` list may depend on generics defined by the current instance
+    /// being resolved.
     Unresolved(Instance<'gcx>),
 
     /// A type which still needs to be inferred,

@@ -35,7 +35,7 @@ pub struct ItemInner<'gcx> {
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct Instance<'gcx> {
     pub func: Func<'gcx>,
-    pub provided_comptimes: ValueList<'gcx>,
+    pub generics: ValueList<'gcx>,
 }
 
 #[derive(Copy, Clone)]
@@ -57,10 +57,16 @@ impl PartialEq for Func<'_> {
 
 #[derive(Clone)]
 pub struct FuncInner<'gcx> {
-    pub comptime_arguments: &'gcx [&'gcx FuncLocal<'gcx>],
-    pub runtime_arguments: &'gcx [&'gcx FuncLocal<'gcx>],
+    pub generics: &'gcx [&'gcx FuncGeneric<'gcx>],
+    pub arguments: &'gcx [&'gcx FuncLocal<'gcx>],
     pub ret_type: Ty<'gcx>,
     pub main: FuncBlock<'gcx>,
+}
+
+#[derive(Clone)]
+pub struct FuncGeneric<'gcx> {
+    pub name: Symbol,
+    pub ty: Ty<'gcx>,
 }
 
 #[derive(Clone)]
@@ -84,6 +90,7 @@ pub enum FuncStmt<'gcx> {
 #[derive(Clone)]
 pub enum FuncExpr<'gcx> {
     Local(&'gcx FuncLocal<'gcx>),
+    Generic(&'gcx FuncGeneric<'gcx>),
     Item(&'gcx ItemInner<'gcx>),
     Call(&'gcx FuncExpr<'gcx>, &'gcx [FuncExpr<'gcx>]),
     Const(Value<'gcx>),
