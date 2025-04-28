@@ -21,6 +21,12 @@ pub struct Instance<'gcx> {
     pub generics: ValueList<'gcx>,
 }
 
+impl Instance<'_> {
+    pub fn fully_specified(self) -> bool {
+        self.func.generics.len() == self.generics.len()
+    }
+}
+
 pub type Func<'gcx> = Def<'gcx, FuncInner<'gcx>>;
 
 pub struct FuncInner<'gcx> {

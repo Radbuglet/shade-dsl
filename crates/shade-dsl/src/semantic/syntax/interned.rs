@@ -75,7 +75,7 @@ pub enum ValueRuntime<'gcx> {
     /// ...`MY_FOO` would take on this value.
     ///
     /// The type of this value is [`Adt`](TyRuntime::Adt).
-    Adt(TyAdtDef<'gcx>, ValueAdt<'gcx>),
+    Adt(TyAdtSignatureInner<'gcx>, ValueAdt<'gcx>),
 }
 
 #[derive(Copy, Clone)]
@@ -156,7 +156,7 @@ pub enum ValueAdt<'gcx> {
 pub type Ty<'gcx> = Intern<'gcx, TyKind<'gcx>>;
 pub type TyList<'gcx> = InternList<'gcx, TyKind<'gcx>>;
 
-#[derive(Clone)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 pub enum TyKind<'gcx> {
     /// The type of [`MetaType`](ValueKind::MetaType) values.
     MetaType,
@@ -186,10 +186,10 @@ pub enum TyKind<'gcx> {
     Infer,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash, Eq, PartialEq)]
 pub enum TyRuntime<'gcx> {
     /// The type of [`Adt`](ValueRuntime::Adt) values.
-    Adt(TyAdtDef<'gcx>),
+    Adt(TyAdtSignature<'gcx>),
 
     /// The type of [`Tuple`](ValueRuntime::Tuple) values.
     Tuple(TyList<'gcx>),
@@ -217,8 +217,10 @@ pub enum TyScalar {
     ISize,
 }
 
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct TyAdtDef<'gcx> {
+pub type TyAdtSignature<'gcx> = Intern<'gcx, TyAdtSignatureInner<'gcx>>;
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+pub struct TyAdtSignatureInner<'gcx> {
     pub kind: TyAdtKind,
     pub field_names: InternList<'gcx, Symbol>,
     pub field_types: TyList<'gcx>,
