@@ -91,6 +91,14 @@ where
             }
         }
     }
+
+    pub fn intern_iter(
+        &self,
+        gcx: Gcx<'gcx>,
+        value: impl IntoIterator<Item = T>,
+    ) -> InternList<'gcx, T> {
+        self.intern(gcx, &value.into_iter().collect::<Vec<_>>())
+    }
 }
 
 #[derive_where(Copy, Clone)]

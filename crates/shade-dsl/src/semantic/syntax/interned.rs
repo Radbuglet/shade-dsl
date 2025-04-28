@@ -2,12 +2,12 @@ use std::hash;
 
 use crate::base::{Intern, InternList, Symbol};
 
-use super::{Instance, ItemList};
+use super::{BoundInstance, Instance, ItemList};
 
 // === Values === //
 
 pub type Value<'gcx> = Intern<'gcx, ValueKind<'gcx>>;
-pub type ValueList<'gcx> = InternList<'gcx, ValueKind<'gcx>>;
+pub type ValueList<'gcx> = InternList<'gcx, Value<'gcx>>;
 
 /// A fully resolved compile-time value. Sub-components of this value (e.g. in types and functions)
 /// may not be type-checked or even evaluated!
@@ -178,9 +178,8 @@ pub enum TyKind<'gcx> {
     Runtime(TyRuntime<'gcx>),
 
     /// A type which has not yet been resolved. The resolution of this type is potentially context
-    /// dependent since the `generics` list may depend on generics defined by the current instance
-    /// being resolved.
-    Unresolved(Instance<'gcx>),
+    /// dependent since [`BoundInstance`]s depend on the instance in which they're being resolved.
+    Unresolved(BoundInstance<'gcx>),
 
     /// A type which still needs to be inferred,
     Infer,

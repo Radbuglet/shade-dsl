@@ -1,4 +1,4 @@
-use crate::base::{Def, Intern, Symbol};
+use crate::base::{Def, Gcx, Intern, InternList, Symbol};
 
 use super::{Ty, Value, ValueList};
 
@@ -13,7 +13,7 @@ pub struct ItemInner<'gcx> {
     pub init: Instance<'gcx>,
 }
 
-// === Functions === //
+// === Instance === //
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct Instance<'gcx> {
@@ -21,11 +21,79 @@ pub struct Instance<'gcx> {
     pub generics: ValueList<'gcx>,
 }
 
-impl Instance<'_> {
+impl<'gcx> Instance<'gcx> {
     pub fn fully_specified(self) -> bool {
         self.func.generics.len() == self.generics.len()
     }
+
+    pub fn as_bound(self, gcx: Gcx<'gcx>) -> BoundInstance<'gcx> {
+        BoundInstance {
+            func: self.func,
+            generics: gcx
+                .bound_value_list_interner
+                .intern_iter(gcx, self.generics.iter().copied().map(BoundValue::Value)),
+        }
+    }
 }
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct BoundInstance<'gcx> {
+    pub func: Func<'gcx>,
+    pub generics: BoundValueList<'gcx>,
+}
+
+pub type BoundValueList<'gcx> = InternList<'gcx, BoundValue<'gcx>>;
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub enum BoundValue<'gcx> {
+    Value(Value<'gcx>),
+    Bound(FuncGeneric<'gcx>),
+}
+
+impl<'gcx> BoundInstance<'gcx> {
+    pub fn fully_specified(self) -> bool {
+        self.func.generics.len() == self.generics.len()
+    }
+
+    pub fn expect_unbound(self, gcx: Gcx<'gcx>) -> Instance<'gcx> {
+        Instance {
+            func: self.func,
+            generics: gcx.value_list_interner.intern_iter(
+                gcx,
+                self.generics.iter().map(|&value| match value {
+                    BoundValue::Value(value) => value,
+                    BoundValue::Bound(_) => panic!("unexpected bound value"),
+                }),
+            ),
+        }
+    }
+
+    pub fn resolve_in(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> BoundInstance<'gcx> {
+        assert!(context.fully_specified());
+
+        BoundInstance {
+            func: self.func,
+            generics: gcx.bound_value_list_interner.intern_iter(
+                gcx,
+                self.generics.iter().map(|&value| match value {
+                    value @ BoundValue::Value(_) => value,
+                    BoundValue::Bound(def) => {
+                        let parent_idx = context
+                            .func
+                            .generics
+                            .iter()
+                            .position(|&other| def == other)
+                            .expect("bound generic does not come from parent");
+
+                        context.generics[parent_idx]
+                    }
+                }),
+            ),
+        }
+    }
+}
+
+// === Functions === //
 
 pub type Func<'gcx> = Def<'gcx, FuncInner<'gcx>>;
 
