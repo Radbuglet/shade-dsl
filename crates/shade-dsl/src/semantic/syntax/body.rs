@@ -1,6 +1,6 @@
 use crate::base::{Id, Symbol};
 
-use super::{Ty, TyAdtItem};
+use super::{Ty, TyAdtItem, Value};
 
 #[derive(Debug, Clone)]
 pub struct FuncLocal<'gcx> {
@@ -11,7 +11,7 @@ pub struct FuncLocal<'gcx> {
 
 #[derive(Debug, Clone)]
 pub struct Func<'gcx> {
-    pub arguments: &'gcx [FuncLocal<'gcx>],
+    pub arguments: &'gcx [Id<'gcx, FuncLocal<'gcx>>],
     pub ret_type: Ty<'gcx>,
     pub main: FuncBlock<'gcx>,
 }
@@ -23,7 +23,7 @@ pub struct FuncBlock<'gcx> {
 
 #[derive(Debug, Clone)]
 pub enum FuncStmt<'gcx> {
-    Let(FuncLocal<'gcx>, Id<'gcx, FuncExpr<'gcx>>),
+    Let(Id<'gcx, FuncLocal<'gcx>>, Id<'gcx, FuncExpr<'gcx>>),
     Expr(Id<'gcx, FuncExpr<'gcx>>),
     Item(TyAdtItem<'gcx>),
 }
@@ -33,4 +33,5 @@ pub enum FuncExpr<'gcx> {
     Local(Id<'gcx, FuncLocal<'gcx>>),
     Item(Id<'gcx, TyAdtItem<'gcx>>),
     Call(Id<'gcx, FuncExpr<'gcx>>, &'gcx [FuncExpr<'gcx>]),
+    Const(Value<'gcx>),
 }
