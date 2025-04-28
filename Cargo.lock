@@ -670,6 +670,8 @@ version = "0.1.0"
 dependencies = [
  "bumpalo",
  "ctx2d-utils",
+ "derive-where",
+ "scopeguard",
 ]
 
 [[package]]

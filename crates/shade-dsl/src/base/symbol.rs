@@ -1,10 +1,7 @@
-use std::{
-    fmt,
-    num::NonZeroU32,
-    sync::{OnceLock, RwLock},
-};
+use std::{fmt, num::NonZeroU32, sync::RwLock};
 
 use bumpalo::Bump;
+use ctx2d_utils::hash::{FxHashMap, fx_hash_one, hash_map};
 
 // === Symbol === //
 
@@ -13,23 +10,23 @@ pub struct Symbol(NonZeroU32);
 
 impl fmt::Debug for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}#{}", self.as_str(), self.0)
+        self.as_str(|s| write!(f, "{:?}#{}", s, self.0))
     }
 }
 
 impl fmt::Display for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        self.as_str(|s| f.write_str(s))
     }
 }
 
 impl Symbol {
     pub fn new(value: &str) -> Self {
-        SymbolInterner::global().intern(value)
+        GcxOwned::fetch_tls(|gcx| gcx.symbols.intern(value))
     }
 
-    pub fn as_str(self) -> &'static str {
-        SymbolInterner::global().lookup(self)
+    pub fn as_str<R>(self, f: impl FnOnce(&str) -> R) -> R {
+        GcxOwned::fetch_tls(|gcx| f(gcx.symbols.lookup(self)))
     }
 }
 
@@ -57,12 +54,6 @@ impl fmt::Debug for SymbolInterner {
 impl SymbolInterner {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn global() -> &'static SymbolInterner {
-        static INTERNER: OnceLock<SymbolInterner> = OnceLock::new();
-
-        INTERNER.get_or_init(Self::new)
     }
 
     pub fn intern(&self, value: &str) -> Symbol {
@@ -176,5 +167,6 @@ macro_rules! symbol {
     }};
 }
 
-use ctx2d_utils::hash::{FxHashMap, fx_hash_one, hash_map};
 pub use symbol;
+
+use super::GcxOwned;
