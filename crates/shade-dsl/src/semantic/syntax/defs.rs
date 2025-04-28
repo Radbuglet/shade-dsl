@@ -1,6 +1,4 @@
-use std::{hash, ptr};
-
-use crate::base::{Intern, Symbol};
+use crate::base::{Def, Intern, Symbol};
 
 use super::{Ty, Value, ValueList};
 
@@ -8,22 +6,7 @@ use super::{Ty, Value, ValueList};
 
 pub type ItemList<'gcx> = Intern<'gcx, Item<'gcx>>;
 
-#[derive(Copy, Clone)]
-pub struct Item<'gcx>(&'gcx ItemInner<'gcx>);
-
-impl hash::Hash for Item<'_> {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        (self.0 as *const ItemInner<'_>).hash(state);
-    }
-}
-
-impl Eq for Item<'_> {}
-
-impl PartialEq for Item<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        ptr::addr_eq(self.0, other.0)
-    }
-}
+pub type Item<'gcx> = Def<'gcx, ItemInner<'gcx>>;
 
 pub struct ItemInner<'gcx> {
     pub name: Symbol,
@@ -38,60 +21,45 @@ pub struct Instance<'gcx> {
     pub generics: ValueList<'gcx>,
 }
 
-#[derive(Copy, Clone)]
-pub struct Func<'gcx>(&'gcx FuncInner<'gcx>);
+pub type Func<'gcx> = Def<'gcx, FuncInner<'gcx>>;
 
-impl hash::Hash for Func<'_> {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        (self.0 as *const FuncInner<'_>).hash(state);
-    }
-}
-
-impl Eq for Func<'_> {}
-
-impl PartialEq for Func<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        ptr::addr_eq(self.0, other.0)
-    }
-}
-
-#[derive(Clone)]
 pub struct FuncInner<'gcx> {
-    pub generics: &'gcx [&'gcx FuncGeneric<'gcx>],
-    pub arguments: &'gcx [&'gcx FuncLocal<'gcx>],
+    pub generics: &'gcx [FuncGeneric<'gcx>],
+    pub arguments: &'gcx [FuncLocal<'gcx>],
     pub ret_type: Ty<'gcx>,
     pub main: FuncBlock<'gcx>,
 }
 
-#[derive(Clone)]
-pub struct FuncGeneric<'gcx> {
+pub type FuncGeneric<'gcx> = Def<'gcx, FuncGenericInner<'gcx>>;
+
+pub struct FuncGenericInner<'gcx> {
     pub name: Symbol,
     pub ty: Ty<'gcx>,
 }
 
-#[derive(Clone)]
-pub struct FuncLocal<'gcx> {
+pub type FuncLocal<'gcx> = Def<'gcx, FuncLocalInner<'gcx>>;
+
+pub struct FuncLocalInner<'gcx> {
     pub name: Symbol,
     pub ty: Ty<'gcx>,
 }
 
-#[derive(Clone)]
 pub struct FuncBlock<'gcx> {
     _ty: [&'gcx (); 0],
 }
 
-#[derive(Clone)]
 pub enum FuncStmt<'gcx> {
-    Let(&'gcx FuncLocal<'gcx>, &'gcx FuncExpr<'gcx>),
-    Expr(&'gcx FuncExpr<'gcx>),
+    Let(FuncLocal<'gcx>, FuncExpr<'gcx>),
+    Expr(FuncExpr<'gcx>),
     Item(Item<'gcx>),
 }
 
-#[derive(Clone)]
-pub enum FuncExpr<'gcx> {
-    Local(&'gcx FuncLocal<'gcx>),
-    Generic(&'gcx FuncGeneric<'gcx>),
-    Item(&'gcx ItemInner<'gcx>),
-    Call(&'gcx FuncExpr<'gcx>, &'gcx [FuncExpr<'gcx>]),
+pub type FuncExpr<'gcx> = Def<'gcx, FuncExprInner<'gcx>>;
+
+pub enum FuncExprInner<'gcx> {
+    Local(FuncLocal<'gcx>),
+    Generic(FuncGeneric<'gcx>),
+    Item(Item<'gcx>),
+    Call(FuncExpr<'gcx>, &'gcx [FuncExpr<'gcx>]),
     Const(Value<'gcx>),
 }
