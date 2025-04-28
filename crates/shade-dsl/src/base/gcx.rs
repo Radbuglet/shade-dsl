@@ -1,13 +1,13 @@
 use std::{cell::Cell, ptr::NonNull};
 
-use super::{Arena, SymbolInterner};
+use super::SymbolInterner;
 
 pub type Gcx<'gcx> = &'gcx GcxOwned<'gcx>;
 
 #[derive(Debug, Default)]
 pub struct GcxOwned<'gcx> {
     _ty: [&'gcx (); 0],
-    pub arena: Arena,
+    pub arena: bumpalo::Bump,
     pub symbols: SymbolInterner,
 }
 
@@ -33,5 +33,9 @@ impl<'gcx> GcxOwned<'gcx> {
                 .cast::<GcxOwned<'_>>()
                 .as_ref()
         })
+    }
+
+    pub fn alloc<T>(&'gcx self, val: T) -> &'gcx T {
+        self.arena.alloc(val)
     }
 }

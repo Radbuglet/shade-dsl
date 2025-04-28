@@ -1,6 +1,3 @@
-mod arena;
-pub use arena::*;
-
 mod gcx;
 pub use gcx::*;
 

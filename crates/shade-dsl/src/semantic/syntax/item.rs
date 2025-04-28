@@ -1,6 +1,6 @@
 use crate::base::Symbol;
 
-use super::Func;
+use super::{Func, FuncBlock};
 
 // === Values === //
 
@@ -52,7 +52,7 @@ pub enum ValueKind<'gcx> {
     /// ...`FOO` would take on this value.
     ///
     /// The type of this value is [`Primitive`](TyKind::Primitive).
-    Primitive(),
+    Primitive(ValuePrimitive),
 }
 
 #[derive(Copy, Clone)]
@@ -61,6 +61,9 @@ pub enum ValueAdt<'gcx> {
     Variant(u32, Value<'gcx>),
     Composite(&'gcx [Value<'gcx>]),
 }
+
+#[derive(Copy, Clone)]
+pub enum ValuePrimitive {}
 
 // === Types === //
 
@@ -78,7 +81,15 @@ pub enum TyKind<'gcx> {
     AdtDef(&'gcx TyAdtDef<'gcx>),
 
     /// The type of [`Primitive`](ValueKind::Primitive) values.
-    Primitive(),
+    Primitive(TyPrimitive),
+
+    /// A type which has not yet been resolved. The resolution context for this type depends on
+    /// where the type is defined. As such, users should be careful when dealing with types that
+    /// contained unresolved sub-parts.
+    Unresolved(&'gcx FuncBlock<'gcx>),
+
+    /// A type which still needs to be inferred,
+    Infer,
 }
 
 pub struct TyAdtDef<'gcx> {
@@ -99,7 +110,6 @@ pub enum TyAdtKind {
 #[derive(Copy, Clone)]
 pub struct TyAdtItem<'gcx> {
     pub name: Symbol,
-    pub ty: Ty<'gcx>,
     pub value: Value<'gcx>,
 }
 
@@ -107,3 +117,5 @@ pub struct TyAdtField<'gcx> {
     pub name: Symbol,
     pub ty: Ty<'gcx>,
 }
+
+pub enum TyPrimitive {}
