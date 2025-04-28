@@ -1,4 +1,4 @@
-use crate::base::Symbol;
+use crate::base::{Id, Symbol};
 
 use super::{Func, FuncBlock, FuncExpr};
 
@@ -6,10 +6,10 @@ use super::{Func, FuncBlock, FuncExpr};
 
 /// A fully resolved compile-time value. Values may contain `MetaType`s whose definitions are not
 /// fully resolved, however.
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Value<'gcx>(pub &'gcx ValueKind<'gcx>);
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum ValueKind<'gcx> {
     /// A value representing a type. For instance, in...
     ///
@@ -58,20 +58,20 @@ pub enum ValueKind<'gcx> {
     Primitive(ValuePrimitive<'gcx>),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum ValueAdt<'gcx> {
     Uninhabited,
     Variant(u32, Value<'gcx>),
     Composite(&'gcx [Value<'gcx>]),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum ValuePrimitive<'gcx> {
     Tuple(&'gcx [Value<'gcx>]),
     Scalar(ValueScalar),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum ValueScalar {
     Bool(bool),
     U8(u8),
@@ -92,10 +92,10 @@ pub enum ValueScalar {
 
 // === Types === //
 
-#[derive(Copy, Clone)]
-pub struct Ty<'gcx>(pub &'gcx TyKind<'gcx>);
+#[derive(Debug, Copy, Clone)]
+pub struct Ty<'gcx>(pub Id<'gcx, TyKind<'gcx>>);
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum TyKind<'gcx> {
     /// The type of [`MetaType`](ValueKind::MetaType) values.
     MetaType,
@@ -104,7 +104,7 @@ pub enum TyKind<'gcx> {
     MetaFunc,
 
     /// The type of [`Adt`](ValueKind::Adt) values.
-    AdtDef(&'gcx TyAdtDef<'gcx>),
+    AdtDef(Id<'gcx, TyAdtDef<'gcx>>),
 
     /// The type of [`Primitive`](ValueKind::Primitive) values.
     Primitive(TyPrimitive<'gcx>),
@@ -112,13 +112,13 @@ pub enum TyKind<'gcx> {
     /// A type which has not yet been resolved. The resolution context for this type depends on
     /// where the type is defined. As such, users should be careful when dealing with types that
     /// contained unresolved sub-parts.
-    Unresolved(&'gcx FuncBlock<'gcx>),
+    Unresolved(Id<'gcx, FuncBlock<'gcx>>),
 
     /// A type which still needs to be inferred,
     Infer,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TyAdtDef<'gcx> {
     pub kind: TyAdtKind,
     pub fields: &'gcx [TyAdtField<'gcx>],
@@ -126,7 +126,7 @@ pub struct TyAdtDef<'gcx> {
     pub statics: &'gcx [TyAdtItem<'gcx>],
 }
 
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum TyAdtKind {
     Module,
     Struct,
@@ -134,25 +134,25 @@ pub enum TyAdtKind {
     UntaggedUnion,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct TyAdtItem<'gcx> {
     pub name: Symbol,
-    pub init: &'gcx FuncExpr<'gcx>,
+    pub init: Id<'gcx, FuncExpr<'gcx>>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct TyAdtField<'gcx> {
     pub name: Symbol,
     pub ty: Ty<'gcx>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum TyPrimitive<'gcx> {
     Tuple(&'gcx [Ty<'gcx>]),
     Scalar(TyScalar),
 }
 
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum TyScalar {
     Bool,
     U8,
