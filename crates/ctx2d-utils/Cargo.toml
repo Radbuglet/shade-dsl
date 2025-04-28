@@ -1,0 +1,9 @@
+[package]
+name = "ctx2d-utils"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+derive-where = "1.3.0"
+hashbrown = "0.15.2"
+rustc-hash = "2.1.1"
