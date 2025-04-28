@@ -1,0 +1,281 @@
+use std::{hash, ops::Deref, ptr};
+
+use crate::base::Symbol;
+
+use super::{Instance, Item};
+
+// === Values === //
+
+/// A fully resolved compile-time value. Sub-components of this value (e.g. in types and functions)
+/// may not be type-checked or even evaluated!
+///
+/// Unlike [`ValueKind`], [`Value`] is interned.
+#[derive(Copy, Clone)]
+pub struct Value<'gcx>(&'gcx ValueKind<'gcx>);
+
+impl<'gcx> Deref for Value<'gcx> {
+    type Target = &'gcx ValueKind<'gcx>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl hash::Hash for Value<'_> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        (self.0 as *const ValueKind<'_>).hash(state);
+    }
+}
+
+impl Eq for Value<'_> {}
+
+impl PartialEq for Value<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        ptr::addr_eq(self.0, other.0)
+    }
+}
+
+/// The un-interned inner portion of a [`Value`].
+#[derive(Clone, Hash, Eq, PartialEq)]
+pub enum ValueKind<'gcx> {
+    /// A value representing a type. For instance, in...
+    ///
+    /// ```text
+    /// const Foo = struct {};
+    /// ```
+    ///
+    /// ...`Foo` would take on this value.
+    ///
+    /// Sub-items of this definition may not be fully resolved or type-checked.
+    ///
+    /// The type of this value is [`MetaType`](TyKind::MetaType). The type `0` would be of type
+    /// [`TyRuntime::Adt`].
+    MetaType(Ty<'gcx>),
+
+    /// A function definition. For instance, in...
+    ///
+    /// ```text
+    /// const my_func = fn(comptime foo: Ty1, bar: Ty2) -> Ty3 { ... }
+    /// ```
+    ///
+    /// ...`my_func` would take on this value.
+    ///
+    /// This function may not be type-checked.
+    ///
+    /// The type of this value is [`MetaFunc`](TyKind::MetaFunc).
+    MetaFunc(Instance<'gcx>),
+
+    /// An instantiation of a runtime value. For instance, in...
+    ///
+    /// ```text
+    /// const MY_CONST = 1;
+    /// ```
+    ///
+    /// ...`MY_CONST` would take on this value.
+    ///
+    /// The type of this value is [`Runtime`](TyKind::Runtime).
+    Runtime(ValueRuntime<'gcx>),
+}
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+pub enum ValueRuntime<'gcx> {
+    /// A scalar type (e.g. bool, integer, floating point number).
+    ///
+    /// The type of this value is [`Scalar`](TyRuntime::Scalar).
+    Scalar(ValueScalar),
+
+    /// An anonymous tuple of values.
+    ///
+    /// The type of this value is [`Tuple`](TyRuntime::Tuple).
+    Tuple(&'gcx [Value<'gcx>]),
+
+    /// An instantiation of an abstract data type. For example, in...
+    ///
+    /// ```text
+    /// const Foo = struct { a: u32, b: i32 };
+    ///
+    /// const MY_FOO = Foo { a: 1, b: 2 };
+    /// ```
+    ///
+    /// ...`MY_FOO` would take on this value.
+    ///
+    /// The type of this value is [`Adt`](TyRuntime::Adt).
+    Adt(TyAdtDef<'gcx>, ValueAdt<'gcx>),
+}
+
+#[derive(Copy, Clone)]
+pub enum ValueScalar {
+    Bool(bool),
+    U8(u8),
+    I8(i8),
+    U16(u16),
+    I16(i16),
+    U32(u32),
+    I32(i32),
+    U64(u64),
+    I64(i64),
+    U128(u128),
+    I128(i128),
+    F32(f32),
+    F64(f64),
+    USize(usize),
+    ISize(isize),
+}
+
+impl hash::Hash for ValueScalar {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        match self {
+            ValueScalar::Bool(v) => v.hash(state),
+            ValueScalar::U8(v) => v.hash(state),
+            ValueScalar::I8(v) => v.hash(state),
+            ValueScalar::U16(v) => v.hash(state),
+            ValueScalar::I16(v) => v.hash(state),
+            ValueScalar::U32(v) => v.hash(state),
+            ValueScalar::I32(v) => v.hash(state),
+            ValueScalar::U64(v) => v.hash(state),
+            ValueScalar::I64(v) => v.hash(state),
+            ValueScalar::U128(v) => v.hash(state),
+            ValueScalar::I128(v) => v.hash(state),
+            ValueScalar::F32(v) => v.to_bits().hash(state),
+            ValueScalar::F64(v) => v.to_bits().hash(state),
+            ValueScalar::USize(v) => v.hash(state),
+            ValueScalar::ISize(v) => v.hash(state),
+        }
+    }
+}
+
+impl Eq for ValueScalar {}
+
+impl PartialEq for ValueScalar {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Bool(lhs), Self::Bool(rhs)) => lhs == rhs,
+            (Self::U8(lhs), Self::U8(rhs)) => lhs == rhs,
+            (Self::I8(lhs), Self::I8(rhs)) => lhs == rhs,
+            (Self::U16(lhs), Self::U16(rhs)) => lhs == rhs,
+            (Self::I16(lhs), Self::I16(rhs)) => lhs == rhs,
+            (Self::U32(lhs), Self::U32(rhs)) => lhs == rhs,
+            (Self::I32(lhs), Self::I32(rhs)) => lhs == rhs,
+            (Self::U64(lhs), Self::U64(rhs)) => lhs == rhs,
+            (Self::I64(lhs), Self::I64(rhs)) => lhs == rhs,
+            (Self::U128(lhs), Self::U128(rhs)) => lhs == rhs,
+            (Self::I128(lhs), Self::I128(rhs)) => lhs == rhs,
+            (Self::F32(lhs), Self::F32(rhs)) => lhs == rhs,
+            (Self::F64(lhs), Self::F64(rhs)) => lhs == rhs,
+            (Self::USize(lhs), Self::USize(rhs)) => lhs == rhs,
+            (Self::ISize(lhs), Self::ISize(rhs)) => lhs == rhs,
+            _ => false,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub enum ValueAdt<'gcx> {
+    Uninhabited,
+    Variant(u32, Value<'gcx>),
+    Composite(&'gcx [Value<'gcx>]),
+}
+
+// === Types === //
+
+#[derive(Copy, Clone)]
+pub struct Ty<'gcx>(&'gcx TyKind<'gcx>);
+
+impl<'gcx> Deref for Ty<'gcx> {
+    type Target = &'gcx TyKind<'gcx>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl hash::Hash for Ty<'_> {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        (self.0 as *const TyKind<'_>).hash(state);
+    }
+}
+
+impl Eq for Ty<'_> {}
+
+impl PartialEq for Ty<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        ptr::addr_eq(self.0, other.0)
+    }
+}
+
+#[derive(Clone)]
+pub enum TyKind<'gcx> {
+    /// The type of [`MetaType`](ValueKind::MetaType) values.
+    MetaType,
+
+    /// The type of [`MetaFunc`](ValueKind::MetaFunc) values.
+    MetaFunc,
+
+    /// The type of [`Runtime`](ValueKind::Runtime) values.
+    ///
+    /// The types referenced in this enum (whether directly as in `Tuple` or indirectly through the
+    /// field list of an `Adt` instantiation) will not contain [`Infer`] or [`Unresolved`] types
+    /// since it would be impossible to construct a partially type-checked value.
+    ///
+    /// Sub-items of definitions used by this type may not be fully resolved or type-checked,
+    /// however.
+    ///
+    /// [`Infer`]: TyKind::Infer
+    /// [`Unresolved`]: TyKind::Unresolved
+    Runtime(TyRuntime<'gcx>),
+
+    /// A type which has not yet been resolved. The resolution of this type is context independent
+    /// since all necessary arguments to the expression are provided by the `comptime_upvars` list.
+    Unresolved(Instance<'gcx>),
+
+    /// A type which still needs to be inferred,
+    Infer,
+}
+
+#[derive(Clone)]
+pub enum TyRuntime<'gcx> {
+    /// The type of [`Adt`](ValueRuntime::Adt) values.
+    Adt(TyAdtDef<'gcx>),
+
+    /// The type of [`Tuple`](ValueRuntime::Tuple) values.
+    Tuple(&'gcx [Ty<'gcx>]),
+
+    /// The type of [`Scalar`](ValueRuntime::Scalar) values.
+    Scalar(TyScalar),
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub enum TyScalar {
+    Bool,
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    U64,
+    I64,
+    U128,
+    I128,
+    F32,
+    F64,
+    USize,
+    ISize,
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct TyAdtDef<'gcx> {
+    pub kind: TyAdtKind,
+    pub field_names: &'gcx [Symbol],
+    pub field_types: &'gcx [Ty<'gcx>],
+    pub methods: &'gcx [Item<'gcx>],
+    pub statics: &'gcx [Item<'gcx>],
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub enum TyAdtKind {
+    Module,
+    Struct,
+    TaggedUnion,
+    UntaggedUnion,
+}

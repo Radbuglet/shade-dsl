@@ -1,5 +1,5 @@
-mod body;
-pub use body::*;
+mod defs;
+pub use defs::*;
 
-mod item;
-pub use item::*;
+mod interned;
+pub use interned::*;
