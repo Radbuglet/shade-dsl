@@ -2,7 +2,9 @@ use ctx2d_utils::hash::FxHashMap;
 
 use crate::{
     base::{Dp, Gcx},
-    semantic::syntax::{FuncExpr, Instance, Ty, TyKind, Value, ValueKind},
+    semantic::syntax::{
+        FuncExpr, FuncLocal, Instance, Ty, UnresolvedTy, UnresolvedTyKind, Value, ValueKind,
+    },
 };
 
 pub struct Analyzer<'gcx> {
@@ -13,19 +15,21 @@ pub struct Analyzer<'gcx> {
 
 #[derive(Default)]
 pub struct TypeckResults<'gcx> {
-    types: FxHashMap<FuncExpr<'gcx>, Ty<'gcx>>,
+    locals: FxHashMap<FuncLocal<'gcx>, Ty<'gcx>>,
+    exprs: FxHashMap<FuncExpr<'gcx>, Ty<'gcx>>,
 }
 
 impl<'gcx> Analyzer<'gcx> {
-    pub fn resolve_type(&mut self, instance: Instance<'gcx>, ty: Ty<'gcx>) -> Ty<'gcx> {
-        let TyKind::Unresolved(unresolved) = **ty else {
-            return ty;
+    pub fn resolve_type(&mut self, instance: Instance<'gcx>, ty: UnresolvedTy<'gcx>) -> Ty<'gcx> {
+        let sub_instance = match **ty {
+            UnresolvedTyKind::Resolved(ty) => return ty,
+            UnresolvedTyKind::Unresolved(sub_instance) => sub_instance,
         };
 
         assert!(instance.fully_specified());
-        assert!(unresolved.fully_specified());
+        assert!(sub_instance.fully_specified());
 
-        let resolved = unresolved
+        let resolved = sub_instance
             .resolve_in(self.gcx, instance.as_bound(self.gcx))
             .expect_unbound(self.gcx);
 
@@ -40,7 +44,15 @@ impl<'gcx> Analyzer<'gcx> {
         self.checked_instances.clone().compute(instance, |_| {
             assert!(instance.fully_specified());
 
-            // Check the signature.
+            // Resolve the signature's types.
+            let mut results = TypeckResults::default();
+
+            for &arg in instance.func.arguments {
+                results
+                    .locals
+                    .insert(arg, self.resolve_type(instance, arg.ty));
+            }
+
             todo!()
         })
     }

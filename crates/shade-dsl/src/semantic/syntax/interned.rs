@@ -165,24 +165,19 @@ pub enum TyKind<'gcx> {
     MetaFunc,
 
     /// The type of [`Runtime`](ValueKind::Runtime) values.
-    ///
-    /// The types referenced in this enum (whether directly as in `Tuple` or indirectly through the
-    /// field list of an `Adt` instantiation) will not contain [`Infer`] or [`Unresolved`] types
-    /// since it would be impossible to construct a partially type-checked value.
-    ///
-    /// Sub-items of definitions used by this type may not be fully resolved or type-checked,
-    /// however.
-    ///
-    /// [`Infer`]: TyKind::Infer
-    /// [`Unresolved`]: TyKind::Unresolved
     Runtime(TyRuntime<'gcx>),
-
-    /// A type which has not yet been resolved. The resolution of this type is potentially context
-    /// dependent since [`BoundInstance`]s depend on the instance in which they're being resolved.
-    Unresolved(BoundInstance<'gcx>),
 
     /// A type which still needs to be inferred,
     Infer,
+}
+
+pub type UnresolvedTy<'gcx> = Intern<'gcx, UnresolvedTyKind<'gcx>>;
+pub type UnresolvedTyList<'gcx> = InternList<'gcx, UnresolvedTyKind<'gcx>>;
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub enum UnresolvedTyKind<'gcx> {
+    Resolved(Ty<'gcx>),
+    Unresolved(BoundInstance<'gcx>),
 }
 
 #[derive(Clone, Hash, Eq, PartialEq)]
@@ -222,7 +217,7 @@ pub type TyAdtSignature<'gcx> = Intern<'gcx, TyAdtSignatureInner<'gcx>>;
 pub struct TyAdtSignatureInner<'gcx> {
     pub kind: TyAdtKind,
     pub field_names: InternList<'gcx, Symbol>,
-    pub field_types: TyList<'gcx>,
+    pub field_types: UnresolvedTyList<'gcx>,
     pub methods: ItemList<'gcx>,
     pub statics: ItemList<'gcx>,
 }
