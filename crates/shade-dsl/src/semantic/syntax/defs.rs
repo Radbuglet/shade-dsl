@@ -2,7 +2,7 @@ use std::{hash, ptr};
 
 use crate::base::{Intern, Symbol};
 
-use super::{Ty, Value};
+use super::{Ty, Value, ValueList};
 
 // === Adts === //
 
@@ -35,7 +35,7 @@ pub struct ItemInner<'gcx> {
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct Instance<'gcx> {
     pub func: Func<'gcx>,
-    pub comptime_upvars: &'gcx [Value<'gcx>],
+    pub provided_comptimes: ValueList<'gcx>,
 }
 
 #[derive(Copy, Clone)]
@@ -57,14 +57,14 @@ impl PartialEq for Func<'_> {
 
 #[derive(Clone)]
 pub struct FuncInner<'gcx> {
-    pub arguments: &'gcx [&'gcx FuncLocal<'gcx>],
+    pub comptime_arguments: &'gcx [&'gcx FuncLocal<'gcx>],
+    pub runtime_arguments: &'gcx [&'gcx FuncLocal<'gcx>],
     pub ret_type: Ty<'gcx>,
     pub main: FuncBlock<'gcx>,
 }
 
 #[derive(Clone)]
 pub struct FuncLocal<'gcx> {
-    pub is_comptime: bool,
     pub name: Symbol,
     pub ty: Ty<'gcx>,
 }

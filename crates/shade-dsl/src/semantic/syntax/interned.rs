@@ -177,8 +177,9 @@ pub enum TyKind<'gcx> {
     /// [`Unresolved`]: TyKind::Unresolved
     Runtime(TyRuntime<'gcx>),
 
-    /// A type which has not yet been resolved. The resolution of this type is context independent
-    /// since all necessary arguments to the expression are provided by the `comptime_upvars` list.
+    /// A type which has not yet been resolved. The resolution of this type is potentially context
+    /// dependent since the `provided_comptimes` list may depend on locals defined by the current
+    /// instance being resolved.
     Unresolved(Instance<'gcx>),
 
     /// A type which still needs to be inferred,
