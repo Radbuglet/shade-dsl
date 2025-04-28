@@ -19,9 +19,10 @@ pub enum ValueKind<'gcx> {
     ///
     /// ...`Foo` would take on this value.
     ///
-    /// Sub-items of this definition may not be fully resolved.
+    /// Sub-items of this definition may not be fully resolved or type-checked.
     ///
-    /// The type of this value is [`MetaType`](TyKind::MetaType).
+    /// The type of this value is [`MetaType`](TyKind::MetaType). The type `0` would be of type
+    /// [`TyRuntime::Adt`].
     MetaType(Ty<'gcx>),
 
     /// A function definition. For instance, in...
@@ -71,7 +72,7 @@ pub enum ValueRuntime<'gcx> {
     ///
     /// ...`MY_FOO` would take on this value.
     ///
-    /// The type of this value is [`AdtDef`](TyRuntime::AdtDef).
+    /// The type of this value is [`Adt`](TyRuntime::Adt).
     Adt(&'gcx TyAdtDef<'gcx>, ValueAdt<'gcx>),
 }
 
@@ -116,8 +117,15 @@ pub enum TyKind<'gcx> {
 
     /// The type of [`Runtime`](ValueKind::Runtime) values.
     ///
-    /// The types contained in this enum will not contain [`Infer`] or [`Unresolved`] types since it
-    /// would be impossible to construct a partially type-checked value.
+    /// The types referenced in this enum (whether directly as in `Tuple` or indirectly through the
+    /// field list of an `Adt` instantiation) will not contain [`Infer`] or [`Unresolved`] types
+    /// since it would be impossible to construct a partially type-checked value.
+    ///
+    /// Sub-items of definitions used by this type may not be fully resolved or type-checked,
+    /// however.
+    ///
+    /// [`Infer`]: TyKind::Infer
+    /// [`Unresolved`]: TyKind::Unresolved
     Runtime(TyRuntime<'gcx>),
 
     /// A type which has not yet been resolved. The resolution context for this type depends on
@@ -160,7 +168,7 @@ pub struct TyAdtField<'gcx> {
 #[derive(Debug, Clone)]
 pub enum TyRuntime<'gcx> {
     /// The type of [`Adt`](ValueRuntime::Adt) values.
-    AdtDef(Id<'gcx, TyAdtDef<'gcx>>),
+    Adt(Id<'gcx, TyAdtDef<'gcx>>),
 
     /// The type of [`Tuple`](ValueRuntime::Tuple) values.
     Tuple(&'gcx [Ty<'gcx>]),
