@@ -75,7 +75,7 @@ pub enum ValueRuntime<'gcx> {
     /// ...`MY_FOO` would take on this value.
     ///
     /// The type of this value is [`Adt`](TyRuntime::Adt).
-    Adt(TyAdtSignatureInner<'gcx>, ValueAdt<'gcx>),
+    Adt(TyAdtSignature<'gcx>, ValueAdt<'gcx>),
 }
 
 #[derive(Copy, Clone)]
@@ -167,17 +167,28 @@ pub enum TyKind<'gcx> {
     /// The type of [`Runtime`](ValueKind::Runtime) values.
     Runtime(TyRuntime<'gcx>),
 
-    /// A type which still needs to be inferred,
+    /// A type which has yet to be evaluated. In general, we try to evaluate types as late as
+    /// possible to allow cyclic type definitions to work.
+    Unevaluated(Instance<'gcx>),
+
+    /// A yet-to-be-inferred type which has not yet been given an inference variable.
     Infer,
+
+    /// An inference variable used during [`Analyzer::type_check`].
+    ///
+    /// [`Analyzer::type_check`]: crate::semantic::analyzer::Analyzer::type_check
+    InferVar(InferId),
 }
 
-pub type UnresolvedTy<'gcx> = Intern<'gcx, UnresolvedTyKind<'gcx>>;
-pub type UnresolvedTyList<'gcx> = InternList<'gcx, UnresolvedTyKind<'gcx>>;
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct InferId(pub u32);
+
+pub type BoundTyList<'gcx> = InternList<'gcx, BoundTy<'gcx>>;
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub enum UnresolvedTyKind<'gcx> {
-    Resolved(Ty<'gcx>),
-    Unresolved(BoundInstance<'gcx>),
+pub enum BoundTy<'gcx> {
+    Unbound(Ty<'gcx>),
+    Bound(BoundInstance<'gcx>),
 }
 
 #[derive(Clone, Hash, Eq, PartialEq)]
@@ -217,7 +228,7 @@ pub type TyAdtSignature<'gcx> = Intern<'gcx, TyAdtSignatureInner<'gcx>>;
 pub struct TyAdtSignatureInner<'gcx> {
     pub kind: TyAdtKind,
     pub field_names: InternList<'gcx, Symbol>,
-    pub field_types: UnresolvedTyList<'gcx>,
+    pub field_types: TyList<'gcx>,
     pub methods: ItemList<'gcx>,
     pub statics: ItemList<'gcx>,
 }

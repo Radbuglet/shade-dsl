@@ -1,6 +1,6 @@
 use std::{cell::Cell, ptr::NonNull};
 
-use crate::semantic::syntax::{BoundValue, Item, Ty, Value, ValueKind};
+use crate::semantic::syntax::{BoundValue, Item, Ty, TyKind, Value, ValueKind};
 
 use super::{Interner, ListInterner, Symbol, SymbolInterner};
 
@@ -11,7 +11,7 @@ pub struct GcxOwned<'gcx> {
     pub arena: bumpalo::Bump,
     pub symbols: SymbolInterner,
 
-    pub type_interner: Interner<'gcx, Ty<'gcx>>,
+    pub type_interner: Interner<'gcx, TyKind<'gcx>>,
     pub type_list_interner: ListInterner<'gcx, Ty<'gcx>>,
     pub value_interner: Interner<'gcx, ValueKind<'gcx>>,
     pub value_list_interner: ListInterner<'gcx, Value<'gcx>>,

@@ -1,10 +1,10 @@
-use crate::base::{Def, Intern, InternList, Symbol};
+use crate::base::{Def, InternList, Symbol};
 
-use super::{UnresolvedTy, Value, ValueList};
+use super::{BoundTy, Value, ValueList};
 
 // === Adts === //
 
-pub type ItemList<'gcx> = Intern<'gcx, Item<'gcx>>;
+pub type ItemList<'gcx> = InternList<'gcx, Item<'gcx>>;
 
 pub type Item<'gcx> = Def<'gcx, ItemInner<'gcx>>;
 
@@ -42,7 +42,7 @@ pub type Func<'gcx> = Def<'gcx, FuncInner<'gcx>>;
 pub struct FuncInner<'gcx> {
     pub generics: &'gcx [FuncGeneric<'gcx>],
     pub arguments: &'gcx [FuncLocal<'gcx>],
-    pub ret_type: UnresolvedTy<'gcx>,
+    pub ret_type: BoundTy<'gcx>,
     pub main: FuncBlock<'gcx>,
 }
 
@@ -50,14 +50,14 @@ pub type FuncGeneric<'gcx> = Def<'gcx, FuncGenericInner<'gcx>>;
 
 pub struct FuncGenericInner<'gcx> {
     pub name: Symbol,
-    pub ty: UnresolvedTy<'gcx>,
+    pub ty: BoundTy<'gcx>,
 }
 
 pub type FuncLocal<'gcx> = Def<'gcx, FuncLocalInner<'gcx>>;
 
 pub struct FuncLocalInner<'gcx> {
     pub name: Symbol,
-    pub ty: UnresolvedTy<'gcx>,
+    pub ty: BoundTy<'gcx>,
 }
 
 pub struct FuncBlock<'gcx> {
