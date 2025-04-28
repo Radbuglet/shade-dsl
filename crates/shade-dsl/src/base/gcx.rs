@@ -16,13 +16,13 @@ thread_local! {
 }
 
 impl<'gcx> GcxOwned<'gcx> {
-    pub fn provide_tls<R>(&self, f: impl FnOnce() -> R) -> R {
+    pub fn provide_tls<R>(&self, f: impl FnOnce(Gcx<'_>) -> R) -> R {
         let _guard = scopeguard::guard(CURR_GCX.take(), |old| {
             CURR_GCX.set(old);
         });
 
         CURR_GCX.set(Some(NonNull::from(self).cast()));
-        f()
+        f(self)
     }
 
     pub fn fetch_tls<R>(f: impl FnOnce(Gcx<'_>) -> R) -> R {
@@ -37,5 +37,9 @@ impl<'gcx> GcxOwned<'gcx> {
 
     pub fn alloc<T>(&'gcx self, val: T) -> &'gcx T {
         self.arena.alloc(val)
+    }
+
+    pub fn alloc_slice<T: Clone>(&'gcx self, val: &[T]) -> &'gcx [T] {
+        self.arena.alloc_slice_clone(val)
     }
 }

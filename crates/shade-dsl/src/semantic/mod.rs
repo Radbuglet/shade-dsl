@@ -1,2 +1,1 @@
-mod syntax;
-pub use syntax::*;
+pub mod syntax;
