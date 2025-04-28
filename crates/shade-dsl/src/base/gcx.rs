@@ -1,14 +1,22 @@
 use std::{cell::Cell, ptr::NonNull};
 
-use super::SymbolInterner;
+use crate::semantic::syntax::{Item, Ty, Value};
+
+use super::{Interner, ListInterner, Symbol, SymbolInterner};
 
 pub type Gcx<'gcx> = &'gcx GcxOwned<'gcx>;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct GcxOwned<'gcx> {
-    _ty: [&'gcx (); 0],
     pub arena: bumpalo::Bump,
     pub symbols: SymbolInterner,
+
+    pub type_interner: Interner<'gcx, Ty<'gcx>>,
+    pub type_list_interner: ListInterner<'gcx, Ty<'gcx>>,
+    pub value_interner: Interner<'gcx, Value<'gcx>>,
+    pub value_list_interner: ListInterner<'gcx, Value<'gcx>>,
+    pub symbol_list_interner: ListInterner<'gcx, Symbol>,
+    pub item_list_interner: ListInterner<'gcx, Item<'gcx>>,
 }
 
 thread_local! {
@@ -16,7 +24,7 @@ thread_local! {
 }
 
 impl<'gcx> GcxOwned<'gcx> {
-    pub fn provide_tls<R>(&self, f: impl FnOnce(Gcx<'_>) -> R) -> R {
+    pub fn provide_tls<R>(&'gcx self, f: impl FnOnce(Gcx<'_>) -> R) -> R {
         let _guard = scopeguard::guard(CURR_GCX.take(), |old| {
             CURR_GCX.set(old);
         });

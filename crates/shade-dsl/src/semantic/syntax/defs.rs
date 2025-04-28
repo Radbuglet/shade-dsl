@@ -1,10 +1,12 @@
 use std::{hash, ptr};
 
-use crate::base::Symbol;
+use crate::base::{Intern, Symbol};
 
 use super::{Ty, Value};
 
 // === Adts === //
+
+pub type ItemList<'gcx> = Intern<'gcx, Item<'gcx>>;
 
 #[derive(Copy, Clone)]
 pub struct Item<'gcx>(&'gcx ItemInner<'gcx>);
@@ -25,7 +27,7 @@ impl PartialEq for Item<'_> {
 
 pub struct ItemInner<'gcx> {
     pub name: Symbol,
-    pub init: &'gcx FuncExpr<'gcx>,
+    pub init: Instance<'gcx>,
 }
 
 // === Functions === //

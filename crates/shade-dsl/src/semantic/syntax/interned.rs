@@ -1,41 +1,16 @@
-use std::{hash, ops::Deref, ptr};
+use std::hash;
 
-use crate::base::Symbol;
+use crate::base::{Intern, InternList, Symbol};
 
-use super::{Instance, Item};
+use super::{Instance, ItemList};
 
 // === Values === //
 
+pub type Value<'gcx> = Intern<'gcx, ValueKind<'gcx>>;
+pub type ValueList<'gcx> = InternList<'gcx, ValueKind<'gcx>>;
+
 /// A fully resolved compile-time value. Sub-components of this value (e.g. in types and functions)
 /// may not be type-checked or even evaluated!
-///
-/// Unlike [`ValueKind`], [`Value`] is interned.
-#[derive(Copy, Clone)]
-pub struct Value<'gcx>(&'gcx ValueKind<'gcx>);
-
-impl<'gcx> Deref for Value<'gcx> {
-    type Target = &'gcx ValueKind<'gcx>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl hash::Hash for Value<'_> {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        (self.0 as *const ValueKind<'_>).hash(state);
-    }
-}
-
-impl Eq for Value<'_> {}
-
-impl PartialEq for Value<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        ptr::addr_eq(self.0, other.0)
-    }
-}
-
-/// The un-interned inner portion of a [`Value`].
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub enum ValueKind<'gcx> {
     /// A value representing a type. For instance, in...
@@ -87,7 +62,7 @@ pub enum ValueRuntime<'gcx> {
     /// An anonymous tuple of values.
     ///
     /// The type of this value is [`Tuple`](TyRuntime::Tuple).
-    Tuple(&'gcx [Value<'gcx>]),
+    Tuple(ValueList<'gcx>),
 
     /// An instantiation of an abstract data type. For example, in...
     ///
@@ -173,35 +148,13 @@ impl PartialEq for ValueScalar {
 pub enum ValueAdt<'gcx> {
     Uninhabited,
     Variant(u32, Value<'gcx>),
-    Composite(&'gcx [Value<'gcx>]),
+    Composite(ValueList<'gcx>),
 }
 
 // === Types === //
 
-#[derive(Copy, Clone)]
-pub struct Ty<'gcx>(&'gcx TyKind<'gcx>);
-
-impl<'gcx> Deref for Ty<'gcx> {
-    type Target = &'gcx TyKind<'gcx>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl hash::Hash for Ty<'_> {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        (self.0 as *const TyKind<'_>).hash(state);
-    }
-}
-
-impl Eq for Ty<'_> {}
-
-impl PartialEq for Ty<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        ptr::addr_eq(self.0, other.0)
-    }
-}
+pub type Ty<'gcx> = Intern<'gcx, TyKind<'gcx>>;
+pub type TyList<'gcx> = InternList<'gcx, TyKind<'gcx>>;
 
 #[derive(Clone)]
 pub enum TyKind<'gcx> {
@@ -238,7 +191,7 @@ pub enum TyRuntime<'gcx> {
     Adt(TyAdtDef<'gcx>),
 
     /// The type of [`Tuple`](ValueRuntime::Tuple) values.
-    Tuple(&'gcx [Ty<'gcx>]),
+    Tuple(TyList<'gcx>),
 
     /// The type of [`Scalar`](ValueRuntime::Scalar) values.
     Scalar(TyScalar),
@@ -266,10 +219,10 @@ pub enum TyScalar {
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct TyAdtDef<'gcx> {
     pub kind: TyAdtKind,
-    pub field_names: &'gcx [Symbol],
-    pub field_types: &'gcx [Ty<'gcx>],
-    pub methods: &'gcx [Item<'gcx>],
-    pub statics: &'gcx [Item<'gcx>],
+    pub field_names: InternList<'gcx, Symbol>,
+    pub field_types: TyList<'gcx>,
+    pub methods: ItemList<'gcx>,
+    pub statics: ItemList<'gcx>,
 }
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
