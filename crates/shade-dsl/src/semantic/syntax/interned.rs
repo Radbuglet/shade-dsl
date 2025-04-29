@@ -23,8 +23,8 @@ pub enum ValueKind<'gcx> {
     ///
     /// Sub-items of this definition may not be fully resolved or type-checked.
     ///
-    /// The type of this value is [`MetaType`](TyKind::MetaType). The type `0` would be of type
-    /// [`TyRuntime::Adt`].
+    /// The type of this value is [`MetaType`](TyKind::MetaType). In the example above, the type `0`
+    /// would represent a new [`TyRuntime::Adt`] for the struct.
     MetaType(Ty<'gcx>),
 
     /// A function definition with uninstantiated generic parameters. For instance, in...
@@ -38,7 +38,7 @@ pub enum ValueKind<'gcx> {
     /// This function may not be type-checked.
     ///
     /// The type of this value is [`MetaFunc`](TyKind::MetaFunc).
-    MetaFunc(Func<'gcx>),
+    MetaFunc(Instance<'gcx>),
 
     /// An instantiation of a runtime value. For instance, in...
     ///
@@ -172,7 +172,7 @@ pub enum BoundTy<'gcx> {
 }
 
 pub type Ty<'gcx> = Intern<'gcx, TyKind<'gcx>>;
-pub type TyList<'gcx> = InternList<'gcx, TyKind<'gcx>>;
+pub type TyList<'gcx> = InternList<'gcx, Ty<'gcx>>;
 
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub enum TyKind<'gcx> {

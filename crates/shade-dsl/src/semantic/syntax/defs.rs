@@ -63,7 +63,7 @@ pub struct FuncLocalInner<'gcx> {
 pub type FuncExpr<'gcx> = Def<'gcx, FuncExprInner<'gcx>>;
 
 pub struct FuncExprInner<'gcx> {
-    pub ty: BoundTy<'gcx>,
+    pub ty: Ty<'gcx>,
     pub kind: FuncExprKind<'gcx>,
 }
 
@@ -83,21 +83,26 @@ pub enum FuncExprKind<'gcx> {
     /// Ascribes a specific type to an expression. Useful for inference.
     Ascribe(FuncExpr<'gcx>, Ty<'gcx>),
 
+    /// Extends the argument list of a [`MetaFunc`] to contain yet another generic argument.
+    ///
+    /// [`MetaFunc`]: super::TyKind::MetaFunc
+    ProvideGeneric(FuncExpr<'gcx>, FuncExpr<'gcx>),
+
     /// Instantiates a [`MetaFunc`], transforming it into a [`Func`].
     ///
     /// [`Func`]: super::TyRuntime::Func
     /// [`MetaFunc`]: super::TyKind::MetaFunc
-    Instantiate(FuncExpr<'gcx>, &'gcx [FuncExpr<'gcx>]),
+    Instantiate(FuncExpr<'gcx>),
 
     /// Produces a [`MetaFunc`] from the specified [`Func`] literal
     ///
     /// [`MetaFunc`]: super::TyKind::MetaFunc
     FuncLiteral(Func<'gcx>),
 
-    /// Produces an empty [`MetaType`].
+    /// Produces a [`MetaType`] from the specified type.
     ///
     /// [`MetaType`]: super::TyKind::MetaType
-    NewType,
+    TypeOf(BoundTy<'gcx>),
 
     /// Extends an existing [`MetaType`] with a new field and returns the resulting type.
     ///
