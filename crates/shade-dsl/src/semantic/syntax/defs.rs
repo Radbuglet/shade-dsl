@@ -1,48 +1,13 @@
-use crate::base::{Def, InternList, Symbol};
+use crate::base::{Def, Symbol};
 
-use super::{BoundTy, Ty, Value, ValueList};
-
-// === Adts === //
-
-pub type ItemList<'gcx> = InternList<'gcx, Item<'gcx>>;
-
-pub type Item<'gcx> = Def<'gcx, ItemInner<'gcx>>;
-
-pub struct ItemInner<'gcx> {
-    pub name: Symbol,
-    pub init: Instance<'gcx>,
-}
-
-// === Instance === //
-
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct Instance<'gcx> {
-    pub func: Func<'gcx>,
-    pub generics: ValueList<'gcx>,
-}
-
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct BoundInstance<'gcx> {
-    pub func: Func<'gcx>,
-    pub generics: BoundValueList<'gcx>,
-}
-
-pub type BoundValueList<'gcx> = InternList<'gcx, BoundValue<'gcx>>;
-
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub enum BoundValue<'gcx> {
-    Value(Value<'gcx>),
-    Bound(FuncGeneric<'gcx>),
-}
-
-// === Functions === //
+use super::{BoundInstance, Ty};
 
 pub type Func<'gcx> = Def<'gcx, FuncInner<'gcx>>;
 
 pub struct FuncInner<'gcx> {
     pub generics: &'gcx [FuncGeneric<'gcx>],
     pub arguments: &'gcx [FuncLocal<'gcx>],
-    pub ret_type: BoundTy<'gcx>,
+    pub ret_type: Ty<'gcx>,
     pub main: FuncExpr<'gcx>,
 }
 
@@ -50,14 +15,14 @@ pub type FuncGeneric<'gcx> = Def<'gcx, FuncGenericInner<'gcx>>;
 
 pub struct FuncGenericInner<'gcx> {
     pub name: Symbol,
-    pub ty: BoundTy<'gcx>,
+    pub ty: Ty<'gcx>,
 }
 
 pub type FuncLocal<'gcx> = Def<'gcx, FuncLocalInner<'gcx>>;
 
 pub struct FuncLocalInner<'gcx> {
     pub name: Symbol,
-    pub ty: BoundTy<'gcx>,
+    pub ty: Ty<'gcx>,
 }
 
 pub type FuncExpr<'gcx> = Def<'gcx, FuncExprInner<'gcx>>;
@@ -73,7 +38,7 @@ pub enum FuncExprKind<'gcx> {
 
     /// Invokes the receiver with the specified arguments. The receiver must have type [`Func`].
     ///
-    /// [`Func`]: super::TyRuntime::Func
+    /// [`Func`]: super::TyKind::Func
     Call(FuncExpr<'gcx>, &'gcx [FuncExpr<'gcx>]),
 
     /// Evaluates the specified constant. The supplied instance must be `fully_specified` and the
@@ -90,7 +55,7 @@ pub enum FuncExprKind<'gcx> {
 
     /// Instantiates a [`MetaFunc`], transforming it into a [`Func`].
     ///
-    /// [`Func`]: super::TyRuntime::Func
+    /// [`Func`]: super::TyKind::Func
     /// [`MetaFunc`]: super::TyKind::MetaFunc
     Instantiate(FuncExpr<'gcx>),
 
@@ -102,7 +67,7 @@ pub enum FuncExprKind<'gcx> {
     /// Produces a [`MetaType`] from the specified type.
     ///
     /// [`MetaType`]: super::TyKind::MetaType
-    TypeOf(BoundTy<'gcx>),
+    TypeOf(Ty<'gcx>),
 
     /// Extends an existing [`MetaType`] with a new field and returns the resulting type.
     ///
@@ -117,7 +82,7 @@ pub enum FuncExprKind<'gcx> {
     ///
     /// `method_producer` is [`Func`] which takes in no arguments and returns a [`MetaFunc`].
     ///
-    /// [`Func`]: super::TyRuntime::Func
+    /// [`Func`]: super::TyKind::Func
     /// [`MetaFunc`]: super::TyKind::MetaFunc
     /// [`MetaType`]: super::TyKind::MetaType
     TypeWithMethod {
@@ -130,7 +95,7 @@ pub enum FuncExprKind<'gcx> {
     ///
     /// `method_producer` is [`Func`] which takes in no arguments and returns an arbitrary value.
     ///
-    /// [`Func`]: super::TyRuntime::Func
+    /// [`Func`]: super::TyKind::Func
     /// [`MetaFunc`]: super::TyKind::MetaFunc
     /// [`MetaType`]: super::TyKind::MetaType
     TypeWithStatic {

@@ -2,7 +2,7 @@ use std::hash;
 
 use crate::base::{Intern, InternList, Symbol};
 
-use super::{BoundInstance, Func, Instance, ItemList};
+use super::{Func, FuncGeneric};
 
 // === Values === //
 
@@ -24,7 +24,7 @@ pub enum ValueKind<'gcx> {
     /// Sub-items of this definition may not be fully resolved or type-checked.
     ///
     /// The type of this value is [`MetaType`](TyKind::MetaType). In the example above, the type `0`
-    /// would represent a new [`TyRuntime::Adt`] for the struct.
+    /// would represent a new [`TyKind::Adt`] for the struct.
     MetaType(Ty<'gcx>),
 
     /// A function definition with uninstantiated generic parameters. For instance, in...
@@ -40,35 +40,21 @@ pub enum ValueKind<'gcx> {
     /// The type of this value is [`MetaFunc`](TyKind::MetaFunc).
     MetaFunc(Instance<'gcx>),
 
-    /// An instantiation of a runtime value. For instance, in...
-    ///
-    /// ```text
-    /// const MY_CONST = 1;
-    /// ```
-    ///
-    /// ...`MY_CONST` would take on this value.
-    ///
-    /// The type of this value is [`Runtime`](TyKind::Runtime).
-    Runtime(ValueRuntime<'gcx>),
-}
-
-#[derive(Clone, Hash, Eq, PartialEq)]
-pub enum ValueRuntime<'gcx> {
     /// A reified function with all generic parameters resolved.
     ///
     /// This function may not be type-checked.
     ///
-    /// The type of this value is [`Func`](TyRuntime::Func).
+    /// The type of this value is [`Func`](TyKind::Func).
     Func(Instance<'gcx>),
 
     /// A scalar type (e.g. bool, integer, floating point number).
     ///
-    /// The type of this value is [`Scalar`](TyRuntime::Scalar).
+    /// The type of this value is [`Scalar`](TyKind::Scalar).
     Scalar(ValueScalar),
 
     /// An anonymous tuple of values.
     ///
-    /// The type of this value is [`Tuple`](TyRuntime::Tuple).
+    /// The type of this value is [`Tuple`](TyKind::Tuple).
     Tuple(ValueList<'gcx>),
 
     /// An instantiation of an abstract data type. For example, in...
@@ -81,7 +67,7 @@ pub enum ValueRuntime<'gcx> {
     ///
     /// ...`MY_FOO` would take on this value.
     ///
-    /// The type of this value is [`Adt`](TyRuntime::Adt).
+    /// The type of this value is [`Adt`](TyKind::Adt).
     Adt(TyAdtSignature<'gcx>, ValueAdt<'gcx>),
 }
 
@@ -163,14 +149,6 @@ pub enum ValueAdt<'gcx> {
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct InferVar(pub u64);
 
-pub type BoundTyList<'gcx> = InternList<'gcx, BoundTy<'gcx>>;
-
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub enum BoundTy<'gcx> {
-    Unbound(Ty<'gcx>),
-    Bound(BoundInstance<'gcx>),
-}
-
 pub type Ty<'gcx> = Intern<'gcx, TyKind<'gcx>>;
 pub type TyList<'gcx> = InternList<'gcx, Ty<'gcx>>;
 
@@ -182,36 +160,35 @@ pub enum TyKind<'gcx> {
     /// The type of [`MetaFunc`](ValueKind::MetaFunc) values.
     MetaFunc,
 
-    /// The type of [`Runtime`](ValueKind::Runtime) values.
-    Runtime(TyRuntime<'gcx>),
-
-    /// A type which has yet to be evaluated. To evaluate this type, the target `fully_specified`
-    /// instance is evaluated with no arguments in order to produce the [`MetaType`] used to
+    /// A type returned by a zero-argument function. To evaluate this type, the fully-specified
+    /// target instance is evaluated with no arguments in order to produce the [`MetaType`] used to
     /// concretize this type.
     ///
     /// In general, we try to evaluate types as late as possible to allow cyclic type definitions to
     /// work.
     ///
     /// [`MetaType`]: ValueKind::MetaType
-    Unevaluated(Instance<'gcx>),
+    Const(BoundInstance<'gcx>),
+
+    /// A type defined by a generic with type [`MetaType`].
+    ///
+    /// [`MetaType`]: TyKind::MetaType
+    Generic(FuncGeneric<'gcx>),
 
     /// A yet-to-be-inferred type which has not yet been given an inference variable. Each inference
     /// variable is unique throughout the entire compilation session but lexically defined.
     Infer(InferVar),
-}
 
-#[derive(Clone, Hash, Eq, PartialEq)]
-pub enum TyRuntime<'gcx> {
     /// A reified function with all generic parameters instantiated.
     Func(TyList<'gcx>, Ty<'gcx>),
 
-    /// The type of [`Adt`](ValueRuntime::Adt) values.
+    /// The type of [`Adt`](ValueKind::Adt) values.
     Adt(TyAdtSignature<'gcx>),
 
-    /// The type of [`Tuple`](ValueRuntime::Tuple) values.
+    /// The type of [`Tuple`](ValueKind::Tuple) values.
     Tuple(TyList<'gcx>),
 
-    /// The type of [`Scalar`](ValueRuntime::Scalar) values.
+    /// The type of [`Scalar`](ValueKind::Scalar) values.
     Scalar(TyScalar),
 }
 
@@ -234,6 +211,30 @@ pub enum TyScalar {
     ISize,
 }
 
+// === Instance === //
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct Instance<'gcx> {
+    pub func: Func<'gcx>,
+    pub generics: ValueList<'gcx>,
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct BoundInstance<'gcx> {
+    pub func: Func<'gcx>,
+    pub generics: BoundValueList<'gcx>,
+}
+
+pub type BoundValueList<'gcx> = InternList<'gcx, BoundValue<'gcx>>;
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub enum BoundValue<'gcx> {
+    Value(Value<'gcx>),
+    Bound(FuncGeneric<'gcx>),
+}
+
+// === ADTs === //
+
 pub type TyAdtSignature<'gcx> = Intern<'gcx, TyAdtSignatureInner<'gcx>>;
 
 #[derive(Clone, Hash, Eq, PartialEq)]
@@ -241,8 +242,8 @@ pub struct TyAdtSignatureInner<'gcx> {
     pub kind: TyAdtKind,
     pub field_names: InternList<'gcx, Symbol>,
     pub field_types: TyList<'gcx>,
-    pub methods: ItemList<'gcx>,
-    pub statics: ItemList<'gcx>,
+    pub methods: TyAdtMemberList<'gcx>,
+    pub statics: TyAdtMemberList<'gcx>,
 }
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
@@ -251,4 +252,12 @@ pub enum TyAdtKind {
     Struct,
     TaggedUnion,
     UntaggedUnion,
+}
+
+pub type TyAdtMemberList<'gcx> = InternList<'gcx, TyAdtMember<'gcx>>;
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct TyAdtMember<'gcx> {
+    pub name: Symbol,
+    pub init: Instance<'gcx>,
 }

@@ -1,46 +1,7 @@
 use crate::{
     base::Gcx,
-    semantic::syntax::{BoundInstance, BoundTy, BoundValue, Instance, Ty, TyKind},
+    semantic::syntax::{BoundInstance, BoundValue, Instance},
 };
-
-impl<'gcx> Ty<'gcx> {
-    pub fn as_bound(self) -> BoundTy<'gcx> {
-        BoundTy::Unbound(self)
-    }
-}
-
-impl<'gcx> BoundTy<'gcx> {
-    pub fn as_unbound(self) -> Option<Ty<'gcx>> {
-        match self {
-            BoundTy::Unbound(ty) => Some(ty),
-            BoundTy::Bound(_) => None,
-        }
-    }
-
-    pub fn expect_unbound(self) -> Ty<'gcx> {
-        self.as_unbound().expect("expected type to be unbound")
-    }
-
-    pub fn resolve(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> BoundTy<'gcx> {
-        match self {
-            v @ BoundTy::Unbound(_) => v,
-            BoundTy::Bound(ty) => {
-                let ty = ty.resolve(gcx, context);
-
-                match ty.as_unbound(gcx) {
-                    Some(ty) => {
-                        BoundTy::Unbound(gcx.type_interner.intern(gcx, TyKind::Unevaluated(ty)))
-                    }
-                    None => BoundTy::Bound(ty),
-                }
-            }
-        }
-    }
-
-    pub fn resolve_unbound(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> Ty<'gcx> {
-        self.resolve(gcx, context).expect_unbound()
-    }
-}
 
 impl<'gcx> Instance<'gcx> {
     pub fn fully_specified(self) -> bool {
