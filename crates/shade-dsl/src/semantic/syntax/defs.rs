@@ -85,12 +85,52 @@ pub enum FuncExprKind<'gcx> {
 
     /// Instantiates a [`MetaFunc`], transforming it into a [`Func`].
     ///
-    /// [`MetaFunc`]: super::TyKind::MetaFunc
     /// [`Func`]: super::TyRuntime::Func
+    /// [`MetaFunc`]: super::TyKind::MetaFunc
     Instantiate(FuncExpr<'gcx>, &'gcx [FuncExpr<'gcx>]),
 
     /// Produces a [`MetaFunc`] from the specified [`Func`] literal
     ///
     /// [`MetaFunc`]: super::TyKind::MetaFunc
     FuncLiteral(Func<'gcx>),
+
+    /// Produces an empty [`MetaType`].
+    ///
+    /// [`MetaType`]: super::TyKind::MetaType
+    NewType,
+
+    /// Extends an existing [`MetaType`] with a new field and returns the resulting type.
+    ///
+    /// [`MetaType`]: super::TyKind::MetaType
+    TypeWithField {
+        target: FuncExpr<'gcx>,
+        name: FuncExpr<'gcx>,
+        ty: FuncExpr<'gcx>,
+    },
+
+    /// Extends an existing [`MetaType`] with a new method and returns the resulting type.
+    ///
+    /// `method_producer` is [`Func`] which takes in no arguments and returns a [`MetaFunc`].
+    ///
+    /// [`Func`]: super::TyRuntime::Func
+    /// [`MetaFunc`]: super::TyKind::MetaFunc
+    /// [`MetaType`]: super::TyKind::MetaType
+    TypeWithMethod {
+        target: FuncExpr<'gcx>,
+        name: FuncExpr<'gcx>,
+        producer: FuncExpr<'gcx>,
+    },
+
+    /// Extends an existing [`MetaType`] with a new static and returns the resulting type.
+    ///
+    /// `method_producer` is [`Func`] which takes in no arguments and returns an arbitrary value.
+    ///
+    /// [`Func`]: super::TyRuntime::Func
+    /// [`MetaFunc`]: super::TyKind::MetaFunc
+    /// [`MetaType`]: super::TyKind::MetaType
+    TypeWithStatic {
+        target: FuncExpr<'gcx>,
+        name: FuncExpr<'gcx>,
+        producer: FuncExpr<'gcx>,
+    },
 }
