@@ -152,9 +152,6 @@ pub enum ValueAdt<'gcx> {
 
 // === Types === //
 
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct InferVar(pub u64);
-
 pub type Ty<'gcx> = Intern<'gcx, TyKind<'gcx>>;
 pub type TyList<'gcx> = InternList<'gcx, Ty<'gcx>>;
 
@@ -180,10 +177,6 @@ pub enum TyKind<'gcx> {
     ///
     /// [`MetaType`]: TyKind::MetaType
     Generic(FuncGeneric<'gcx>),
-
-    /// A yet-to-be-inferred type which has not yet been given an inference variable. Each inference
-    /// variable is unique throughout the entire compilation session but lexically defined.
-    Infer(InferVar),
 
     /// A reified function with all generic parameters instantiated.
     Func(TyList<'gcx>, Ty<'gcx>),

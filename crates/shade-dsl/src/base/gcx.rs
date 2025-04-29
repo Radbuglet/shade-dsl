@@ -6,7 +6,6 @@ use super::{Interner, ListInterner, Symbol, SymbolInterner};
 
 pub type Gcx<'gcx> = &'gcx GcxOwned<'gcx>;
 
-#[derive(Default)]
 pub struct GcxOwned<'gcx> {
     pub arena: bumpalo::Bump,
     pub symbols: SymbolInterner,
@@ -18,6 +17,15 @@ pub struct GcxOwned<'gcx> {
     pub bound_value_list_interner: ListInterner<'gcx, BoundValue<'gcx>>,
     pub symbol_list_interner: ListInterner<'gcx, Symbol>,
     pub member_list_interner: ListInterner<'gcx, TyAdtMember<'gcx>>,
+
+    pub interned: PreInterned<'gcx>,
+}
+
+pub struct PreInterned<'gcx> {
+    pub unit: Ty<'gcx>,
+    pub meta_fn: Ty<'gcx>,
+    pub meta_ty: Ty<'gcx>,
+    pub meta_producer_fn: Ty<'gcx>,
 }
 
 thread_local! {

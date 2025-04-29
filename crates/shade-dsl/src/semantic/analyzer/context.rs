@@ -2,9 +2,11 @@ use crate::{
     base::{Dp, Gcx},
     semantic::{
         analyzer::{Typeck, TypeckResults},
-        syntax::{Instance, Value},
+        syntax::{Instance, Ty, TyKind, Value, ValueKind},
     },
 };
+
+use super::rebind_type;
 
 pub struct Analyzer<'gcx> {
     gcx: Gcx<'gcx>,
@@ -17,6 +19,45 @@ impl<'gcx> Analyzer<'gcx> {
         self.gcx
     }
 
+    pub fn evaluate_type(&mut self, context: Instance<'gcx>, ty: Ty<'gcx>) -> Ty<'gcx> {
+        assert!(context.fully_specified());
+
+        let gcx = self.gcx;
+        let ty = rebind_type(self.gcx, context.as_bound(gcx), ty);
+
+        match **ty {
+            TyKind::MetaType | TyKind::MetaFunc | TyKind::Scalar(_) | TyKind::Adt(_) => ty,
+            TyKind::Const(instance) => {
+                let instance = instance.expect_unbound(self.gcx);
+
+                let value = self.evaluate_const(instance);
+                let ValueKind::MetaType(ty) = value.kind else {
+                    unreachable!();
+                };
+
+                ty
+            }
+            TyKind::Func(args, retval) => {
+                let args = gcx.type_list_interner.intern_iter(
+                    gcx,
+                    args.iter().map(|&arg| self.evaluate_type(context, arg)),
+                );
+
+                let retval = self.evaluate_type(context, retval);
+
+                gcx.type_interner.intern(gcx, TyKind::Func(args, retval))
+            }
+            TyKind::Tuple(elems) => gcx.type_interner.intern(
+                gcx,
+                TyKind::Tuple(gcx.type_list_interner.intern_iter(
+                    gcx,
+                    elems.iter().map(|&elem| self.evaluate_type(context, elem)),
+                )),
+            ),
+            TyKind::Generic(_) => unreachable!(),
+        }
+    }
+
     pub fn type_check(&mut self, instance: Instance<'gcx>) -> &'gcx TypeckResults<'gcx> {
         self.checked_instances.clone().compute(instance, |_| {
             let mut tcx = Typeck::new(self.gcx, instance);
@@ -26,7 +67,7 @@ impl<'gcx> Analyzer<'gcx> {
         })
     }
 
-    pub fn evaluate(&mut self, instance: Instance<'gcx>) -> Value<'gcx> {
+    pub fn evaluate_const(&mut self, instance: Instance<'gcx>) -> Value<'gcx> {
         self.resolved_instances.clone().compute(instance, |_| {
             assert!(instance.fully_specified());
 

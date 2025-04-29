@@ -3,7 +3,7 @@ use crate::{
     semantic::syntax::{BoundInstance, BoundValue, FuncGeneric, Instance, Ty, TyKind, ValueKind},
 };
 
-pub fn resolve_generic<'gcx>(
+pub fn rebind_generic<'gcx>(
     context: BoundInstance<'gcx>,
     para: FuncGeneric<'gcx>,
 ) -> BoundValue<'gcx> {
@@ -30,15 +30,15 @@ pub fn resolve_generic<'gcx>(
     value
 }
 
-pub fn resolve_type<'gcx>(gcx: Gcx<'gcx>, context: BoundInstance<'gcx>, ty: Ty<'gcx>) -> Ty<'gcx> {
+pub fn rebind_type<'gcx>(gcx: Gcx<'gcx>, context: BoundInstance<'gcx>, ty: Ty<'gcx>) -> Ty<'gcx> {
     match **ty {
         TyKind::Const(instance) => gcx
             .type_interner
-            .intern(gcx, TyKind::Const(instance.resolve(gcx, context))),
+            .intern(gcx, TyKind::Const(instance.rebind(gcx, context))),
         TyKind::Generic(para) => {
             assert!(matches!(**para.ty, TyKind::MetaType));
 
-            match resolve_generic(context, para) {
+            match rebind_generic(context, para) {
                 BoundValue::Value(value) => {
                     let ValueKind::MetaType(ty) = value.kind else {
                         unreachable!();
@@ -52,9 +52,9 @@ pub fn resolve_type<'gcx>(gcx: Gcx<'gcx>, context: BoundInstance<'gcx>, ty: Ty<'
         TyKind::Func(args, retval) => {
             let args = gcx
                 .type_list_interner
-                .intern_iter(gcx, args.iter().map(|&arg| resolve_type(gcx, context, arg)));
+                .intern_iter(gcx, args.iter().map(|&arg| rebind_type(gcx, context, arg)));
 
-            let retval = resolve_type(gcx, context, retval);
+            let retval = rebind_type(gcx, context, retval);
 
             gcx.type_interner.intern(gcx, TyKind::Func(args, retval))
         }
@@ -62,14 +62,10 @@ pub fn resolve_type<'gcx>(gcx: Gcx<'gcx>, context: BoundInstance<'gcx>, ty: Ty<'
             gcx,
             TyKind::Tuple(gcx.type_list_interner.intern_iter(
                 gcx,
-                elems.iter().map(|&elem| resolve_type(gcx, context, elem)),
+                elems.iter().map(|&elem| rebind_type(gcx, context, elem)),
             )),
         ),
-        TyKind::MetaType
-        | TyKind::MetaFunc
-        | TyKind::Infer(_)
-        | TyKind::Scalar(_)
-        | TyKind::Adt(_) => ty,
+        TyKind::MetaType | TyKind::MetaFunc | TyKind::Scalar(_) | TyKind::Adt(_) => ty,
     }
 }
 
@@ -114,7 +110,7 @@ impl<'gcx> BoundInstance<'gcx> {
         self.as_unbound(gcx).expect("unexpected bound value")
     }
 
-    pub fn resolve(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> BoundInstance<'gcx> {
+    pub fn rebind(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> BoundInstance<'gcx> {
         assert!(context.fully_specified());
 
         BoundInstance {
@@ -123,13 +119,13 @@ impl<'gcx> BoundInstance<'gcx> {
                 gcx,
                 self.generics.iter().map(|&value| match value {
                     value @ BoundValue::Value(_) => value,
-                    BoundValue::Bound(def) => resolve_generic(context, def),
+                    BoundValue::Bound(def) => rebind_generic(context, def),
                 }),
             ),
         }
     }
 
-    pub fn resolve_unbound(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> Instance<'gcx> {
-        self.resolve(gcx, context).expect_unbound(gcx)
+    pub fn rebind_unbound(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> Instance<'gcx> {
+        self.rebind(gcx, context).expect_unbound(gcx)
     }
 }

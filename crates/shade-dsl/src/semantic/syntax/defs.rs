@@ -49,7 +49,7 @@ pub enum FuncExprKind<'gcx> {
     ///
     /// [`Func`]: super::TyKind::Func
     /// [`MetaFunc`]: super::TyKind::MetaFunc
-    Instantiate(FuncExpr<'gcx>),
+    Instantiate(FuncExpr<'gcx>, Ty<'gcx>),
 
     /// Produces a [`MetaFunc`] from the specified [`Func`] literal
     ///
