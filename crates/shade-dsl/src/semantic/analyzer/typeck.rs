@@ -2,12 +2,10 @@ use ctx2d_utils::hash::FxHashMap;
 
 use crate::{
     base::Gcx,
-    semantic::syntax::{
-        BoundInstance, FuncExpr, FuncExprKind, FuncLocal, InferVar, Instance, Ty, TyKind,
-    },
+    semantic::syntax::{BoundInstance, FuncExpr, FuncLocal, Instance, Ty},
 };
 
-use super::Analyzer;
+use super::{Analyzer, resolve_type};
 
 #[derive(Default)]
 pub struct TypeckResults<'gcx> {
@@ -15,53 +13,53 @@ pub struct TypeckResults<'gcx> {
     pub exprs: FxHashMap<FuncExpr<'gcx>, Ty<'gcx>>,
 }
 
-struct Typeck<'gcx> {
-    gcx: Gcx<'gcx>,
-    instance: Instance<'gcx>,
-    instance_bound: BoundInstance<'gcx>,
+pub struct Typeck<'gcx> {
+    pub gcx: Gcx<'gcx>,
+    pub results: TypeckResults<'gcx>,
+    pub instance: Instance<'gcx>,
+    pub instance_bound: BoundInstance<'gcx>,
 }
 
 impl<'gcx> Typeck<'gcx> {
-    fn new(gcx: Gcx<'gcx>, instance: Instance<'gcx>) -> Self {
-        todo!()
+    pub fn new(gcx: Gcx<'gcx>, instance: Instance<'gcx>) -> Self {
+        assert!(instance.fully_specified());
+
+        Self {
+            gcx,
+            results: TypeckResults::default(),
+            instance,
+            instance_bound: instance.as_bound(gcx),
+        }
     }
 
-    fn populate_expr(&mut self, expr: FuncExpr<'gcx>) {
+    pub fn check_fn(&mut self, analyzer: &mut Analyzer<'gcx>) {
         let gcx = self.gcx;
-        let instance = self.instance_bound;
+        let context = self.instance_bound;
+        let func = self.instance.func;
 
-        todo!();
+        // Assign types to inputs
+        for (&local, &ty) in func.arguments.iter().zip(func.argument_types.iter()) {
+            self.results
+                .locals
+                .insert(local, resolve_type(gcx, context, ty));
+        }
+
+        // Determine the expected output type.
+        let expected_out = resolve_type(gcx, context, func.ret_type);
+
+        // Check the entrypoint.
+        let actual_out = self.check_expr(analyzer);
+        self.check_equality(expected_out, actual_out);
     }
 
-    fn fresh_infer_var(&mut self) -> InferVar {
+    pub fn check_expr(&mut self, analyzer: &mut Analyzer<'gcx>) -> Ty<'gcx> {
+        let gcx = self.gcx;
+        let context = self.instance;
+
         todo!()
     }
 
-    fn fresh_infer(&mut self) -> Ty<'gcx> {
-        self.gcx
-            .type_interner
-            .intern(self.gcx, TyKind::Infer(self.fresh_infer_var()))
-    }
-
-    fn equate(&mut self, lhs: Ty<'gcx>, rhs: Ty<'gcx>) {
+    pub fn check_equality(&mut self, expected: Ty<'gcx>, actual: Ty<'gcx>) {
         todo!()
     }
-
-    fn progress(&mut self, analyzer: &mut Analyzer) {}
-
-    fn finish(&mut self) -> TypeckResults<'gcx> {
-        todo!()
-    }
-}
-
-pub fn type_check<'gcx>(
-    analyzer: &mut Analyzer<'gcx>,
-    instance: Instance<'gcx>,
-) -> &'gcx TypeckResults<'gcx> {
-    assert!(instance.fully_specified());
-
-    let mut solver = Typeck::new(analyzer.gcx(), instance);
-    solver.populate_expr(instance.func.main);
-    solver.progress(analyzer);
-    analyzer.gcx().alloc(solver.finish())
 }

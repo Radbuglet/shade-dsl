@@ -1,7 +1,7 @@
 use crate::{
     base::{Dp, Gcx},
     semantic::{
-        analyzer::{TypeckResults, type_check},
+        analyzer::{Typeck, TypeckResults},
         syntax::{Instance, Value},
     },
 };
@@ -18,9 +18,12 @@ impl<'gcx> Analyzer<'gcx> {
     }
 
     pub fn type_check(&mut self, instance: Instance<'gcx>) -> &'gcx TypeckResults<'gcx> {
-        self.checked_instances
-            .clone()
-            .compute(instance, |_| type_check(self, instance))
+        self.checked_instances.clone().compute(instance, |_| {
+            let mut tcx = Typeck::new(self.gcx, instance);
+            tcx.check_fn(self);
+
+            self.gcx.alloc(tcx.results)
+        })
     }
 
     pub fn evaluate(&mut self, instance: Instance<'gcx>) -> Value<'gcx> {

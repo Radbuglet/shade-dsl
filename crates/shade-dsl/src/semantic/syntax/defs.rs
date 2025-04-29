@@ -1,12 +1,13 @@
 use crate::base::{Def, Symbol};
 
-use super::{BoundInstance, Ty};
+use super::{BoundInstance, Ty, TyList};
 
 pub type Func<'gcx> = Def<'gcx, FuncInner<'gcx>>;
 
 pub struct FuncInner<'gcx> {
     pub generics: &'gcx [FuncGeneric<'gcx>],
     pub arguments: &'gcx [FuncLocal<'gcx>],
+    pub argument_types: TyList<'gcx>,
     pub ret_type: Ty<'gcx>,
     pub main: FuncExpr<'gcx>,
 }
@@ -18,19 +19,13 @@ pub struct FuncGenericInner<'gcx> {
     pub ty: Ty<'gcx>,
 }
 
-pub type FuncLocal<'gcx> = Def<'gcx, FuncLocalInner<'gcx>>;
+pub type FuncLocal<'gcx> = Def<'gcx, FuncLocalInner>;
 
-pub struct FuncLocalInner<'gcx> {
+pub struct FuncLocalInner {
     pub name: Symbol,
-    pub ty: Ty<'gcx>,
 }
 
-pub type FuncExpr<'gcx> = Def<'gcx, FuncExprInner<'gcx>>;
-
-pub struct FuncExprInner<'gcx> {
-    pub ty: Ty<'gcx>,
-    pub kind: FuncExprKind<'gcx>,
-}
+pub type FuncExpr<'gcx> = Def<'gcx, FuncExprKind<'gcx>>;
 
 pub enum FuncExprKind<'gcx> {
     /// Fetches the value of a local.
@@ -44,9 +39,6 @@ pub enum FuncExprKind<'gcx> {
     /// Evaluates the specified constant. The supplied instance must be `fully_specified` and the
     /// target function must take no arguments.
     Const(BoundInstance<'gcx>),
-
-    /// Ascribes a specific type to an expression. Useful for inference.
-    Ascribe(FuncExpr<'gcx>, Ty<'gcx>),
 
     /// Extends the argument list of a [`MetaFunc`] to contain yet another generic argument.
     ///
