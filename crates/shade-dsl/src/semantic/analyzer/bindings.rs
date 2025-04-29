@@ -21,11 +21,11 @@ impl<'gcx> BoundTy<'gcx> {
         self.as_unbound().expect("expected type to be unbound")
     }
 
-    pub fn resolve_in(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> BoundTy<'gcx> {
+    pub fn resolve(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> BoundTy<'gcx> {
         match self {
             v @ BoundTy::Unbound(_) => v,
             BoundTy::Bound(ty) => {
-                let ty = ty.resolve_in(gcx, context);
+                let ty = ty.resolve(gcx, context);
 
                 match ty.as_unbound(gcx) {
                     Some(ty) => {
@@ -35,6 +35,10 @@ impl<'gcx> BoundTy<'gcx> {
                 }
             }
         }
+    }
+
+    pub fn resolve_unbound(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> Ty<'gcx> {
+        self.resolve(gcx, context).expect_unbound()
     }
 }
 
@@ -79,7 +83,7 @@ impl<'gcx> BoundInstance<'gcx> {
         self.as_unbound(gcx).expect("unexpected bound value")
     }
 
-    pub fn resolve_in(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> BoundInstance<'gcx> {
+    pub fn resolve(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> BoundInstance<'gcx> {
         assert!(context.fully_specified());
 
         BoundInstance {
@@ -101,5 +105,9 @@ impl<'gcx> BoundInstance<'gcx> {
                 }),
             ),
         }
+    }
+
+    pub fn resolve_unbound(self, gcx: Gcx<'gcx>, context: BoundInstance<'gcx>) -> Instance<'gcx> {
+        self.resolve(gcx, context).expect_unbound(gcx)
     }
 }

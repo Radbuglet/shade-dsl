@@ -1,6 +1,6 @@
 use crate::base::{Def, InternList, Symbol};
 
-use super::{BoundTy, Value, ValueList};
+use super::{BoundTy, Ty, Value, ValueList};
 
 // === Adts === //
 
@@ -43,7 +43,7 @@ pub struct FuncInner<'gcx> {
     pub generics: &'gcx [FuncGeneric<'gcx>],
     pub arguments: &'gcx [FuncLocal<'gcx>],
     pub ret_type: BoundTy<'gcx>,
-    pub main: FuncBlock<'gcx>,
+    pub main: FuncExpr<'gcx>,
 }
 
 pub type FuncGeneric<'gcx> = Def<'gcx, FuncGenericInner<'gcx>>;
@@ -60,22 +60,16 @@ pub struct FuncLocalInner<'gcx> {
     pub ty: BoundTy<'gcx>,
 }
 
-pub struct FuncBlock<'gcx> {
-    _ty: [&'gcx (); 0],
-}
-
-pub enum FuncStmt<'gcx> {
-    Let(FuncLocal<'gcx>, FuncExpr<'gcx>),
-    Expr(FuncExpr<'gcx>),
-    Item(Item<'gcx>),
-}
-
 pub type FuncExpr<'gcx> = Def<'gcx, FuncExprInner<'gcx>>;
 
-pub enum FuncExprInner<'gcx> {
+pub struct FuncExprInner<'gcx> {
+    pub ty: BoundTy<'gcx>,
+    pub kind: FuncExprKind<'gcx>,
+}
+
+pub enum FuncExprKind<'gcx> {
     Local(FuncLocal<'gcx>),
-    Generic(FuncGeneric<'gcx>),
-    Item(Item<'gcx>),
     Call(FuncExpr<'gcx>, &'gcx [FuncExpr<'gcx>]),
-    Const(Value<'gcx>),
+    Const(BoundInstance<'gcx>),
+    Ascribe(FuncExpr<'gcx>, Ty<'gcx>),
 }

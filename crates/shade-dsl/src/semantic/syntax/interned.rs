@@ -153,6 +153,17 @@ pub enum ValueAdt<'gcx> {
 
 // === Types === //
 
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct InferVar(pub u64);
+
+pub type BoundTyList<'gcx> = InternList<'gcx, BoundTy<'gcx>>;
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub enum BoundTy<'gcx> {
+    Unbound(Ty<'gcx>),
+    Bound(BoundInstance<'gcx>),
+}
+
 pub type Ty<'gcx> = Intern<'gcx, TyKind<'gcx>>;
 pub type TyList<'gcx> = InternList<'gcx, TyKind<'gcx>>;
 
@@ -171,24 +182,9 @@ pub enum TyKind<'gcx> {
     /// possible to allow cyclic type definitions to work.
     Unevaluated(Instance<'gcx>),
 
-    /// A yet-to-be-inferred type which has not yet been given an inference variable.
-    Infer,
-
-    /// An inference variable used during [`Analyzer::type_check`].
-    ///
-    /// [`Analyzer::type_check`]: crate::semantic::analyzer::Analyzer::type_check
-    InferVar(InferId),
-}
-
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct InferId(pub u32);
-
-pub type BoundTyList<'gcx> = InternList<'gcx, BoundTy<'gcx>>;
-
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub enum BoundTy<'gcx> {
-    Unbound(Ty<'gcx>),
-    Bound(BoundInstance<'gcx>),
+    /// A yet-to-be-inferred type which has not yet been given an inference variable. Each inference
+    /// variable is unique throughout the entire compilation session but lexically defined.
+    Infer(InferVar),
 }
 
 #[derive(Clone, Hash, Eq, PartialEq)]
