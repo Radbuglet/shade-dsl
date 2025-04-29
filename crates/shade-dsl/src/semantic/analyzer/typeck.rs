@@ -27,33 +27,7 @@ impl<'gcx> Typeck<'gcx> {
     }
 
     fn populate_expr(&mut self, expr: FuncExpr<'gcx>) {
-        match expr.kind {
-            FuncExprKind::Local(def) => {
-                self.equate(
-                    expr.ty.resolve_unbound(self.gcx, self.instance_bound),
-                    def.ty.resolve_unbound(self.gcx, self.instance_bound),
-                );
-            }
-            FuncExprKind::Call(callee, args) => {
-                todo!()
-            }
-            FuncExprKind::Const(instance) => {
-                let instance = instance
-                    .resolve(self.gcx, self.instance_bound)
-                    .expect_unbound(self.gcx);
-
-                let return_type = instance
-                    .func
-                    .ret_type
-                    .resolve_unbound(self.gcx, self.instance_bound);
-
-                self.equate(
-                    expr.ty.resolve_unbound(self.gcx, self.instance_bound),
-                    return_type,
-                );
-            }
-            FuncExprKind::Ascribe(def, intern) => todo!(),
-        }
+        todo!()
     }
 
     fn equate(&mut self, lhs: Ty<'gcx>, rhs: Ty<'gcx>) {

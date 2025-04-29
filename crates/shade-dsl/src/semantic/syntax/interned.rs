@@ -2,7 +2,7 @@ use std::hash;
 
 use crate::base::{Intern, InternList, Symbol};
 
-use super::{BoundInstance, Instance, ItemList};
+use super::{BoundInstance, Func, Instance, ItemList};
 
 // === Values === //
 
@@ -27,7 +27,7 @@ pub enum ValueKind<'gcx> {
     /// [`TyRuntime::Adt`].
     MetaType(Ty<'gcx>),
 
-    /// A function definition. For instance, in...
+    /// A function definition with uninstantiated generic parameters. For instance, in...
     ///
     /// ```text
     /// const my_func = fn<foo: Ty1>(bar: Ty2) -> Ty3 { ... }
@@ -38,7 +38,7 @@ pub enum ValueKind<'gcx> {
     /// This function may not be type-checked.
     ///
     /// The type of this value is [`MetaFunc`](TyKind::MetaFunc).
-    MetaFunc(Instance<'gcx>),
+    MetaFunc(Func<'gcx>),
 
     /// An instantiation of a runtime value. For instance, in...
     ///
@@ -54,6 +54,13 @@ pub enum ValueKind<'gcx> {
 
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub enum ValueRuntime<'gcx> {
+    /// A reified function with all generic parameters resolved.
+    ///
+    /// This function may not be type-checked.
+    ///
+    /// The type of this value is [`Func`](TyRuntime::Func).
+    Func(Instance<'gcx>),
+
     /// A scalar type (e.g. bool, integer, floating point number).
     ///
     /// The type of this value is [`Scalar`](TyRuntime::Scalar).
@@ -178,8 +185,14 @@ pub enum TyKind<'gcx> {
     /// The type of [`Runtime`](ValueKind::Runtime) values.
     Runtime(TyRuntime<'gcx>),
 
-    /// A type which has yet to be evaluated. In general, we try to evaluate types as late as
-    /// possible to allow cyclic type definitions to work.
+    /// A type which has yet to be evaluated. To evaluate this type, the target `fully_specified`
+    /// instance is evaluated with no arguments in order to produce the [`MetaType`] used to
+    /// concretize this type.
+    ///
+    /// In general, we try to evaluate types as late as possible to allow cyclic type definitions to
+    /// work.
+    ///
+    /// [`MetaType`]: ValueKind::MetaType
     Unevaluated(Instance<'gcx>),
 
     /// A yet-to-be-inferred type which has not yet been given an inference variable. Each inference
@@ -189,6 +202,9 @@ pub enum TyKind<'gcx> {
 
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub enum TyRuntime<'gcx> {
+    /// A reified function with all generic parameters instantiated.
+    Func(TyList<'gcx>, Ty<'gcx>),
+
     /// The type of [`Adt`](ValueRuntime::Adt) values.
     Adt(TyAdtSignature<'gcx>),
 

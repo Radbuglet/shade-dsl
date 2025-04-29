@@ -68,8 +68,29 @@ pub struct FuncExprInner<'gcx> {
 }
 
 pub enum FuncExprKind<'gcx> {
+    /// Fetches the value of a local.
     Local(FuncLocal<'gcx>),
+
+    /// Invokes the receiver with the specified arguments. The receiver must have type [`Func`].
+    ///
+    /// [`Func`]: super::TyRuntime::Func
     Call(FuncExpr<'gcx>, &'gcx [FuncExpr<'gcx>]),
+
+    /// Evaluates the specified constant. The supplied instance must be `fully_specified` and the
+    /// target function must take no arguments.
     Const(BoundInstance<'gcx>),
+
+    /// Ascribes a specific type to an expression. Useful for inference.
     Ascribe(FuncExpr<'gcx>, Ty<'gcx>),
+
+    /// Instantiates a [`MetaFunc`], transforming it into a [`Func`].
+    ///
+    /// [`MetaFunc`]: super::TyKind::MetaFunc
+    /// [`Func`]: super::TyRuntime::Func
+    Instantiate(FuncExpr<'gcx>, &'gcx [FuncExpr<'gcx>]),
+
+    /// Produces a [`MetaFunc`] from the specified [`Func`] literal
+    ///
+    /// [`MetaFunc`]: super::TyKind::MetaFunc
+    FuncLiteral(Func<'gcx>),
 }
