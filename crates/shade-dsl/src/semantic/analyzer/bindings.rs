@@ -1,7 +1,77 @@
 use crate::{
     base::Gcx,
-    semantic::syntax::{BoundInstance, BoundValue, Instance},
+    semantic::syntax::{BoundInstance, BoundValue, FuncGeneric, Instance, Ty, TyKind, ValueKind},
 };
+
+pub fn resolve_generic<'gcx>(
+    context: BoundInstance<'gcx>,
+    para: FuncGeneric<'gcx>,
+) -> BoundValue<'gcx> {
+    let parent_idx = context
+        .func
+        .generics
+        .iter()
+        .position(|&other| para == other)
+        .expect("bound generic does not come from parent");
+
+    let expected_ty = context.func.generics[parent_idx].ty;
+
+    let value = context.generics[parent_idx];
+
+    match value {
+        BoundValue::Value(val) => {
+            assert!(val.ty == expected_ty);
+        }
+        BoundValue::Bound(def) => {
+            assert!(def.ty == expected_ty);
+        }
+    }
+
+    value
+}
+
+pub fn resolve_type<'gcx>(gcx: Gcx<'gcx>, context: BoundInstance<'gcx>, ty: Ty<'gcx>) -> Ty<'gcx> {
+    match **ty {
+        TyKind::Const(instance) => gcx
+            .type_interner
+            .intern(gcx, TyKind::Const(instance.resolve(gcx, context))),
+        TyKind::Generic(para) => {
+            assert!(matches!(**para.ty, TyKind::MetaType));
+
+            match resolve_generic(context, para) {
+                BoundValue::Value(value) => {
+                    let ValueKind::MetaType(ty) = value.kind else {
+                        unreachable!();
+                    };
+
+                    ty
+                }
+                BoundValue::Bound(def) => gcx.type_interner.intern(gcx, TyKind::Generic(def)),
+            }
+        }
+        TyKind::Func(args, retval) => {
+            let args = gcx
+                .type_list_interner
+                .intern_iter(gcx, args.iter().map(|&arg| resolve_type(gcx, context, arg)));
+
+            let retval = resolve_type(gcx, context, retval);
+
+            gcx.type_interner.intern(gcx, TyKind::Func(args, retval))
+        }
+        TyKind::Tuple(elems) => gcx.type_interner.intern(
+            gcx,
+            TyKind::Tuple(gcx.type_list_interner.intern_iter(
+                gcx,
+                elems.iter().map(|&elem| resolve_type(gcx, context, elem)),
+            )),
+        ),
+        TyKind::MetaType
+        | TyKind::MetaFunc
+        | TyKind::Infer(_)
+        | TyKind::Scalar(_)
+        | TyKind::Adt(_) => ty,
+    }
+}
 
 impl<'gcx> Instance<'gcx> {
     pub fn fully_specified(self) -> bool {
@@ -53,16 +123,7 @@ impl<'gcx> BoundInstance<'gcx> {
                 gcx,
                 self.generics.iter().map(|&value| match value {
                     value @ BoundValue::Value(_) => value,
-                    BoundValue::Bound(def) => {
-                        let parent_idx = context
-                            .func
-                            .generics
-                            .iter()
-                            .position(|&other| def == other)
-                            .expect("bound generic does not come from parent");
-
-                        context.generics[parent_idx]
-                    }
+                    BoundValue::Bound(def) => resolve_generic(context, def),
                 }),
             ),
         }

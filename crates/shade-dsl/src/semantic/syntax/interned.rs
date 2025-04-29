@@ -6,8 +6,14 @@ use super::{Func, FuncGeneric};
 
 // === Values === //
 
-pub type Value<'gcx> = Intern<'gcx, ValueKind<'gcx>>;
+pub type Value<'gcx> = Intern<'gcx, ValueInner<'gcx>>;
 pub type ValueList<'gcx> = InternList<'gcx, Value<'gcx>>;
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+pub struct ValueInner<'gcx> {
+    pub ty: Ty<'gcx>,
+    pub kind: ValueKind<'gcx>,
+}
 
 /// A fully resolved compile-time value. Sub-components of this value (e.g. in types and functions)
 /// may not be type-checked or even evaluated!
