@@ -1,7 +1,10 @@
 use core::str;
 use std::{slice, sync::Arc};
 
-use crate::base::{AtomSimplify, Span, Spanned, Symbol};
+use crate::{
+    base::{AtomSimplify, Span, Spanned, Symbol},
+    symbol,
+};
 
 // === TokenStream === //
 
@@ -45,7 +48,7 @@ pub struct TokenTree {
 
 #[derive(Debug, Clone)]
 pub enum TokenTreeKind {
-    Group(TokenDelimiter, TokenStream),
+    Group(GroupDelimiter, TokenStream),
     NumLit,
     StrLit(StrLitKind, Symbol),
     CharLit(char),
@@ -68,12 +71,55 @@ impl Spanned for TokenTree {
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub enum TokenDelimiter {
+pub enum GroupDelimiter {
     Brace,
     Bracket,
     Paren,
-    Macro,
     File,
+    Macro,
+}
+
+impl GroupDelimiter {
+    pub const OPENABLE: [Self; 3] = [Self::Brace, Self::Bracket, Self::Paren];
+    pub const CLOSEABLE: [Self; 4] = [Self::Brace, Self::Bracket, Self::Paren, Self::File];
+
+    pub fn opening(self) -> char {
+        match self {
+            GroupDelimiter::Brace => '{',
+            GroupDelimiter::Bracket => '[',
+            GroupDelimiter::Paren => '(',
+            GroupDelimiter::File | GroupDelimiter::Macro => unreachable!(),
+        }
+    }
+
+    pub fn opening_name(self) -> Symbol {
+        match self {
+            GroupDelimiter::Brace => symbol!("`{`"),
+            GroupDelimiter::Bracket => symbol!("`[`"),
+            GroupDelimiter::Paren => symbol!("`(`"),
+            GroupDelimiter::File | GroupDelimiter::Macro => unreachable!(),
+        }
+    }
+
+    pub fn closing(self) -> char {
+        match self {
+            GroupDelimiter::Brace => '}',
+            GroupDelimiter::Bracket => ']',
+            GroupDelimiter::Paren => ')',
+            GroupDelimiter::File => '\0',
+            GroupDelimiter::Macro => unreachable!(),
+        }
+    }
+
+    pub fn closing_name(self) -> Symbol {
+        match self {
+            GroupDelimiter::Brace => symbol!("`}`"),
+            GroupDelimiter::Bracket => symbol!("`]`"),
+            GroupDelimiter::Paren => symbol!("`)`"),
+            GroupDelimiter::File => symbol!("end-of-file"),
+            GroupDelimiter::Macro => unreachable!(),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -97,6 +143,8 @@ macro_rules! define_puncts {
         }
 
         impl Punct {
+            pub const CHARSET: &str = concat!($($ch),*);
+
             pub const fn try_new(ch: char) -> Option<Self> {
                 match ch {
                     $($ch => Some(Self::$name),)*

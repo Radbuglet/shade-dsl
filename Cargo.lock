@@ -672,6 +672,7 @@ dependencies = [
  "ctx2d-utils",
  "derive-where",
  "scopeguard",
+ "unicode-xid",
 ]
 
 [[package]]

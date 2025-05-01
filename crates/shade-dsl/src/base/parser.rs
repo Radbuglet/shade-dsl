@@ -1,5 +1,10 @@
 use super::{Diagnostics, ErrorGuaranteed, Span, Spanned, Symbol};
 
+// === Aliases === //
+
+pub type CharParser<'a> = Parser<'a, SpanCharCursor<'a>>;
+pub type CharCursor<'a> = Cursor<SpanCharCursor<'a>>;
+
 // === Parser Core === //
 
 #[derive(Debug)]
@@ -7,7 +12,7 @@ pub struct Parser<'d, I> {
     cursor: Cursor<I>,
     expected: Vec<Symbol>,
     context: Vec<(Span, Symbol)>,
-    diagnostics: &'d Diagnostics,
+    diag: &'d Diagnostics,
 }
 
 impl<'d, I: CursorIter> Parser<'d, I> {
@@ -16,10 +21,11 @@ impl<'d, I: CursorIter> Parser<'d, I> {
             cursor: Cursor::new(raw),
             expected: Vec::new(),
             context: Vec::new(),
-            diagnostics,
+            diag: diagnostics,
         }
     }
 
+    #[must_use]
     pub fn expect<R>(&mut self, what: Symbol, f: impl FnOnce(&mut Cursor<I>) -> R) -> R
     where
         R: LookaheadResult,
@@ -50,8 +56,15 @@ impl<'d, I: CursorIter> Parser<'d, I> {
         todo!()
     }
 
-    pub fn recover(&self, err: ErrorGuaranteed, f: impl FnOnce(&mut Cursor<I>)) {
-        todo!()
+    #[must_use]
+    pub fn recover(&mut self, err: ErrorGuaranteed) -> &mut Cursor<I> {
+        let _ = err;
+
+        &mut self.cursor
+    }
+
+    pub fn diag(&self) -> &'d Diagnostics {
+        self.diag
     }
 }
 
@@ -145,7 +158,40 @@ where
 
 // === Standard Cursors === //
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct SpanCharCursor<'a> {
+    span: Span,
+    iter: std::str::CharIndices<'a>,
+}
+
+impl<'a> SpanCharCursor<'a> {
+    pub fn new(span: Span, contents: &'a str) -> Self {
+        Self {
+            span,
+            iter: contents.char_indices(),
+        }
+    }
+}
+
+impl Iterator for SpanCharCursor<'_> {
+    type Item = SpannedChar;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let Some((pos, ch)) = self.iter.next() else {
+            return Some(SpannedChar {
+                ch: '\0',
+                span: self.span.shrink_to_hi(),
+            });
+        };
+
+        Some(SpannedChar {
+            ch,
+            span: Span::new_sized(self.span.lo.offset(pos), ch.len_utf8()),
+        })
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SpannedChar {
     pub ch: char,
     pub span: Span,
