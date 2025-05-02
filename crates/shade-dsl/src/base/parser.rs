@@ -1,4 +1,4 @@
-use super::{Diagnostics, ErrorGuaranteed, Span, Spanned, Symbol};
+use super::{DiagCtxt, ErrorGuaranteed, Span, Spanned, Symbol};
 
 // === Aliases === //
 
@@ -12,16 +12,16 @@ pub struct Parser<'d, I> {
     cursor: Cursor<I>,
     expected: Vec<Symbol>,
     context: Vec<(Span, Symbol)>,
-    diag: &'d Diagnostics,
+    diag: &'d DiagCtxt,
 }
 
 impl<'d, I: CursorIter> Parser<'d, I> {
-    pub fn new(diagnostics: &'d Diagnostics, raw: I) -> Self {
+    pub fn new(diag: &'d DiagCtxt, raw: I) -> Self {
         Self {
             cursor: Cursor::new(raw),
             expected: Vec::new(),
             context: Vec::new(),
-            diag: diagnostics,
+            diag,
         }
     }
 
@@ -63,7 +63,7 @@ impl<'d, I: CursorIter> Parser<'d, I> {
         &mut self.cursor
     }
 
-    pub fn diag(&self) -> &'d Diagnostics {
+    pub fn diag(&self) -> &'d DiagCtxt {
         self.diag
     }
 }

@@ -1,8 +1,8 @@
 mod def;
 pub use def::*;
 
-mod diagnostics;
-pub use diagnostics::*;
+mod diag;
+pub use diag::*;
 
 mod dp;
 pub use dp::*;

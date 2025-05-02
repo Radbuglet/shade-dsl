@@ -2,13 +2,15 @@ use std::{cell::Cell, ptr::NonNull};
 
 use crate::semantic::syntax::{BoundValue, Ty, TyAdtMember, TyKind, Value, ValueInner};
 
-use super::{Interner, ListInterner, Symbol, SymbolInterner};
+use super::{DiagCtxt, Interner, ListInterner, SourceMap, Symbol, SymbolInterner};
 
 pub type Gcx<'gcx> = &'gcx GcxOwned<'gcx>;
 
 pub struct GcxOwned<'gcx> {
     pub arena: bumpalo::Bump,
+    pub diag: DiagCtxt,
     pub symbols: SymbolInterner,
+    pub spans: SourceMap,
 
     pub type_interner: Interner<'gcx, TyKind<'gcx>>,
     pub type_list_interner: ListInterner<'gcx, Ty<'gcx>>,
