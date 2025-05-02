@@ -186,7 +186,7 @@ impl Iterator for SpanCharCursor<'_> {
 
         Some(SpannedChar {
             ch,
-            span: Span::new_sized(self.span.lo.offset(pos), ch.len_utf8()),
+            span: Span::new_sized(self.span.lo + pos, ch.len_utf8()),
         })
     }
 }

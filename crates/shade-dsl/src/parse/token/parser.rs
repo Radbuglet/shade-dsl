@@ -1,5 +1,5 @@
 use crate::{
-    base::{CharCursor, CharParser},
+    base::{CharCursor, CharParser, Symbol},
     symbol,
 };
 
@@ -8,24 +8,34 @@ use super::{GroupDelimiter, Punct, TokenStream, TokenTree, TokenTreeKind};
 type P<'a, 'b> = &'a mut CharParser<'b>;
 type C<'a, 'b> = &'a mut CharCursor<'b>;
 
-fn parse_group(p: P, del: GroupDelimiter) -> TokenStream {
+fn parse_group(p: P, expected_closer_name: Symbol) -> (TokenStream, GroupDelimiter) {
     let mut stream = TokenStream::new();
 
-    'parse: loop {
+    let closing_del = 'parse: loop {
         let first_char = p.span();
 
         // Parse closing group delimiters
-        if p.expect(del.closing_name(), |c| match_ch(c, del.closing())) {
-            break;
+        if let Some(closing_del) = p.expect(expected_closer_name, |c| {
+            GroupDelimiter::CLOSEABLE
+                .iter()
+                .copied()
+                .find(|v| match_ch(c, v.closing()))
+        }) {
+            break closing_del;
         }
 
         // Parse opening group delimiters
-        for del in GroupDelimiter::OPENABLE {
-            if p.expect(del.opening_name(), |c| match_ch(c, del.opening())) {
-                let sub_stream = parse_group(p, del);
+        for open_del in GroupDelimiter::OPENABLE {
+            if p.expect(open_del.opening_name(), |c| match_ch(c, open_del.opening())) {
+                let (sub_stream, close_del) = parse_group(p, open_del.opening_name());
+
+                if open_del != close_del {
+                    // TODO: handle `found_del` mismatches
+                }
+
                 stream.push(TokenTree {
                     span: first_char.until(p.span()),
-                    kind: TokenTreeKind::Group(del, sub_stream),
+                    kind: TokenTreeKind::Group(open_del, sub_stream),
                 });
 
                 continue 'parse;
@@ -62,16 +72,10 @@ fn parse_group(p: P, del: GroupDelimiter) -> TokenStream {
         // We're stuck :(
         let c = p.recover(p.stuck());
 
-        for del in GroupDelimiter::CLOSEABLE {
-            if c.peek() == del.closing() {
-                // TODO
-            }
-        }
-
         c.eat();
-    }
+    };
 
-    stream
+    (stream, closing_del)
 }
 
 fn match_ch(c: C, ch: char) -> bool {
