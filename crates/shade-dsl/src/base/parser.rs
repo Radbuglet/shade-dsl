@@ -15,7 +15,7 @@ pub struct Parser<'gcx, I> {
     cursor: Cursor<I>,
     context: Vec<(Span, Symbol)>,
     expected: Vec<Symbol>,
-    stuck_hints: Vec<Diag>,
+    stuck_hints: Vec<LeafDiag>,
 }
 
 impl<'gcx, I: CursorIter> Parser<'gcx, I> {
@@ -113,6 +113,8 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 
         let mut diag = Diag::new(Level::Error, msg).primary(self.span(), "");
 
+        diag.children.extend_from_slice(&self.stuck_hints);
+
         if let Some(&(cx_span, cx_what)) = self.context.last() {
             diag.push_child(
                 LeafDiag::new(
@@ -147,12 +149,12 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 }
 
 #[derive(Debug)]
-pub struct StuckHinter<'a>(pub Option<&'a mut Vec<Diag>>);
+pub struct StuckHinter<'a>(pub Option<&'a mut Vec<LeafDiag>>);
 
 impl StuckHinter<'_> {
     pub fn warn(&mut self, span: Span, message: impl fmt::Display) -> &mut Self {
         if let Some(inner) = &mut self.0 {
-            inner.push(Diag::new(Level::Warning, message).primary(span, ""));
+            inner.push(LeafDiag::new(Level::Warning, message).primary(span, ""));
         }
 
         self

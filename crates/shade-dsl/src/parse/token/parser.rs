@@ -5,7 +5,7 @@ use crate::{
     symbol,
 };
 
-use super::{GroupDelimiter, Punct, TokenStream, TokenTree, TokenTreeKind};
+use super::{GroupDelimiter, Ident, Punct, TokenGroup, TokenPunct, TokenStream};
 
 type P<'a, 'gcx, 'ch> = &'a mut CharParser<'gcx, 'ch>;
 type C<'a, 'gcx, 'ch> = &'a mut CharCursor<'ch>;
@@ -57,10 +57,14 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
             if p.expect(open_del.opening_name(), |c| match_ch(c, open_del.opening())) {
                 let sub_stream = parse_group(p, open_del);
 
-                stream.push(TokenTree {
-                    span: first_char.until(p.span()),
-                    kind: TokenTreeKind::Group(open_del, sub_stream),
-                });
+                stream.push(
+                    TokenGroup {
+                        span: first_char.until(p.span()),
+                        delimiter,
+                        tokens: sub_stream,
+                    }
+                    .into(),
+                );
 
                 continue 'parse;
             }
@@ -86,21 +90,21 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         // TODO
 
         // Parse identifiers
-        if let Some((text, is_raw)) = parse_ident(p) {
-            stream.push(TokenTree {
-                span: first_char.until(p.span()),
-                kind: TokenTreeKind::Ident(text, is_raw),
-            });
-
+        if let Some(ident) = parse_ident(p) {
+            stream.push(ident.into());
             continue;
         }
 
         // Parse punctuation
         if let Some(ch) = p.expect(symbol!("punctuation"), |c| match_chs(c, Punct::CHARSET)) {
-            stream.push(TokenTree {
-                span: first_char,
-                kind: TokenTreeKind::Punct(Punct::new(ch)),
-            });
+            stream.push(
+                TokenPunct {
+                    span: first_char,
+                    ch: Punct::new(ch),
+                    glued: false, // TODO
+                }
+                .into(),
+            );
 
             continue;
         }
@@ -122,14 +126,16 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
     stream
 }
 
-fn parse_ident(p: P) -> Option<(Symbol, bool)> {
+fn parse_ident(p: P) -> Option<Ident> {
+    let start = p.span();
+
     let first_ch = p.expect(symbol!("identifier"), |c| {
         c.eat().filter(|c| c.is_xid_start())
     })?;
 
     let mut accum = String::new();
 
-    let is_raw = if first_ch == 'r' && p.expect(symbol!("#"), |c| match_ch(c, '#')) {
+    let raw = if first_ch == 'r' && p.expect(symbol!("#"), |c| match_ch(c, '#')) {
         true
     } else {
         accum.push(first_ch);
@@ -142,7 +148,11 @@ fn parse_ident(p: P) -> Option<(Symbol, bool)> {
         accum.push(ch);
     }
 
-    Some((Symbol::new(&accum), is_raw))
+    Some(Ident {
+        span: start.until(p.span()),
+        text: Symbol::new(&accum),
+        raw,
+    })
 }
 
 fn match_ch(c: C, ch: char) -> bool {

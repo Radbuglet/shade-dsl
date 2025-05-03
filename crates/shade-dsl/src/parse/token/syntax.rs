@@ -1,5 +1,4 @@
-use core::str;
-use std::{slice, sync::Arc};
+use std::{slice, str, sync::Arc};
 
 use crate::{
     base::{AtomSimplify, Span, Spanned, Symbol},
@@ -41,19 +40,13 @@ impl<'a> IntoIterator for &'a TokenStream {
 // === TokenTree === //
 
 #[derive(Debug, Clone)]
-pub struct TokenTree {
-    pub span: Span,
-    pub kind: TokenTreeKind,
-}
-
-#[derive(Debug, Clone)]
-pub enum TokenTreeKind {
-    Group(GroupDelimiter, TokenStream),
-    NumLit,
-    StrLit(StrLitKind, Symbol),
-    CharLit(char),
-    Ident(Symbol, bool),
-    Punct(Punct),
+pub enum TokenTree {
+    Group(TokenGroup),
+    Ident(Ident),
+    Punct(TokenPunct),
+    NumLit(TokenNumLit),
+    StrLit(TokenStrLit),
+    CharLit(TokenCharLit),
 }
 
 impl AtomSimplify for TokenTree {
@@ -65,6 +58,62 @@ impl AtomSimplify for TokenTree {
 }
 
 impl Spanned for TokenTree {
+    fn span(&self) -> Span {
+        match self {
+            Self::Group(v) => v.span(),
+            Self::Ident(v) => v.span(),
+            Self::Punct(v) => v.span(),
+            Self::NumLit(v) => v.span(),
+            Self::StrLit(v) => v.span(),
+            Self::CharLit(v) => v.span(),
+        }
+    }
+}
+
+impl From<TokenGroup> for TokenTree {
+    fn from(value: TokenGroup) -> Self {
+        Self::Group(value)
+    }
+}
+
+impl From<Ident> for TokenTree {
+    fn from(value: Ident) -> Self {
+        Self::Ident(value)
+    }
+}
+
+impl From<TokenPunct> for TokenTree {
+    fn from(value: TokenPunct) -> Self {
+        Self::Punct(value)
+    }
+}
+
+impl From<TokenNumLit> for TokenTree {
+    fn from(value: TokenNumLit) -> Self {
+        Self::NumLit(value)
+    }
+}
+
+impl From<TokenStrLit> for TokenTree {
+    fn from(value: TokenStrLit) -> Self {
+        Self::StrLit(value)
+    }
+}
+
+impl From<TokenCharLit> for TokenTree {
+    fn from(value: TokenCharLit) -> Self {
+        Self::CharLit(value)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenGroup {
+    pub span: Span,
+    pub delimiter: GroupDelimiter,
+    pub tokens: TokenStream,
+}
+
+impl Spanned for TokenGroup {
     fn span(&self) -> Span {
         self.span
     }
@@ -123,11 +172,74 @@ impl GroupDelimiter {
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct Ident {
+    pub span: Span,
+    pub text: Symbol,
+    pub raw: bool,
+}
+
+impl Spanned for Ident {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct TokenPunct {
+    pub span: Span,
+    pub ch: Punct,
+    pub glued: bool,
+}
+
+impl Spanned for TokenPunct {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenStrLit {
+    pub span: Span,
+    pub kind: StrLitKind,
+    pub value: Symbol,
+}
+
+impl Spanned for TokenStrLit {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum StrLitKind {
     Utf8Slice,
     NulTerminated,
     AsciiByteSlice,
     AsciiNulTerminated,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenNumLit {
+    pub span: Span,
+    // TODO
+}
+
+impl Spanned for TokenNumLit {
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenCharLit {
+    pub span: Span,
+    pub value: char,
+}
+
+impl Spanned for TokenCharLit {
+    fn span(&self) -> Span {
+        self.span
+    }
 }
 
 // === Punct === //
