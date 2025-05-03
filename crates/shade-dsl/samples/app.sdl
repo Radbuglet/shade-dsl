@@ -1,8 +1,10 @@
+// This contains `invalid puncts`.
+
 const whee = struct {
     foo: u32,
     bar: i32,
 };
 
 const add = fn<T: type>(a: T, b: T) -> T {
-    a + b
+    a + r#b
 };

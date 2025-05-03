@@ -1,6 +1,6 @@
 use super::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, LeafDiag, Level, Span, Spanned, Symbol};
 
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 
 // === Aliases === //
 
@@ -13,8 +13,9 @@ pub type CharCursor<'ch> = Cursor<SpanCharCursor<'ch>>;
 pub struct Parser<'gcx, I> {
     gcx: Gcx<'gcx>,
     cursor: Cursor<I>,
-    expected: Vec<Symbol>,
     context: Vec<(Span, Symbol)>,
+    expected: Vec<Symbol>,
+    stuck_hints: Vec<Diag>,
 }
 
 impl<'gcx, I: CursorIter> Parser<'gcx, I> {
@@ -22,9 +23,61 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         Self {
             gcx,
             cursor: Cursor::new(raw),
-            expected: Vec::new(),
             context: Vec::new(),
+            expected: Vec::new(),
+            stuck_hints: Vec::new(),
         }
+    }
+
+    fn moved_forwards(&mut self) {
+        self.expected.clear();
+    }
+
+    #[must_use]
+    pub fn expect_covert_hinted<R>(
+        &mut self,
+        what: Symbol,
+        visible: bool,
+        f: impl FnOnce(&mut Cursor<I>, &mut StuckHinter<'_>) -> R,
+    ) -> R
+    where
+        R: LookaheadResult,
+    {
+        let mut hinter = StuckHinter(Some(&mut self.stuck_hints));
+        let res = self.cursor.lookahead(|c| f(c, &mut hinter));
+
+        if res.is_ok() {
+            self.moved_forwards();
+        } else if visible {
+            self.expected.push(what);
+        }
+
+        res
+    }
+
+    #[must_use]
+    pub fn expect_covert<R>(
+        &mut self,
+        what: Symbol,
+        visible: bool,
+        f: impl FnOnce(&mut Cursor<I>) -> R,
+    ) -> R
+    where
+        R: LookaheadResult,
+    {
+        self.expect_covert_hinted(what, visible, |c, _hinter| f(c))
+    }
+
+    #[must_use]
+    pub fn expect_hinted<R>(
+        &mut self,
+        what: Symbol,
+        f: impl FnOnce(&mut Cursor<I>, &mut StuckHinter<'_>) -> R,
+    ) -> R
+    where
+        R: LookaheadResult,
+    {
+        self.expect_covert_hinted(what, true, f)
     }
 
     #[must_use]
@@ -32,15 +85,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
     where
         R: LookaheadResult,
     {
-        let res = self.cursor.lookahead(f);
-
-        if res.is_ok() {
-            self.expected.clear();
-        } else {
-            self.expected.push(what);
-        }
-
-        res
+        self.expect_covert_hinted(what, true, |c, _hinter| f(c))
     }
 
     pub fn span(&self) -> Span {
@@ -59,7 +104,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 
         msg.push_str("expected one of ");
 
-        for (i, expectation) in self.expected.drain(..).enumerate() {
+        for (i, expectation) in self.expected.iter().copied().enumerate() {
             if i > 0 {
                 msg.push_str(", ");
             }
@@ -78,14 +123,16 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
             );
         }
 
-        self.dcx().emit(diag);
+        self.moved_forwards();
 
+        self.dcx().emit(diag);
         self.dcx().err()
     }
 
     #[must_use]
     pub fn recover(&mut self, err: ErrorGuaranteed) -> &mut Cursor<I> {
         let _ = err;
+        self.moved_forwards();
 
         &mut self.cursor
     }
@@ -96,6 +143,19 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 
     pub fn dcx(&self) -> &'gcx DiagCtxt {
         &self.gcx.dcx
+    }
+}
+
+#[derive(Debug)]
+pub struct StuckHinter<'a>(pub Option<&'a mut Vec<Diag>>);
+
+impl StuckHinter<'_> {
+    pub fn warn(&mut self, span: Span, message: impl fmt::Display) -> &mut Self {
+        if let Some(inner) = &mut self.0 {
+            inner.push(Diag::new(Level::Warning, message).primary(span, ""));
+        }
+
+        self
     }
 }
 

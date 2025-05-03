@@ -67,7 +67,17 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         }
 
         // Parse comments
-        // TODO
+        if p.expect(symbol!("`//`"), |c| {
+            c.eat() == Some('/') && c.eat() == Some('/')
+        }) {
+            while p.expect(symbol!("commented character"), |c| {
+                c.eat().is_none_or(|v| v != '\n')
+            }) {
+                // (continue eating)
+            }
+
+            continue;
+        }
 
         // Parse string literals
         // TODO

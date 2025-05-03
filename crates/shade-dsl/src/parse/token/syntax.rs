@@ -203,7 +203,28 @@ impl Punct {
 }
 
 define_puncts! {
+    Equals = '=',
+    Lt = '<',
+    Gt = '>',
     Exclaim = '!',
+    Tilde = '~',
+    Plus = '+',
+    Minus = '-',
+    Asterisk = '*',
+    Slash = '/',
+    Percent = '%',
+    Caret = '^',
+    Ampersand = '&',
+    Pipe = '|',
+    Arobase = '@',
+    Period = '.',
+    Comma = ',',
+    Semicolon = ';',
+    Colon = ':',
+    Octothorpe = '#',
+    Dollar = '$',
+    Question = '?',
+    SingleQuote = '\'',
 }
 
 #[macro_export]
