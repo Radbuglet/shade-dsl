@@ -52,7 +52,7 @@ pub enum TokenTreeKind {
     NumLit,
     StrLit(StrLitKind, Symbol),
     CharLit(char),
-    Ident(Symbol),
+    Ident(Symbol, bool),
     Punct(Punct),
 }
 
@@ -101,12 +101,12 @@ impl GroupDelimiter {
         }
     }
 
-    pub fn closing(self) -> char {
+    pub fn closing(self) -> Option<char> {
         match self {
-            GroupDelimiter::Brace => '}',
-            GroupDelimiter::Bracket => ']',
-            GroupDelimiter::Paren => ')',
-            GroupDelimiter::File => '\0',
+            GroupDelimiter::Brace => Some('}'),
+            GroupDelimiter::Bracket => Some(']'),
+            GroupDelimiter::Paren => Some(')'),
+            GroupDelimiter::File => None,
             GroupDelimiter::Macro => unreachable!(),
         }
     }

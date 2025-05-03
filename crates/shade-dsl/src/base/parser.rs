@@ -210,13 +210,13 @@ impl Iterator for SpanCharCursor<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let Some((pos, ch)) = self.iter.next() else {
             return Some(SpannedChar {
-                ch: '\0',
+                ch: None,
                 span: self.span.shrink_to_hi(),
             });
         };
 
         Some(SpannedChar {
-            ch,
+            ch: Some(ch),
             span: Span::new_sized(self.span.lo + pos, ch.len_utf8()),
         })
     }
@@ -224,12 +224,12 @@ impl Iterator for SpanCharCursor<'_> {
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SpannedChar {
-    pub ch: char,
+    pub ch: Option<char>,
     pub span: Span,
 }
 
 impl AtomSimplify for SpannedChar {
-    type Simplified = char;
+    type Simplified = Option<char>;
 
     fn simplify(self) -> Self::Simplified {
         self.ch

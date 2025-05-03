@@ -8,10 +8,31 @@ use std::{
 
 use ctx2d_utils::mem::MappedArc;
 
+use super::GcxOwned;
+
 // === Span === //
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct FilePos(NonZeroU32);
+
+impl fmt::Debug for FilePos {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        GcxOwned::fetch_tls(|gcx| {
+            write!(
+                f,
+                "{}:{}",
+                gcx.source_map.file_origin(*self),
+                gcx.source_map.pos_to_loc(*self)
+            )
+        })
+    }
+}
+
+impl fmt::Display for FilePos {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self, f)
+    }
+}
 
 impl FilePos {
     pub const fn new(v: usize) -> Self {
@@ -133,10 +154,39 @@ impl Default for FilePos {
     }
 }
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct Span {
     pub lo: FilePos,
     pub hi: FilePos,
+}
+
+impl fmt::Debug for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        GcxOwned::fetch_tls(|gcx| {
+            let origin = gcx.source_map.file_origin(self.lo);
+            let lo = gcx.source_map.pos_to_loc(self.lo);
+            let hi = gcx.source_map.pos_to_loc(self.hi);
+
+            if lo.line == hi.line {
+                write!(
+                    f,
+                    "{}:{}:{}-{}",
+                    origin,
+                    lo.line + 1,
+                    lo.column + 1,
+                    hi.column + 1
+                )
+            } else {
+                write!(f, "{origin}:{lo}-{hi}")
+            }
+        })
+    }
+}
+
+impl fmt::Display for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self, f)
+    }
 }
 
 impl Span {
@@ -189,6 +239,15 @@ pub trait Spanned {
 pub enum SourceFileOrigin {
     Fs(PathBuf),
     Virtual(String),
+}
+
+impl fmt::Display for SourceFileOrigin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SourceFileOrigin::Fs(path) => write!(f, "{}", path.display()),
+            SourceFileOrigin::Virtual(v) => write!(f, "{v:?}"),
+        }
+    }
 }
 
 #[derive(Default)]
