@@ -14,7 +14,7 @@ pub trait TypeWrapper: sealed::NeverImplemented {
     type Output;
 }
 
-pub struct NoDangle<D: ?Sized + TypeWrapper> {
+pub struct MayDangle<D: ?Sized + TypeWrapper> {
     _ty: PhantomData<fn(D) -> D>,
     value: DropHelper,
 }
@@ -30,7 +30,7 @@ impl Drop for DropHelper {
     }
 }
 
-impl<D: ?Sized + TypeWrapper> NoDangle<D> {
+impl<D: ?Sized + TypeWrapper> MayDangle<D> {
     pub unsafe fn new(value: D::Output) -> Self {
         unsafe {
             let value = Box::into_raw(Box::new(value));
@@ -47,7 +47,7 @@ impl<D: ?Sized + TypeWrapper> NoDangle<D> {
     }
 }
 
-impl<D: ?Sized + TypeWrapper> Deref for NoDangle<D> {
+impl<D: ?Sized + TypeWrapper> Deref for MayDangle<D> {
     type Target = D::Output;
 
     fn deref(&self) -> &Self::Target {
@@ -55,20 +55,20 @@ impl<D: ?Sized + TypeWrapper> Deref for NoDangle<D> {
     }
 }
 
-impl<D: ?Sized + TypeWrapper> DerefMut for NoDangle<D> {
+impl<D: ?Sized + TypeWrapper> DerefMut for MayDangle<D> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.value.inner.cast::<D::Output>().as_mut() }
     }
 }
 
 #[macro_export]
-macro_rules! no_dangle {
+macro_rules! my_may_dangle {
     ($ty:ty) => {
-        $crate::mem::NoDangle<dyn $crate::mem::TypeWrapper<Output = $ty>>
+        $crate::mem::MayDangle<dyn $crate::mem::TypeWrapper<Output = $ty>>
     };
 }
 
-pub use no_dangle;
+pub use my_may_dangle;
 
 // === Tests === //
 
@@ -98,15 +98,15 @@ pub fn expect_fail() {}
 ///
 /// use std::cell::RefCell;
 ///
-/// use ctx2d_utils::mem::{no_dangle, NoDangle};
+/// use ctx2d_utils::mem::{my_may_dangle, MayDangle};
 ///
 /// struct Demo<'a> {
-///     map: RefCell<no_dangle!(HashSet<&'a ()>)>,
+///     map: RefCell<my_may_dangle!(HashSet<&'a ()>)>,
 /// }
 ///
 /// fn entry() {
 ///     let demo = Demo {
-///         map: RefCell::new(unsafe { NoDangle::new(HashSet::default()) }),
+///         map: RefCell::new(unsafe { MayDangle::new(HashSet::default()) }),
 ///     };
 ///     callee(&demo);
 /// }
