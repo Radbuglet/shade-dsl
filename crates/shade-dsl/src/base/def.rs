@@ -5,8 +5,8 @@ use derive_where::derive_where;
 #[derive_where(Copy, Clone)]
 pub struct Def<'gcx, T>(&'gcx T);
 
-impl<'gcx, T> Def<'gcx, T> {
-    pub const fn new(value: &'gcx T) -> Self {
+impl<'a, T> Def<'a, T> {
+    pub const fn new(value: &'a T) -> Self {
         const {
             if mem::size_of::<T>() == 0 {
                 panic!("cannot use ZSTs as `Def`s")
@@ -17,8 +17,8 @@ impl<'gcx, T> Def<'gcx, T> {
     }
 }
 
-impl<'gcx, T> Deref for Def<'gcx, T> {
-    type Target = &'gcx T;
+impl<'a, T> Deref for Def<'a, T> {
+    type Target = &'a T;
 
     fn deref(&self) -> &Self::Target {
         &self.0

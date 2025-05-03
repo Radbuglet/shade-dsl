@@ -32,9 +32,7 @@ pub fn rebind_generic<'gcx>(
 
 pub fn rebind_type<'gcx>(gcx: Gcx<'gcx>, context: BoundInstance<'gcx>, ty: Ty<'gcx>) -> Ty<'gcx> {
     match **ty {
-        TyKind::Const(instance) => gcx
-            .type_interner
-            .intern(gcx, TyKind::Const(instance.rebind(gcx, context))),
+        TyKind::Const(instance) => gcx.intern(TyKind::Const(instance.rebind(gcx, context))),
         TyKind::Generic(para) => {
             assert!(matches!(**para.ty, TyKind::MetaType));
 
@@ -46,25 +44,19 @@ pub fn rebind_type<'gcx>(gcx: Gcx<'gcx>, context: BoundInstance<'gcx>, ty: Ty<'g
 
                     ty
                 }
-                BoundValue::Bound(def) => gcx.type_interner.intern(gcx, TyKind::Generic(def)),
+                BoundValue::Bound(def) => gcx.intern(TyKind::Generic(def)),
             }
         }
         TyKind::Func(args, retval) => {
-            let args = gcx
-                .type_list_interner
-                .intern_iter(gcx, args.iter().map(|&arg| rebind_type(gcx, context, arg)));
+            let args = gcx.intern_iter(args.iter().map(|&arg| rebind_type(gcx, context, arg)));
 
             let retval = rebind_type(gcx, context, retval);
 
-            gcx.type_interner.intern(gcx, TyKind::Func(args, retval))
+            gcx.intern(TyKind::Func(args, retval))
         }
-        TyKind::Tuple(elems) => gcx.type_interner.intern(
-            gcx,
-            TyKind::Tuple(gcx.type_list_interner.intern_iter(
-                gcx,
-                elems.iter().map(|&elem| rebind_type(gcx, context, elem)),
-            )),
-        ),
+        TyKind::Tuple(elems) => gcx.intern(TyKind::Tuple(
+            gcx.intern_iter(elems.iter().map(|&elem| rebind_type(gcx, context, elem))),
+        )),
         TyKind::MetaType | TyKind::MetaFunc | TyKind::Scalar(_) | TyKind::Adt(_) => ty,
     }
 }
@@ -77,9 +69,7 @@ impl<'gcx> Instance<'gcx> {
     pub fn as_bound(self, gcx: Gcx<'gcx>) -> BoundInstance<'gcx> {
         BoundInstance {
             func: self.func,
-            generics: gcx
-                .bound_value_list_interner
-                .intern_iter(gcx, self.generics.iter().copied().map(BoundValue::Value)),
+            generics: gcx.intern_iter(self.generics.iter().copied().map(BoundValue::Value)),
         }
     }
 }
@@ -102,7 +92,7 @@ impl<'gcx> BoundInstance<'gcx> {
 
         Some(Instance {
             func: self.func,
-            generics: gcx.value_list_interner.intern(gcx, &generics),
+            generics: gcx.intern_slice(&generics),
         })
     }
 
@@ -115,13 +105,10 @@ impl<'gcx> BoundInstance<'gcx> {
 
         BoundInstance {
             func: self.func,
-            generics: gcx.bound_value_list_interner.intern_iter(
-                gcx,
-                self.generics.iter().map(|&value| match value {
-                    value @ BoundValue::Value(_) => value,
-                    BoundValue::Bound(def) => rebind_generic(context, def),
-                }),
-            ),
+            generics: gcx.intern_iter(self.generics.iter().map(|&value| match value {
+                value @ BoundValue::Value(_) => value,
+                BoundValue::Bound(def) => rebind_generic(context, def),
+            })),
         }
     }
 

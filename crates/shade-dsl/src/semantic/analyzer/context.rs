@@ -38,22 +38,16 @@ impl<'gcx> Analyzer<'gcx> {
                 ty
             }
             TyKind::Func(args, retval) => {
-                let args = gcx.type_list_interner.intern_iter(
-                    gcx,
-                    args.iter().map(|&arg| self.evaluate_type(context, arg)),
-                );
+                let args =
+                    gcx.intern_iter(args.iter().map(|&arg| self.evaluate_type(context, arg)));
 
                 let retval = self.evaluate_type(context, retval);
 
-                gcx.type_interner.intern(gcx, TyKind::Func(args, retval))
+                gcx.intern(TyKind::Func(args, retval))
             }
-            TyKind::Tuple(elems) => gcx.type_interner.intern(
-                gcx,
-                TyKind::Tuple(gcx.type_list_interner.intern_iter(
-                    gcx,
-                    elems.iter().map(|&elem| self.evaluate_type(context, elem)),
-                )),
-            ),
+            TyKind::Tuple(elems) => gcx.intern(TyKind::Tuple(
+                gcx.intern_iter(elems.iter().map(|&elem| self.evaluate_type(context, elem))),
+            )),
             TyKind::Generic(_) => unreachable!(),
         }
     }

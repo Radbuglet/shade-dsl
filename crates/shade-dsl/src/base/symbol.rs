@@ -3,6 +3,8 @@ use std::{fmt, num::NonZeroU32, sync::RwLock};
 use bumpalo::Bump;
 use ctx2d_utils::hash::{FxHashMap, fx_hash_one, hash_map};
 
+use super::GcxOwned;
+
 // === Symbol === //
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
@@ -168,5 +170,3 @@ macro_rules! symbol {
 }
 
 pub use symbol;
-
-use super::GcxOwned;
