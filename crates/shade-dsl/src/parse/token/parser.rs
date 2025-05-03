@@ -1,7 +1,7 @@
 use unicode_xid::UnicodeXID;
 
 use crate::{
-    base::{CharCursor, CharParser, Diag, Gcx, Level, Parser, Span, SpanCharCursor, Symbol},
+    base::{CharCursor, CharParser, Diag, Gcx, Parser, Span, SpanCharCursor, Symbol},
     symbol,
 };
 
@@ -33,20 +33,19 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
                 .find(|v| c.lookahead(|c| c.eat() == v.closing()))
         }) {
             if closing_del != delimiter {
-                p.dcx().emit(
-                    Diag::new(
-                        Level::Error,
-                        format_args!(
-                            "mismatched delimiters; expected `{}`, got `{}`",
-                            delimiter.closing_name(),
-                            closing_del.closing_name()
-                        ),
-                    )
-                    .primary(
-                        first_char,
-                        format!("expected `{}`", delimiter.closing_name()),
+                p.dcx().emit(Diag::span_err(
+                    first_char,
+                    format_args!(
+                        "{} delimiter; expected `{}`, got `{}`",
+                        if closing_del == GroupDelimiter::File {
+                            "unclosed"
+                        } else {
+                            "mismatched"
+                        },
+                        delimiter.closing_name(),
+                        closing_del.closing_name()
                     ),
-                );
+                ));
             }
 
             break;

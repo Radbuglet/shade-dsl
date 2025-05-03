@@ -1,6 +1,6 @@
-use super::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, LeafDiag, Level, Span, Spanned, Symbol};
+use super::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, LeafDiag, Span, Spanned, Symbol};
 
-use std::fmt::{self, Write as _};
+use std::fmt::Write as _;
 
 // === Aliases === //
 
@@ -33,11 +33,16 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         self.expected.clear();
     }
 
+    pub fn irrefutable<R>(&mut self, f: impl FnOnce(&mut Cursor<I>) -> R) -> R {
+        self.moved_forwards();
+        f(&mut self.cursor)
+    }
+
     #[must_use]
     pub fn expect_covert_hinted<R>(
         &mut self,
-        what: Symbol,
         visible: bool,
+        what: Symbol,
         f: impl FnOnce(&mut Cursor<I>, &mut StuckHinter<'_>) -> R,
     ) -> R
     where
@@ -58,14 +63,14 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
     #[must_use]
     pub fn expect_covert<R>(
         &mut self,
-        what: Symbol,
         visible: bool,
+        what: Symbol,
         f: impl FnOnce(&mut Cursor<I>) -> R,
     ) -> R
     where
         R: LookaheadResult,
     {
-        self.expect_covert_hinted(what, visible, |c, _hinter| f(c))
+        self.expect_covert_hinted(visible, what, |c, _hinter| f(c))
     }
 
     #[must_use]
@@ -77,7 +82,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
     where
         R: LookaheadResult,
     {
-        self.expect_covert_hinted(what, true, f)
+        self.expect_covert_hinted(true, what, f)
     }
 
     #[must_use]
@@ -85,7 +90,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
     where
         R: LookaheadResult,
     {
-        self.expect_covert_hinted(what, true, |c, _hinter| f(c))
+        self.expect_covert_hinted(true, what, |c, _hinter| f(c))
     }
 
     pub fn span(&self) -> Span {
@@ -99,30 +104,62 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         res
     }
 
+    pub fn hint_syntactic(&mut self, f: impl FnOnce(&mut Cursor<I>, &mut StuckHinter<'_>)) {
+        f(
+            &mut self.cursor,
+            &mut StuckHinter(Some(&mut self.stuck_hints)),
+        )
+    }
+
+    pub fn hint_if_passes<R>(
+        &mut self,
+        parse: impl FnOnce(&mut Cursor<I>) -> R,
+        gen_diag: impl FnOnce(R) -> LeafDiag,
+    ) where
+        R: LookaheadResult,
+    {
+        self.hint_syntactic(|c, hinter| {
+            let res = parse(c);
+            if res.is_ok() {
+                hinter.hint(gen_diag(res));
+            }
+        });
+    }
+
+    pub fn hint(&mut self, diag: LeafDiag) {
+        self.stuck_hints.push(diag);
+    }
+
     pub fn stuck(&mut self) -> ErrorGuaranteed {
         let mut msg = String::new();
 
         msg.push_str("expected one of ");
 
         for (i, expectation) in self.expected.iter().copied().enumerate() {
-            if i > 0 {
-                msg.push_str(", ");
+            if i > 0 && self.expected.len() > 2 {
+                msg.push(',');
             }
+
+            if i == self.expected.len() - 1 && self.expected.len() > 1 {
+                msg.push_str(" or");
+            }
+
+            if i > 0 {
+                msg.push(' ');
+            }
+
             write!(msg, "{expectation}").unwrap();
         }
 
-        let mut diag = Diag::new(Level::Error, msg).primary(self.span(), "");
+        let mut diag = Diag::span_err(self.span(), msg);
 
         diag.children.extend_from_slice(&self.stuck_hints);
 
         if let Some(&(cx_span, cx_what)) = self.context.last() {
-            diag.push_child(
-                LeafDiag::new(
-                    Level::OnceNote,
-                    format_args!("this error ocurred while {cx_what}"),
-                )
-                .primary(cx_span, ""),
-            );
+            diag.push_child(LeafDiag::span_once_note(
+                cx_span,
+                format_args!("this error ocurred while {cx_what}"),
+            ));
         }
 
         self.moved_forwards();
@@ -152,12 +189,70 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 pub struct StuckHinter<'a>(pub Option<&'a mut Vec<LeafDiag>>);
 
 impl StuckHinter<'_> {
-    pub fn warn(&mut self, span: Span, message: impl fmt::Display) -> &mut Self {
+    pub const fn new_dummy() -> Self {
+        Self(None)
+    }
+
+    pub fn hint(&mut self, diag: LeafDiag) -> &mut Self {
         if let Some(inner) = &mut self.0 {
-            inner.push(LeafDiag::new(Level::Warning, message).primary(span, ""));
+            inner.push(diag);
         }
 
         self
+    }
+}
+
+pub trait OptionParser<I: CursorIter> {
+    type Handler: Fn(&mut Cursor<I>, &mut StuckHinter<'_>) -> Self::Output;
+    type Output: LookaheadResult;
+
+    fn expectation(&self) -> Symbol;
+
+    fn matcher(&self) -> &Self::Handler;
+
+    fn consume(&self, c: &mut Cursor<I>) -> Self::Output {
+        c.lookahead(|c| self.matcher()(c, &mut StuckHinter::new_dummy()))
+    }
+
+    fn did_consume(&self, c: &mut Cursor<I>) -> bool {
+        self.consume(c).is_ok()
+    }
+
+    fn expect(&self, p: &mut Parser<'_, I>) -> Self::Output {
+        p.expect_hinted(self.expectation(), self.matcher())
+    }
+
+    fn expect_covert(&self, visible: bool, p: &mut Parser<'_, I>) -> Self::Output {
+        p.expect_covert_hinted(visible, self.expectation(), self.matcher())
+    }
+
+    fn hint_if_match(
+        &self,
+        p: &mut Parser<'_, I>,
+        gen_diag: impl FnOnce(Self::Output) -> LeafDiag,
+    ) {
+        p.hint_if_passes(
+            |c| self.matcher()(c, &mut StuckHinter::new_dummy()),
+            gen_diag,
+        );
+    }
+}
+
+impl<C, F, O> OptionParser<C> for (Symbol, F)
+where
+    F: Fn(&mut Cursor<C>, &mut StuckHinter<'_>) -> O,
+    O: LookaheadResult,
+    C: CursorIter,
+{
+    type Handler = F;
+    type Output = O;
+
+    fn expectation(&self) -> Symbol {
+        self.0
+    }
+
+    fn matcher(&self) -> &Self::Handler {
+        &self.1
     }
 }
 

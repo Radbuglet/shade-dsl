@@ -74,10 +74,23 @@ pub struct Diag {
 
 impl Diag {
     pub fn new(level: Level, message: impl fmt::Display) -> Self {
-        Self {
-            me: LeafDiag::new(level, message),
-            children: Vec::new(),
-        }
+        LeafDiag::new(level, message).promote()
+    }
+
+    pub fn span_err(span: Span, message: impl fmt::Display) -> Self {
+        LeafDiag::span_err(span, message).promote()
+    }
+
+    pub fn span_warn(span: Span, message: impl fmt::Display) -> Self {
+        LeafDiag::span_warn(span, message).promote()
+    }
+
+    pub fn span_note(span: Span, message: impl fmt::Display) -> Self {
+        LeafDiag::span_note(span, message).promote()
+    }
+
+    pub fn span_once_note(span: Span, message: impl fmt::Display) -> Self {
+        LeafDiag::span_once_note(span, message).promote()
     }
 
     pub fn primary(mut self, span: Span, message: impl fmt::Display) -> Self {
@@ -128,6 +141,29 @@ impl LeafDiag {
             level,
             message: StyledMessage(message.to_string()),
             spans: MultiSpan::default(),
+        }
+    }
+
+    pub fn span_err(span: Span, message: impl fmt::Display) -> Self {
+        Self::new(Level::Error, message).primary(span, "")
+    }
+
+    pub fn span_warn(span: Span, message: impl fmt::Display) -> Self {
+        Self::new(Level::Warning, message).primary(span, "")
+    }
+
+    pub fn span_note(span: Span, message: impl fmt::Display) -> Self {
+        Self::new(Level::Note, message).primary(span, "")
+    }
+
+    pub fn span_once_note(span: Span, message: impl fmt::Display) -> Self {
+        Self::new(Level::OnceNote, message).primary(span, "")
+    }
+
+    pub fn promote(self) -> Diag {
+        Diag {
+            me: self,
+            children: Vec::new(),
         }
     }
 
