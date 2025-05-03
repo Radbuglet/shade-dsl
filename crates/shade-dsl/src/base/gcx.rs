@@ -1,4 +1,4 @@
-use std::{cell::Cell, hash, ptr::NonNull};
+use std::{cell::Cell, hash, ptr::NonNull, sync::OnceLock};
 
 use crate::semantic::syntax::{BoundValue, Ty, TyAdtMember, TyKind, Value, ValueInner};
 
@@ -14,8 +14,7 @@ pub struct GcxOwned<'gcx> {
     pub symbols: SymbolInterner,
     pub spans: SourceMap,
     pub interners: GcxInterners<'gcx>,
-
-    pub interned: PreInterned<'gcx>,
+    pub pre_interned: OnceLock<PreInterned<'gcx>>,
 }
 
 pub struct PreInterned<'gcx> {
@@ -27,6 +26,25 @@ pub struct PreInterned<'gcx> {
 
 thread_local! {
     static CURR_GCX: Cell<Option<NonNull<()>>> = const { Cell::new(None) };
+}
+
+impl Default for GcxOwned<'_> {
+    fn default() -> Self {
+        let bump = bumpalo::Bump::new();
+        let diag = DiagCtxt::new();
+        let symbols = SymbolInterner::new();
+        let spans = SourceMap::new();
+        let interners = GcxInterners::default();
+
+        Self {
+            bump,
+            diag,
+            symbols,
+            spans,
+            interners,
+            pre_interned: OnceLock::new(),
+        }
+    }
 }
 
 impl<'gcx> GcxOwned<'gcx> {
@@ -70,6 +88,18 @@ impl<'gcx> GcxOwned<'gcx> {
         T: ListInternable<'gcx>,
     {
         T::fetch(&self.interners).intern_iter(&self.bump, iter)
+    }
+
+    pub fn pre_interned(&'gcx self) -> &'gcx PreInterned<'gcx> {
+        self.pre_interned.get_or_init(|| PreInterned {
+            unit: self.intern(TyKind::Tuple(self.intern_slice(&[]))),
+            meta_fn: self.intern(TyKind::MetaFunc),
+            meta_ty: self.intern(TyKind::MetaType),
+            meta_producer_fn: self.intern(TyKind::Func(
+                self.intern_slice(&[]),
+                self.intern(TyKind::MetaFunc),
+            )),
+        })
     }
 }
 

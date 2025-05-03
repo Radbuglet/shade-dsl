@@ -86,7 +86,7 @@ impl<'gcx> Typeck<'gcx> {
                     .ty
             }
             FuncExprKind::ProvideGeneric(meta_fn, meta_arg) => {
-                let meta_fn_expected = self.gcx.interned.meta_fn;
+                let meta_fn_expected = self.gcx.pre_interned().meta_fn;
                 let meta_fn_actual = self.check_expr(analyzer, meta_fn);
 
                 self.check_compat(meta_fn_expected, meta_fn_actual);
@@ -97,65 +97,65 @@ impl<'gcx> Typeck<'gcx> {
                 meta_fn_expected
             }
             FuncExprKind::Instantiate(meta_fn, expected_ty) => {
-                let meta_fn_expected = self.gcx.interned.meta_fn;
+                let meta_fn_expected = self.gcx.pre_interned().meta_fn;
                 let meta_fn_actual = self.check_expr(analyzer, meta_fn);
 
                 self.check_compat(meta_fn_expected, meta_fn_actual);
 
                 analyzer.evaluate_type(self.instance, expected_ty)
             }
-            FuncExprKind::FuncLiteral(_) => self.gcx.interned.meta_fn,
+            FuncExprKind::FuncLiteral(_) => self.gcx.pre_interned().meta_fn,
             FuncExprKind::TypeOf(ty) => {
                 let _ = analyzer.evaluate_type(self.instance, ty);
 
-                self.gcx.interned.meta_ty
+                self.gcx.pre_interned().meta_ty
             }
             FuncExprKind::TypeWithField { target, name, ty } => {
-                let target_expected = self.gcx.interned.meta_ty;
+                let target_expected = self.gcx.pre_interned().meta_ty;
                 let target_actual = self.check_expr(analyzer, target);
                 self.check_compat(target_expected, target_actual);
 
                 // TODO: name
 
-                let ty_expected = self.gcx.interned.meta_ty;
+                let ty_expected = self.gcx.pre_interned().meta_ty;
                 let ty_actual = self.check_expr(analyzer, ty);
                 self.check_compat(ty_expected, ty_actual);
 
-                self.gcx.interned.meta_ty
+                self.gcx.pre_interned().meta_ty
             }
             FuncExprKind::TypeWithMethod {
                 target,
                 name,
                 producer,
             } => {
-                let target_expected = self.gcx.interned.meta_ty;
+                let target_expected = self.gcx.pre_interned().meta_ty;
                 let target_actual = self.check_expr(analyzer, target);
                 self.check_compat(target_expected, target_actual);
 
                 // TODO: name
 
-                let producer_expected = self.gcx.interned.meta_producer_fn;
+                let producer_expected = self.gcx.pre_interned().meta_producer_fn;
                 let producer_actual = self.check_expr(analyzer, producer);
                 self.check_compat(producer_expected, producer_actual);
 
-                self.gcx.interned.meta_ty
+                self.gcx.pre_interned().meta_ty
             }
             FuncExprKind::TypeWithStatic {
                 target,
                 name,
                 producer,
             } => {
-                let target_expected = self.gcx.interned.meta_ty;
+                let target_expected = self.gcx.pre_interned().meta_ty;
                 let target_actual = self.check_expr(analyzer, target);
                 self.check_compat(target_expected, target_actual);
 
                 // TODO: name
 
-                let producer_expected = self.gcx.interned.meta_producer_fn;
+                let producer_expected = self.gcx.pre_interned().meta_producer_fn;
                 let producer_actual = self.check_expr(analyzer, producer);
                 self.check_compat(producer_expected, producer_actual);
 
-                self.gcx.interned.meta_ty
+                self.gcx.pre_interned().meta_ty
             }
         };
 
