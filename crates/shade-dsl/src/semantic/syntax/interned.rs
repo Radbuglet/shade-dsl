@@ -1,13 +1,13 @@
 use std::hash;
 
-use crate::base::{Intern, InternList, Symbol};
+use crate::base::{Intern, ListIntern, Symbol};
 
 use super::{Func, FuncGeneric};
 
 // === Values === //
 
 pub type Value<'gcx> = Intern<'gcx, ValueInner<'gcx>>;
-pub type ValueList<'gcx> = InternList<'gcx, Value<'gcx>>;
+pub type ValueList<'gcx> = ListIntern<'gcx, Value<'gcx>>;
 
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub struct ValueInner<'gcx> {
@@ -153,7 +153,7 @@ pub enum ValueAdt<'gcx> {
 // === Types === //
 
 pub type Ty<'gcx> = Intern<'gcx, TyKind<'gcx>>;
-pub type TyList<'gcx> = InternList<'gcx, Ty<'gcx>>;
+pub type TyList<'gcx> = ListIntern<'gcx, Ty<'gcx>>;
 
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub enum TyKind<'gcx> {
@@ -224,7 +224,7 @@ pub struct BoundInstance<'gcx> {
     pub generics: BoundValueList<'gcx>,
 }
 
-pub type BoundValueList<'gcx> = InternList<'gcx, BoundValue<'gcx>>;
+pub type BoundValueList<'gcx> = ListIntern<'gcx, BoundValue<'gcx>>;
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub enum BoundValue<'gcx> {
@@ -239,7 +239,7 @@ pub type TyAdtSignature<'gcx> = Intern<'gcx, TyAdtSignatureInner<'gcx>>;
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub struct TyAdtSignatureInner<'gcx> {
     pub kind: TyAdtKind,
-    pub field_names: InternList<'gcx, Symbol>,
+    pub field_names: ListIntern<'gcx, Symbol>,
     pub field_types: TyList<'gcx>,
     pub methods: TyAdtMemberList<'gcx>,
     pub statics: TyAdtMemberList<'gcx>,
@@ -253,7 +253,7 @@ pub enum TyAdtKind {
     UntaggedUnion,
 }
 
-pub type TyAdtMemberList<'gcx> = InternList<'gcx, TyAdtMember<'gcx>>;
+pub type TyAdtMemberList<'gcx> = ListIntern<'gcx, TyAdtMember<'gcx>>;
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct TyAdtMember<'gcx> {

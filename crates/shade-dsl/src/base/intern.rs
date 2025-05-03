@@ -1,12 +1,22 @@
 use std::{cell::RefCell, hash, ops::Deref, ptr};
 
-use ctx2d_utils::hash::{FxHashMap, fx_hash_one, hash_map};
+use ctx2d_utils::{
+    hash::{FxHashMap, fx_hash_one, hash_map},
+    mem::MayDangle,
+    my_may_dangle,
+};
 use derive_where::derive_where;
 
 // === Values === //
 
-#[derive_where(Default)]
-pub struct Interner<'a, T>(RefCell<FxHashMap<(u64, &'a T), ()>>);
+#[allow(clippy::type_complexity)]
+pub struct Interner<'a, T>(RefCell<my_may_dangle!(FxHashMap<(u64, &'a T), ()>)>);
+
+impl<T> Default for Interner<'_, T> {
+    fn default() -> Self {
+        Self(RefCell::new(unsafe { MayDangle::new_default() }))
+    }
+}
 
 impl<'a, T> Interner<'a, T>
 where
@@ -59,17 +69,23 @@ impl<T> PartialEq for Intern<'_, T> {
 
 // === Lists === //
 
-#[derive_where(Default)]
-pub struct ListInterner<'a, T>(RefCell<FxHashMap<(u64, &'a [T]), ()>>);
+#[allow(clippy::type_complexity)]
+pub struct ListInterner<'a, T>(RefCell<my_may_dangle!(FxHashMap<(u64, &'a [T]), ()>)>);
+
+impl<T> Default for ListInterner<'_, T> {
+    fn default() -> Self {
+        Self(RefCell::new(unsafe { MayDangle::new_default() }))
+    }
+}
 
 impl<'a, T> ListInterner<'a, T>
 where
     T: hash::Hash + Eq + Clone,
 {
-    pub fn intern(&self, bump: &'a bumpalo::Bump, value: &[T]) -> InternList<'a, T> {
+    pub fn intern(&self, bump: &'a bumpalo::Bump, value: &[T]) -> ListIntern<'a, T> {
         if value.is_empty() {
             // TODO: ensure that the address of this is consistent
-            return InternList(&[]);
+            return ListIntern(&[]);
         }
 
         let mut inner = self.0.borrow_mut();
@@ -81,11 +97,11 @@ where
             .from_hash(hash, |(other_hash, other_value)| {
                 hash == *other_hash && value == *other_value
             }) {
-            hash_map::RawEntryMut::Occupied(entry) => InternList(entry.key().1),
+            hash_map::RawEntryMut::Occupied(entry) => ListIntern(entry.key().1),
             hash_map::RawEntryMut::Vacant(entry) => {
                 let value = bump.alloc_slice_clone(value);
                 entry.insert_with_hasher(hash, (hash, value), (), |(hash, _)| *hash);
-                InternList(value)
+                ListIntern(value)
             }
         }
     }
@@ -94,15 +110,15 @@ where
         &self,
         bump: &'a bumpalo::Bump,
         value: impl IntoIterator<Item = T>,
-    ) -> InternList<'a, T> {
+    ) -> ListIntern<'a, T> {
         self.intern(bump, &value.into_iter().collect::<Vec<_>>())
     }
 }
 
 #[derive_where(Copy, Clone)]
-pub struct InternList<'a, T>(&'a [T]);
+pub struct ListIntern<'a, T>(&'a [T]);
 
-impl<'a, T> Deref for InternList<'a, T> {
+impl<'a, T> Deref for ListIntern<'a, T> {
     type Target = &'a [T];
 
     fn deref(&self) -> &Self::Target {
@@ -110,15 +126,15 @@ impl<'a, T> Deref for InternList<'a, T> {
     }
 }
 
-impl<T> hash::Hash for InternList<'_, T> {
+impl<T> hash::Hash for ListIntern<'_, T> {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         (self.0 as *const [T] as *const ()).hash(state);
     }
 }
 
-impl<T> Eq for InternList<'_, T> {}
+impl<T> Eq for ListIntern<'_, T> {}
 
-impl<T> PartialEq for InternList<'_, T> {
+impl<T> PartialEq for ListIntern<'_, T> {
     fn eq(&self, other: &Self) -> bool {
         ptr::addr_eq(self.0, other.0)
     }

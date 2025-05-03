@@ -1,37 +1,56 @@
 use crate::{
-    base::{CharCursor, CharParser, Symbol},
+    base::{CharCursor, CharParser, Diag, Gcx, Level, Parser, Span, SpanCharCursor},
     symbol,
 };
 
 use super::{GroupDelimiter, Punct, TokenStream, TokenTree, TokenTreeKind};
 
-type P<'a, 'b> = &'a mut CharParser<'b>;
-type C<'a, 'b> = &'a mut CharCursor<'b>;
+type P<'a, 'gcx, 'ch> = &'a mut CharParser<'gcx, 'ch>;
+type C<'a, 'gcx, 'ch> = &'a mut CharCursor<'ch>;
 
-fn parse_group(p: P, expected_closer_name: Symbol) -> (TokenStream, GroupDelimiter) {
+pub fn tokenize(gcx: Gcx<'_>, span: Span) -> TokenStream {
+    let text = gcx.source_map.span_text(span);
+    let mut parser = Parser::new(gcx, SpanCharCursor::new(span, &text));
+
+    parser.context(symbol!("tokenizing the file"), |p| {
+        parse_group(p, GroupDelimiter::File)
+    })
+}
+
+fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
     let mut stream = TokenStream::new();
 
-    let closing_del = 'parse: loop {
+    'parse: loop {
         let first_char = p.span();
 
         // Parse closing group delimiters
-        if let Some(closing_del) = p.expect(expected_closer_name, |c| {
+        if let Some(closing_del) = p.expect(delimiter.closing_name(), |c| {
             GroupDelimiter::CLOSEABLE
                 .iter()
                 .copied()
                 .find(|v| match_ch(c, v.closing()))
         }) {
-            break closing_del;
+            if closing_del != delimiter {
+                p.dcx().emit(
+                    Diag::new(
+                        Level::Error,
+                        format_args!(
+                            "mismatched delimiters; expected `{}`, got `{}`",
+                            delimiter.closing(),
+                            closing_del.closing()
+                        ),
+                    )
+                    .primary(first_char, format!("expected `{}`", delimiter.closing())),
+                );
+            }
+
+            break;
         }
 
         // Parse opening group delimiters
         for open_del in GroupDelimiter::OPENABLE {
             if p.expect(open_del.opening_name(), |c| match_ch(c, open_del.opening())) {
-                let (sub_stream, close_del) = parse_group(p, open_del.opening_name());
-
-                if open_del != close_del {
-                    // TODO: handle `found_del` mismatches
-                }
+                let sub_stream = parse_group(p, open_del);
 
                 stream.push(TokenTree {
                     span: first_char.until(p.span()),
@@ -70,12 +89,13 @@ fn parse_group(p: P, expected_closer_name: Symbol) -> (TokenStream, GroupDelimit
         }
 
         // We're stuck :(
-        let c = p.recover(p.stuck());
+        let err = p.stuck();
+        let c = p.recover(err);
 
         c.eat();
-    };
+    }
 
-    (stream, closing_del)
+    stream
 }
 
 fn match_ch(c: C, ch: char) -> bool {

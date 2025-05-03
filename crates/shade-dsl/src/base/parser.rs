@@ -1,27 +1,29 @@
-use super::{DiagCtxt, ErrorGuaranteed, Span, Spanned, Symbol};
+use super::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, LeafDiag, Level, Span, Spanned, Symbol};
+
+use std::fmt::Write as _;
 
 // === Aliases === //
 
-pub type CharParser<'a> = Parser<'a, SpanCharCursor<'a>>;
-pub type CharCursor<'a> = Cursor<SpanCharCursor<'a>>;
+pub type CharParser<'gcx, 'ch> = Parser<'gcx, SpanCharCursor<'ch>>;
+pub type CharCursor<'ch> = Cursor<SpanCharCursor<'ch>>;
 
 // === Parser Core === //
 
 #[derive(Debug)]
-pub struct Parser<'d, I> {
+pub struct Parser<'gcx, I> {
+    gcx: Gcx<'gcx>,
     cursor: Cursor<I>,
     expected: Vec<Symbol>,
     context: Vec<(Span, Symbol)>,
-    diag: &'d DiagCtxt,
 }
 
-impl<'d, I: CursorIter> Parser<'d, I> {
-    pub fn new(diag: &'d DiagCtxt, raw: I) -> Self {
+impl<'gcx, I: CursorIter> Parser<'gcx, I> {
+    pub fn new(gcx: Gcx<'gcx>, raw: I) -> Self {
         Self {
+            gcx,
             cursor: Cursor::new(raw),
             expected: Vec::new(),
             context: Vec::new(),
-            diag,
         }
     }
 
@@ -52,8 +54,33 @@ impl<'d, I: CursorIter> Parser<'d, I> {
         res
     }
 
-    pub fn stuck(&self) -> ErrorGuaranteed {
-        todo!()
+    pub fn stuck(&mut self) -> ErrorGuaranteed {
+        let mut msg = String::new();
+
+        msg.push_str("expected one of ");
+
+        for (i, expectation) in self.expected.drain(..).enumerate() {
+            if i > 0 {
+                msg.push_str(", ");
+            }
+            write!(msg, "{expectation}").unwrap();
+        }
+
+        let mut diag = Diag::new(Level::Error, msg).primary(self.span(), "");
+
+        if let Some(&(cx_span, cx_what)) = self.context.last() {
+            diag.push_child(
+                LeafDiag::new(
+                    Level::OnceNote,
+                    format_args!("this error ocurred while {cx_what}"),
+                )
+                .primary(cx_span, ""),
+            );
+        }
+
+        self.dcx().emit(diag);
+
+        self.dcx().err()
     }
 
     #[must_use]
@@ -63,8 +90,12 @@ impl<'d, I: CursorIter> Parser<'d, I> {
         &mut self.cursor
     }
 
-    pub fn diag(&self) -> &'d DiagCtxt {
-        self.diag
+    pub fn gcx(&self) -> Gcx<'gcx> {
+        self.gcx
+    }
+
+    pub fn dcx(&self) -> &'gcx DiagCtxt {
+        &self.gcx.dcx
     }
 }
 

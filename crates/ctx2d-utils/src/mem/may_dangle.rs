@@ -45,6 +45,13 @@ impl<D: ?Sized + TypeWrapper> MayDangle<D> {
             }
         }
     }
+
+    pub unsafe fn new_default() -> Self
+    where
+        D::Output: Default,
+    {
+        unsafe { Self::new(Default::default()) }
+    }
 }
 
 impl<D: ?Sized + TypeWrapper> Deref for MayDangle<D> {

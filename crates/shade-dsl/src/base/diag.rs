@@ -1,4 +1,10 @@
-use std::{fmt, sync::Mutex};
+use std::{
+    fmt,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering::*},
+    },
+};
 
 use super::Span;
 
@@ -11,6 +17,7 @@ pub struct ErrorGuaranteed;
 #[derive(Debug, Default)]
 pub struct DiagCtxt {
     buffer: Mutex<Vec<Diag>>,
+    error_guaranteed: AtomicBool,
 }
 
 impl DiagCtxt {
@@ -18,8 +25,22 @@ impl DiagCtxt {
         Self::default()
     }
 
+    pub fn errors(&self) -> Vec<Diag> {
+        self.buffer.lock().unwrap().clone()
+    }
+
     pub fn emit(&self, diag: Diag) {
+        if diag.is_fatal() {
+            self.error_guaranteed.store(true, Relaxed);
+        }
+
         self.buffer.lock().unwrap().push(diag);
+    }
+
+    pub fn err(&self) -> ErrorGuaranteed {
+        assert!(self.error_guaranteed.load(Relaxed));
+
+        ErrorGuaranteed
     }
 }
 
@@ -37,6 +58,12 @@ pub enum Level {
     Help,
     OnceHelp,
     FailureNote,
+}
+
+impl Level {
+    pub fn is_fatal(self) -> bool {
+        matches!(self, Level::Bug | Level::Fatal | Level::Error)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +109,10 @@ impl Diag {
         self.children.push(child);
         self
     }
+
+    pub fn is_fatal(&self) -> bool {
+        self.me.is_fatal() || self.children.iter().any(|v| v.is_fatal())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +155,10 @@ impl LeafDiag {
             .push((span, StyledMessage(message.to_string())));
 
         self
+    }
+
+    pub fn is_fatal(&self) -> bool {
+        self.level.is_fatal()
     }
 }
 

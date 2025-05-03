@@ -1,18 +1,18 @@
-use std::{cell::Cell, hash, ptr::NonNull, sync::OnceLock};
+use std::{cell::Cell, fmt, hash, ptr::NonNull, sync::OnceLock};
 
 use crate::semantic::syntax::{BoundValue, Ty, TyAdtMember, TyKind, Value, ValueInner};
 
 use super::{
-    DiagCtxt, Intern, InternList, Interner, ListInterner, SourceMap, Symbol, SymbolInterner,
+    DiagCtxt, Intern, Interner, ListIntern, ListInterner, SourceMap, Symbol, SymbolInterner,
 };
 
 pub type Gcx<'gcx> = &'gcx GcxOwned<'gcx>;
 
 pub struct GcxOwned<'gcx> {
     pub bump: bumpalo::Bump,
-    pub diag: DiagCtxt,
+    pub dcx: DiagCtxt,
     pub symbols: SymbolInterner,
-    pub spans: SourceMap,
+    pub source_map: SourceMap,
     pub interners: GcxInterners<'gcx>,
     pub pre_interned: OnceLock<PreInterned<'gcx>>,
 }
@@ -28,6 +28,12 @@ thread_local! {
     static CURR_GCX: Cell<Option<NonNull<()>>> = const { Cell::new(None) };
 }
 
+impl fmt::Debug for GcxOwned<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GcxOwned").finish_non_exhaustive()
+    }
+}
+
 impl Default for GcxOwned<'_> {
     fn default() -> Self {
         let bump = bumpalo::Bump::new();
@@ -38,9 +44,9 @@ impl Default for GcxOwned<'_> {
 
         Self {
             bump,
-            diag,
+            dcx: diag,
             symbols,
-            spans,
+            source_map: spans,
             interners,
             pre_interned: OnceLock::new(),
         }
@@ -79,11 +85,11 @@ impl<'gcx> GcxOwned<'gcx> {
         T::fetch(&self.interners).intern(&self.bump, value)
     }
 
-    pub fn intern_slice<T: ListInternable<'gcx>>(&'gcx self, value: &[T]) -> InternList<'gcx, T> {
+    pub fn intern_slice<T: ListInternable<'gcx>>(&'gcx self, value: &[T]) -> ListIntern<'gcx, T> {
         T::fetch(&self.interners).intern(&self.bump, value)
     }
 
-    pub fn intern_iter<T>(&'gcx self, iter: impl IntoIterator<Item = T>) -> InternList<'gcx, T>
+    pub fn intern_iter<T>(&'gcx self, iter: impl IntoIterator<Item = T>) -> ListIntern<'gcx, T>
     where
         T: ListInternable<'gcx>,
     {
