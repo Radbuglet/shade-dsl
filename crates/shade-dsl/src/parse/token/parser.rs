@@ -5,7 +5,7 @@ use crate::{
     symbol,
 };
 
-use super::{GroupDelimiter, Ident, Punct, TokenGroup, TokenPunct, TokenStream};
+use super::{GroupDelimiter, Ident, Punct, TokenGroup, TokenPunct, TokenStream, TokenTree};
 
 type P<'a, 'gcx, 'ch> = &'a mut CharParser<'gcx, 'ch>;
 type C<'a, 'gcx, 'ch> = &'a mut CharCursor<'ch>;
@@ -19,11 +19,35 @@ pub fn tokenize(gcx: Gcx<'_>, span: Span) -> TokenStream {
     })
 }
 
+#[derive(Default)]
+struct GroupBuilder {
+    stream: TokenStream,
+    glued: bool,
+}
+
+impl GroupBuilder {
+    fn push(&mut self, token: impl Into<TokenTree>) {
+        self.glued = false;
+        self.stream.push(token);
+    }
+
+    fn push_space(&mut self) {
+        self.glued = false;
+    }
+
+    pub fn glued_punct(&self) -> Option<&TokenPunct> {
+        self.stream
+            .last()
+            .and_then(|v| v.punct())
+            .filter(|_| self.glued)
+    }
+}
+
 fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
-    let mut stream = TokenStream::new();
+    let mut builder = GroupBuilder::default();
 
     'parse: loop {
-        let first_char = p.span();
+        let start_span = p.span();
 
         // Parse closing group delimiters
         if let Some(closing_del) = p.expect(delimiter.closing_name(), |c| {
@@ -34,7 +58,7 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         }) {
             if closing_del != delimiter {
                 p.dcx().emit(Diag::span_err(
-                    first_char,
+                    start_span,
                     format_args!(
                         "{} delimiter; expected `{}`, got `{}`",
                         if closing_del == GroupDelimiter::File {
@@ -56,14 +80,11 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
             if p.expect(open_del.opening_name(), |c| match_ch(c, open_del.opening())) {
                 let sub_stream = parse_group(p, open_del);
 
-                stream.push(
-                    TokenGroup {
-                        span: first_char.until(p.span()),
-                        delimiter,
-                        tokens: sub_stream,
-                    }
-                    .into(),
-                );
+                builder.push(TokenGroup {
+                    span: start_span.until(p.span()),
+                    delimiter,
+                    tokens: sub_stream,
+                });
 
                 continue 'parse;
             }
@@ -90,20 +111,17 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
 
         // Parse identifiers
         if let Some(ident) = parse_ident(p) {
-            stream.push(ident.into());
+            builder.push(ident);
             continue;
         }
 
         // Parse punctuation
         if let Some(ch) = p.expect(symbol!("punctuation"), |c| match_chs(c, Punct::CHARSET)) {
-            stream.push(
-                TokenPunct {
-                    span: first_char,
-                    ch: Punct::new(ch),
-                    glued: false, // TODO
-                }
-                .into(),
-            );
+            builder.push(TokenPunct {
+                span: start_span,
+                ch: Punct::new(ch),
+                glued: builder.glued_punct().is_some(),
+            });
 
             continue;
         }
@@ -112,6 +130,7 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         if p.expect(symbol!("whitespace"), |c| {
             c.eat().is_some_and(|c| c.is_whitespace())
         }) {
+            builder.push_space();
             continue;
         }
 
@@ -120,9 +139,11 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         let c = p.recover(err);
 
         c.eat();
+
+        builder.push_space();
     }
 
-    stream
+    builder.stream
 }
 
 fn parse_ident(p: P) -> Option<Ident> {

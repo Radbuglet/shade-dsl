@@ -114,14 +114,15 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
     pub fn hint_if_passes<R>(
         &mut self,
         parse: impl FnOnce(&mut Cursor<I>) -> R,
-        gen_diag: impl FnOnce(R) -> LeafDiag,
+        gen_diag: impl FnOnce(Span, R) -> LeafDiag,
     ) where
         R: LookaheadResult,
     {
         self.hint_syntactic(|c, hinter| {
+            let start = c.span();
             let res = parse(c);
             if res.is_ok() {
-                hinter.hint(gen_diag(res));
+                hinter.hint(gen_diag(start.until(c.span()), res));
             }
         });
     }
@@ -229,7 +230,7 @@ pub trait OptionParser<I: CursorIter> {
     fn hint_if_match(
         &self,
         p: &mut Parser<'_, I>,
-        gen_diag: impl FnOnce(Self::Output) -> LeafDiag,
+        gen_diag: impl FnOnce(Span, Self::Output) -> LeafDiag,
     ) {
         p.hint_if_passes(
             |c| self.matcher()(c, &mut StuckHinter::new_dummy()),
@@ -254,6 +255,15 @@ where
     fn matcher(&self) -> &Self::Handler {
         &self.1
     }
+}
+
+pub fn matcher<C, F, O>(expectation: Symbol, matcher: F) -> (Symbol, F)
+where
+    F: Fn(&mut Cursor<C>, &mut StuckHinter<'_>) -> O,
+    O: LookaheadResult,
+    C: CursorIter,
+{
+    (expectation, matcher)
 }
 
 #[derive(Debug, Clone)]

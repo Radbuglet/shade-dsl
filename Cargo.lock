@@ -671,6 +671,7 @@ dependencies = [
  "bumpalo",
  "ctx2d-utils",
  "derive-where",
+ "paste",
  "scopeguard",
  "unicode-xid",
 ]

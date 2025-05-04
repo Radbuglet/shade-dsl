@@ -1,4 +1,4 @@
-use std::{slice, str, sync::Arc};
+use std::{ops::Deref, slice, str, sync::Arc};
 
 use crate::{
     base::{AtomSimplify, Span, Spanned, Symbol},
@@ -15,16 +15,20 @@ impl TokenStream {
         Self::default()
     }
 
-    pub fn tokens(&self) -> &[TokenTree] {
-        &self.0
-    }
-
     pub fn tokens_mut(&mut self) -> &mut Vec<TokenTree> {
         Arc::make_mut(&mut self.0)
     }
 
-    pub fn push(&mut self, token: TokenTree) {
-        self.tokens_mut().push(token);
+    pub fn push(&mut self, token: impl Into<TokenTree>) {
+        self.tokens_mut().push(token.into());
+    }
+}
+
+impl Deref for TokenStream {
+    type Target = [TokenTree];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -70,40 +74,52 @@ impl Spanned for TokenTree {
     }
 }
 
-impl From<TokenGroup> for TokenTree {
-    fn from(value: TokenGroup) -> Self {
-        Self::Group(value)
-    }
+macro_rules! token_tree_converters {
+    ($($variant:ident: $ty:ty),*$(,)?) => {
+        $(
+            impl From<$ty> for TokenTree {
+                fn from(value: $ty) -> Self {
+                    Self::$variant(value)
+                }
+            }
+        )*
+
+        paste::paste! {
+            impl TokenTree {
+                $(
+                    pub fn [<$variant:snake>](&self) -> Option<&$ty> {
+                        match self {
+                            Self::$variant(v) => Some(v),
+                            _ => None,
+                        }
+                    }
+
+                    pub fn [<$variant:snake _mut>](&mut self) -> Option<&mut $ty> {
+                        match self {
+                            Self::$variant(v) => Some(v),
+                            _ => None,
+                        }
+                    }
+
+                    pub fn [<into_$variant:snake>](self) -> Result<$ty, Self> {
+                        match self {
+                            Self::$variant(v) => Ok(v),
+                            v => Err(v),
+                        }
+                    }
+                )*
+            }
+        }
+    };
 }
 
-impl From<Ident> for TokenTree {
-    fn from(value: Ident) -> Self {
-        Self::Ident(value)
-    }
-}
-
-impl From<TokenPunct> for TokenTree {
-    fn from(value: TokenPunct) -> Self {
-        Self::Punct(value)
-    }
-}
-
-impl From<TokenNumLit> for TokenTree {
-    fn from(value: TokenNumLit) -> Self {
-        Self::NumLit(value)
-    }
-}
-
-impl From<TokenStrLit> for TokenTree {
-    fn from(value: TokenStrLit) -> Self {
-        Self::StrLit(value)
-    }
-}
-
-impl From<TokenCharLit> for TokenTree {
-    fn from(value: TokenCharLit) -> Self {
-        Self::CharLit(value)
-    }
+token_tree_converters! {
+    Group: TokenGroup,
+    Ident: Ident,
+    Punct: TokenPunct,
+    NumLit: TokenNumLit,
+    StrLit: TokenStrLit,
+    CharLit: TokenCharLit,
 }
 
 #[derive(Debug, Clone)]
