@@ -10,7 +10,7 @@ pub type Gcx<'gcx> = &'gcx GcxOwned<'gcx>;
 
 pub struct GcxOwned<'gcx> {
     pub bump: bumpalo::Bump,
-    pub dcx: DiagCtxt,
+    pub dcx: DiagCtxt<'gcx>,
     pub symbols: SymbolInterner,
     pub source_map: SourceMap,
     pub interners: GcxInterners<'gcx>,
@@ -34,26 +34,28 @@ impl fmt::Debug for GcxOwned<'_> {
     }
 }
 
-impl Default for GcxOwned<'_> {
-    fn default() -> Self {
+impl<'gcx> GcxOwned<'gcx> {
+    pub fn init<R>(f: impl FnOnce(Gcx<'_>) -> R) -> R {
         let bump = bumpalo::Bump::new();
         let diag = DiagCtxt::new();
         let symbols = SymbolInterner::new();
         let spans = SourceMap::new();
         let interners = GcxInterners::default();
 
-        Self {
+        let gcx = GcxOwned {
             bump,
             dcx: diag,
             symbols,
             source_map: spans,
             interners,
             pre_interned: OnceLock::new(),
-        }
-    }
-}
+        };
 
-impl<'gcx> GcxOwned<'gcx> {
+        gcx.dcx.bind_gcx(&gcx);
+
+        gcx.provide_tls(f)
+    }
+
     pub fn provide_tls<R>(&'gcx self, f: impl FnOnce(Gcx<'_>) -> R) -> R {
         let _guard = scopeguard::guard(CURR_GCX.take(), |old| {
             CURR_GCX.set(old);

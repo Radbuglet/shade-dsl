@@ -1,12 +1,16 @@
 use std::{
-    fmt,
+    fmt, ops,
     sync::{
-        Mutex,
+        OnceLock,
         atomic::{AtomicBool, Ordering::*},
     },
 };
 
-use super::Span;
+use ctx2d_utils::mem::MappedArc;
+
+use crate::base::{FilePos, SourceFileOrigin, SourceMap, SourceMapFile};
+
+use super::{Gcx, Span};
 
 #[derive(Debug, Copy, Clone)]
 #[non_exhaustive]
@@ -15,18 +19,22 @@ pub struct ErrorGuaranteed;
 // === Context === //
 
 #[derive(Debug, Default)]
-pub struct DiagCtxt {
-    buffer: Mutex<Vec<Diag>>,
+pub struct DiagCtxt<'gcx> {
     error_guaranteed: AtomicBool,
+    gcx: OnceLock<Gcx<'gcx>>,
 }
 
-impl DiagCtxt {
+impl<'gcx> DiagCtxt<'gcx> {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn errors(&self) -> Vec<Diag> {
-        self.buffer.lock().unwrap().clone()
+    pub fn bind_gcx(&self, gcx: Gcx<'gcx>) {
+        self.gcx.set(gcx).unwrap();
+    }
+
+    pub fn gcx(&self) -> Gcx<'gcx> {
+        self.gcx.get().unwrap()
     }
 
     pub fn emit(&self, diag: Diag) {
@@ -34,7 +42,15 @@ impl DiagCtxt {
             self.error_guaranteed.store(true, Relaxed);
         }
 
-        self.buffer.lock().unwrap().push(diag);
+        emit_pretty(
+            &self.gcx().source_map,
+            &mut termcolor::StandardStream::stdout(termcolor::ColorChoice::Auto),
+            &diag,
+        );
+    }
+
+    pub fn had_error(&self) -> bool {
+        self.error_guaranteed.load(Relaxed)
     }
 
     pub fn err(&self) -> ErrorGuaranteed {
@@ -208,3 +224,102 @@ pub struct MultiSpan {
 
 #[derive(Debug, Clone)]
 pub struct StyledMessage(pub String);
+
+// === Emission Backends === //
+
+fn emit_pretty(source_map: &SourceMap, writer: &mut dyn termcolor::WriteColor, diag: &Diag) {
+    use codespan_reporting::{
+        diagnostic::{Diagnostic, Label, LabelStyle, Severity},
+        files::{Error as FilesError, Files},
+        term::{Config, emit},
+    };
+
+    struct FilesAdapter<'a>(&'a SourceMap);
+
+    impl<'a> Files<'a> for FilesAdapter<'a> {
+        type FileId = FilePos;
+        type Name = MappedArc<SourceMapFile, SourceFileOrigin>;
+        type Source = MappedArc<String, str>;
+
+        fn name(&'a self, id: Self::FileId) -> Result<Self::Name, FilesError> {
+            Ok(MappedArc::new(self.0.file(id), |f| f.origin()))
+        }
+
+        fn source(&'a self, id: Self::FileId) -> Result<Self::Source, FilesError> {
+            Ok(MappedArc::new(self.0.file(id).contents().clone(), |v| {
+                v.as_str()
+            }))
+        }
+
+        fn line_index(&'a self, id: Self::FileId, byte_index: usize) -> Result<usize, FilesError> {
+            let file = self.0.file(id);
+            Ok(file
+                .segmentation()
+                .offset_to_loc(FilePos::new(byte_index))
+                .line as usize)
+        }
+
+        fn line_range(
+            &'a self,
+            id: Self::FileId,
+            line_index: usize,
+        ) -> Result<ops::Range<usize>, FilesError> {
+            let file = self.0.file(id);
+
+            Ok(file
+                .segmentation()
+                .line_span(line_index as u32)
+                .interpret_byte_range())
+        }
+    }
+
+    fn convert_leaf(source_map: &SourceMap, diag: &LeafDiag) -> Diagnostic<FilePos> {
+        Diagnostic::new(match diag.level {
+            Level::Bug => Severity::Bug,
+            Level::Fatal => Severity::Error,
+            Level::Error => Severity::Error,
+            Level::DelayedBug => Severity::Bug,
+            Level::Warning => Severity::Warning,
+            Level::Note => Severity::Note,
+            Level::OnceNote => Severity::Note,
+            Level::Help => Severity::Help,
+            Level::OnceHelp => Severity::Help,
+            Level::FailureNote => Severity::Help,
+        })
+        .with_message(&diag.message.0)
+        .with_labels(
+            diag.spans
+                .primary
+                .iter()
+                .map(|(sp, msg)| {
+                    let file = source_map.file(sp.lo);
+
+                    Label {
+                        style: LabelStyle::Primary,
+                        file_id: sp.lo,
+                        range: file.start().delta_usize(sp.lo)..file.start().delta_usize(sp.hi),
+                        message: msg.0.clone(),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    emit(
+        writer,
+        &Config::default(),
+        &FilesAdapter(source_map),
+        &convert_leaf(source_map, &diag.me),
+    )
+    .unwrap();
+
+    for child in &diag.children {
+        emit(
+            writer,
+            &Config::default(),
+            &FilesAdapter(source_map),
+            &convert_leaf(source_map, child),
+        )
+        .unwrap();
+    }
+}

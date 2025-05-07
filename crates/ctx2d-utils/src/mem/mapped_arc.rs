@@ -39,12 +39,6 @@ pub struct MappedArc<O: ?Sized, T: ?Sized> {
     mapped: NonNull<T>,
 }
 
-impl<O: ?Sized, T: ?Sized + fmt::Debug> fmt::Debug for MappedArc<O, T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        (**self).fmt(f)
-    }
-}
-
 unsafe impl<O, T> Send for MappedArc<O, T>
 where
     O: ?Sized + Send + Sync,
@@ -152,5 +146,23 @@ impl<O: ?Sized, T: ?Sized> Deref for MappedArc<O, T> {
             // that the output reference can live as long as a reference to the pointee lives.
             self.mapped.as_ref()
         }
+    }
+}
+
+impl<O: ?Sized, T: ?Sized> AsRef<T> for MappedArc<O, T> {
+    fn as_ref(&self) -> &T {
+        self
+    }
+}
+
+impl<O: ?Sized, T: ?Sized + fmt::Debug> fmt::Debug for MappedArc<O, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+impl<O: ?Sized, T: ?Sized + fmt::Display> fmt::Display for MappedArc<O, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (**self).fmt(f)
     }
 }

@@ -6,16 +6,15 @@ use shade_dsl::{
 };
 
 fn main() {
-    GcxOwned::default().provide_tls(|gcx| {
+    GcxOwned::init(|gcx| {
         let path = Path::new("samples/app.sdl");
 
         let span = gcx.source_map.create(
             &mut NaiveSegmenter,
-            Arc::new(SourceFileOrigin::Fs(path.to_path_buf())),
+            SourceFileOrigin::Fs(path.to_path_buf()),
             Arc::new(String::from_utf8(fs::read(path).unwrap()).unwrap()),
         );
 
         dbg!(tokenize(gcx, span));
-        dbg!(gcx.dcx.errors());
     });
 }

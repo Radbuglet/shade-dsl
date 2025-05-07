@@ -6,15 +6,15 @@ use crate::{
 };
 
 use super::{
-    GroupDelimiter, Ident, Punct, StrLitKind, TokenGroup, TokenPunct, TokenStrLit, TokenStream,
-    TokenTree,
+    GroupDelimiter, Ident, Punct, StrLitKind, TokenCharLit, TokenGroup, TokenPunct, TokenStrLit,
+    TokenStream, TokenTree,
 };
 
 type P<'a, 'gcx, 'ch> = &'a mut CharParser<'gcx, 'ch>;
 type C<'a, 'gcx, 'ch> = &'a mut CharCursor<'ch>;
 
 pub fn tokenize(gcx: Gcx<'_>, span: Span) -> TokenStream {
-    let text = gcx.source_map.span_text(span);
+    let text = gcx.source_map.file(span.lo).text(span);
     let mut parser = Parser::new(gcx, SpanCharCursor::new(span, &text));
 
     parser.context(symbol!("tokenizing the file"), |p| {
@@ -142,6 +142,12 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         // Parse un-prefixed string literals
         if let Some(str) = parse_string_lit(p, &builder, None, 0, start_span) {
             builder.push(str);
+            continue;
+        }
+
+        // Parse character
+        if let Some(ch) = parse_char_lit(p) {
+            builder.push(ch);
             continue;
         }
 
@@ -317,7 +323,7 @@ fn parse_string_lit(
         }
 
         // Match regular character
-        if let Some(ch) = p.expect(symbol!("character"), |c| c.eat()) {
+        if let Some(ch) = parse_regular_char(p) {
             accum.push(ch);
             continue;
         }
@@ -330,6 +336,37 @@ fn parse_string_lit(
         span: prefix_start.until(p.span()),
         kind,
         value: Symbol::new(&accum),
+    })
+}
+
+fn parse_char_lit(p: P) -> Option<TokenCharLit> {
+    let start = p.span();
+
+    if !p.expect(symbol!("`'`"), |c| match_ch(c, '\'')) {
+        return None;
+    }
+
+    let value = 'parse_ch: {
+        if let Some(ch) = parse_char_escape(p) {
+            break 'parse_ch ch;
+        }
+
+        if let Some(ch) = parse_regular_char(p) {
+            break 'parse_ch ch;
+        }
+
+        p.stuck();
+        return None;
+    };
+
+    if !p.expect(symbol!("`'`"), |c| match_ch(c, '\'')) {
+        p.stuck();
+        return None;
+    }
+
+    Some(TokenCharLit {
+        span: start.until(p.span()),
+        value,
     })
 }
 
@@ -393,6 +430,10 @@ fn parse_char_escape(p: P) -> Option<char> {
 
     p.stuck();
     None
+}
+
+fn parse_regular_char(p: P) -> Option<char> {
+    p.expect(symbol!("character"), |c| c.eat())
 }
 
 fn match_ch(c: C, ch: char) -> bool {

@@ -1,7 +1,7 @@
 use std::{
     fmt,
     num::NonZeroU32,
-    ops::{Add, AddAssign, Sub, SubAssign},
+    ops::{self, Add, AddAssign, Sub, SubAssign},
     path::PathBuf,
     sync::{Arc, RwLock},
 };
@@ -18,12 +18,9 @@ pub struct FilePos(NonZeroU32);
 impl fmt::Debug for FilePos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         GcxOwned::fetch_tls(|gcx| {
-            write!(
-                f,
-                "{}:{}",
-                gcx.source_map.file_origin(*self),
-                gcx.source_map.pos_to_loc(*self)
-            )
+            let file = gcx.source_map.file(*self);
+
+            write!(f, "{}:{}", file.origin(), file.pos_to_loc(*self))
         })
     }
 }
@@ -163,21 +160,22 @@ pub struct Span {
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         GcxOwned::fetch_tls(|gcx| {
-            let origin = gcx.source_map.file_origin(self.lo);
-            let lo = gcx.source_map.pos_to_loc(self.lo);
-            let hi = gcx.source_map.pos_to_loc(self.hi);
+            let file = gcx.source_map.file(self.lo);
+
+            let lo = file.pos_to_loc(self.lo);
+            let hi = file.pos_to_loc(self.hi);
 
             if lo.line == hi.line {
                 write!(
                     f,
                     "{}:{}:{}-{}",
-                    origin,
+                    file.origin(),
                     lo.line + 1,
                     lo.column + 1,
                     hi.column + 1
                 )
             } else {
-                write!(f, "{origin}:{lo}-{hi}")
+                write!(f, "{}:{lo}-{hi}", file.origin())
             }
         })
     }
@@ -200,6 +198,13 @@ impl Span {
 
     pub fn new_sized(lo: FilePos, size: usize) -> Self {
         Self { lo, hi: lo + size }
+    }
+
+    pub fn offset(self, offset: FilePos) -> Span {
+        Span {
+            lo: offset + self.lo.usize(),
+            hi: offset + self.hi.usize(),
+        }
     }
 
     pub fn shrink_to_lo(self) -> Self {
@@ -231,6 +236,10 @@ impl Span {
     pub fn truncate_left(self, len: usize) -> Self {
         Self::new(self.lo, (self.lo + len).min(self.hi))
     }
+
+    pub fn interpret_byte_range(self) -> ops::Range<usize> {
+        self.lo.usize()..self.hi.usize()
+    }
 }
 
 pub trait Spanned {
@@ -259,15 +268,8 @@ pub struct SourceMap(RwLock<SourceMapInner>);
 
 #[derive(Default)]
 struct SourceMapInner {
-    files: Vec<SourceMapEntry>,
+    files: Vec<Arc<SourceMapFile>>,
     len: FilePos,
-}
-
-struct SourceMapEntry {
-    start: FilePos,
-    origin: Arc<SourceFileOrigin>,
-    contents: Arc<String>,
-    segmentation: SegmentInfo,
 }
 
 impl SourceMap {
@@ -278,7 +280,7 @@ impl SourceMap {
     pub fn create(
         &self,
         segmenter: &mut impl Segmenter,
-        origin: Arc<SourceFileOrigin>,
+        origin: SourceFileOrigin,
         contents: Arc<String>,
     ) -> Span {
         let mut inner = self.0.write().unwrap();
@@ -288,55 +290,72 @@ impl SourceMap {
         let contents_len = contents.len();
         let segmentation = SegmentInfo::new(segmenter, &contents);
 
-        inner.files.push(SourceMapEntry {
+        inner.files.push(Arc::new(SourceMapFile {
             start: inner.len,
             origin,
             contents,
             segmentation,
-        });
+        }));
 
-        inner.len += contents_len;
+        inner.len += contents_len + 1; // (allow EOF to be referenced)
 
-        Span { lo, hi: inner.len }
+        Span::new_sized(lo, contents_len)
     }
 
-    pub fn file_origin(&self, pos: FilePos) -> Arc<SourceFileOrigin> {
-        self.0.read().unwrap().file(pos).origin.clone()
-    }
-
-    pub fn file_span(&self, pos: FilePos) -> Span {
+    pub fn file(&self, pos: FilePos) -> Arc<SourceMapFile> {
         let inner = self.0.read().unwrap();
-        let file = inner.file(pos);
+        let file = &inner.files[binary_search_leftwards(&inner.files, &pos, |f| f.start).unwrap()];
+        assert!(file.start.delta_usize(pos) <= file.contents.len());
+        file.clone()
+    }
+}
 
-        Span {
-            lo: file.start,
-            hi: file.start + file.contents.len(),
-        }
+#[derive(Debug)]
+pub struct SourceMapFile {
+    start: FilePos,
+    origin: SourceFileOrigin,
+    contents: Arc<String>,
+    segmentation: SegmentInfo,
+}
+
+impl SourceMapFile {
+    pub fn start(&self) -> FilePos {
+        self.start
     }
 
-    pub fn span_text(&self, span: Span) -> MappedArc<String, str> {
-        let inner = self.0.read().unwrap();
-        let file = inner.file(span.lo);
+    pub fn span(&self) -> Span {
+        Span::new_sized(self.start, self.contents.len())
+    }
 
-        MappedArc::new(file.contents.clone(), |v| {
-            &v[file.start.delta_usize(span.lo)..file.start.delta_usize(span.hi)]
+    pub fn origin(&self) -> &SourceFileOrigin {
+        &self.origin
+    }
+
+    pub fn contents(&self) -> &Arc<String> {
+        &self.contents
+    }
+
+    pub fn segmentation(&self) -> &SegmentInfo {
+        &self.segmentation
+    }
+
+    pub fn text(&self, span: Span) -> MappedArc<String, str> {
+        MappedArc::new(self.contents.clone(), |v| {
+            &v[self.start.delta_usize(span.lo)..self.start.delta_usize(span.hi)]
         })
     }
 
     pub fn pos_to_loc(&self, pos: FilePos) -> LineCol {
-        let inner = self.0.read().unwrap();
-        let file = inner.file(pos);
-
-        file.segmentation
-            .offset_to_loc(FilePos::new_u32(file.start.delta(pos)))
+        self.segmentation
+            .offset_to_loc(FilePos::new_u32(self.start().delta(pos)))
     }
-}
 
-impl SourceMapInner {
-    fn file(&self, pos: FilePos) -> &SourceMapEntry {
-        let file = &self.files[binary_search_leftwards(&self.files, &pos, |f| f.start).unwrap()];
-        // assert!(file.start.delta_usize(pos) < file.contents.len());  // FIXME
-        file
+    pub fn loc_to_pos(&self, loc: LineCol) -> FilePos {
+        self.start() + self.segmentation.loc_to_offset(loc).usize()
+    }
+
+    pub fn line_span(&self, ln_no: u32) -> Span {
+        self.segmentation.line_span(ln_no).offset(self.start())
     }
 }
 
@@ -356,6 +375,9 @@ impl fmt::Display for LineCol {
 
 #[derive(Debug, Clone)]
 pub struct SegmentInfo {
+    /// An anchor maps a `FilePos` offset to a `LineCol` pair and vice versa. Locations and
+    /// positions between anchors are assumed to be non-newline single-byte single-width characters
+    /// relative to the previous anchor.
     anchors: Vec<(FilePos, LineCol)>,
 }
 
@@ -401,6 +423,19 @@ impl SegmentInfo {
             .unwrap_or_default();
 
         anchor_pos + (loc.column - anchor_loc.column)
+    }
+
+    pub fn line_span(&self, ln_no: u32) -> Span {
+        Span {
+            lo: self.loc_to_offset(LineCol {
+                line: ln_no,
+                column: 0,
+            }),
+            hi: self.loc_to_offset(LineCol {
+                line: ln_no + 1,
+                column: 0,
+            }),
+        }
     }
 }
 

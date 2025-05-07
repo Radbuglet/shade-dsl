@@ -199,7 +199,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         self.gcx
     }
 
-    pub fn dcx(&self) -> &'gcx DiagCtxt {
+    pub fn dcx(&self) -> &'gcx DiagCtxt<'gcx> {
         &self.gcx.dcx
     }
 

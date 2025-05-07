@@ -669,10 +669,12 @@ name = "shade-dsl"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
+ "codespan-reporting",
  "ctx2d-utils",
  "derive-where",
  "paste",
  "scopeguard",
+ "termcolor",
  "unicode-xid",
 ]
 
