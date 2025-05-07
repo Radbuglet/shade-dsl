@@ -229,9 +229,20 @@ impl Spanned for TokenStrLit {
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum StrLitKind {
     Utf8Slice,
+    ByteLiteral,
     NulTerminated,
-    AsciiByteSlice,
-    AsciiNulTerminated,
+}
+
+impl StrLitKind {
+    pub const VARIANTS: [Self; 3] = [Self::Utf8Slice, Self::ByteLiteral, Self::NulTerminated];
+
+    pub fn prefix(self) -> Symbol {
+        match self {
+            Self::Utf8Slice => symbol!(""),
+            Self::ByteLiteral => symbol!("b"),
+            Self::NulTerminated => symbol!("c"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

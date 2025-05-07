@@ -6,5 +6,5 @@ const whee = struct {
 };
 
 const add = fn<T: type>(a: T, b: T) -> T {
-    a + r#b
+    a + r#"whee"# + @ehw .. "whee \n \x0F"
 };

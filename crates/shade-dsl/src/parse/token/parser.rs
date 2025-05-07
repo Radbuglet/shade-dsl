@@ -1,11 +1,14 @@
 use unicode_xid::UnicodeXID;
 
 use crate::{
-    base::{CharCursor, CharParser, Diag, Gcx, Parser, Span, SpanCharCursor, Symbol},
+    base::{CharCursor, CharParser, Diag, Gcx, LeafDiag, Parser, Span, SpanCharCursor, Symbol},
     symbol,
 };
 
-use super::{GroupDelimiter, Ident, Punct, TokenGroup, TokenPunct, TokenStream, TokenTree};
+use super::{
+    GroupDelimiter, Ident, Punct, StrLitKind, TokenGroup, TokenPunct, TokenStrLit, TokenStream,
+    TokenTree,
+};
 
 type P<'a, 'gcx, 'ch> = &'a mut CharParser<'gcx, 'ch>;
 type C<'a, 'gcx, 'ch> = &'a mut CharCursor<'ch>;
@@ -27,7 +30,7 @@ struct GroupBuilder {
 
 impl GroupBuilder {
     fn push(&mut self, token: impl Into<TokenTree>) {
-        self.glued = false;
+        self.glued = true;
         self.stream.push(token);
     }
 
@@ -39,6 +42,13 @@ impl GroupBuilder {
         self.stream
             .last()
             .and_then(|v| v.punct())
+            .filter(|_| self.glued)
+    }
+
+    fn glued_ident(&self) -> Option<&Ident> {
+        self.stream
+            .last()
+            .and_then(|v| v.ident())
             .filter(|_| self.glued)
     }
 }
@@ -54,7 +64,7 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
             GroupDelimiter::CLOSEABLE
                 .iter()
                 .copied()
-                .find(|v| c.lookahead(|c| c.eat() == v.closing()))
+                .find(|v| match_ch_or_eof(c, v.closing()))
         }) {
             if closing_del != delimiter {
                 p.dcx().emit(Diag::span_err(
@@ -103,17 +113,40 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
             continue;
         }
 
-        // Parse string literals
-        // TODO
+        // Parse identifiers (and prefixed string literals)
+        if let Some(ident) = parse_ident(p) {
+            // Try to parse a string literal
+            let mut pounds = 0;
+
+            while p.expect(symbol!("`#`"), |c| match_ch(c, '#')) {
+                pounds += 1;
+            }
+
+            if let Some(str) = parse_string_lit(p, &builder, Some(ident), pounds, start_span) {
+                builder.push(str);
+                continue;
+            }
+
+            // Otherwise, parse it as an identifier.
+            if pounds == 0 {
+                // Parse identifier
+                builder.push(ident);
+                continue;
+            } else {
+                // Has to be a string :(
+                p.stuck();
+                continue;
+            }
+        }
+
+        // Parse un-prefixed string literals
+        if let Some(str) = parse_string_lit(p, &builder, None, 0, start_span) {
+            builder.push(str);
+            continue;
+        }
 
         // Parse numeric literals
         // TODO
-
-        // Parse identifiers
-        if let Some(ident) = parse_ident(p) {
-            builder.push(ident);
-            continue;
-        }
 
         // Parse punctuation
         if let Some(ch) = p.expect(symbol!("punctuation"), |c| match_chs(c, Punct::CHARSET)) {
@@ -155,7 +188,7 @@ fn parse_ident(p: P) -> Option<Ident> {
 
     let mut accum = String::new();
 
-    let raw = if first_ch == 'r' && p.expect(symbol!("#"), |c| match_ch(c, '#')) {
+    let raw = if first_ch == '@' {
         true
     } else {
         accum.push(first_ch);
@@ -175,8 +208,199 @@ fn parse_ident(p: P) -> Option<Ident> {
     })
 }
 
+fn parse_string_lit(
+    p: P,
+    builder: &GroupBuilder,
+    prefix: Option<Ident>,
+    pounds: u32,
+    prefix_start: Span,
+) -> Option<TokenStrLit> {
+    let quote_start = p.span();
+
+    // Match the opening quote
+    if !p.expect(symbol!("`\"`"), |c| match_ch(c, '"')) {
+        return None;
+    }
+
+    if let Some(ident) = builder.glued_ident() {
+        p.err(Diag::span_err(ident.span, "invalid prefix"));
+
+        return None;
+    }
+
+    // Interpret the prefix
+    let (kind, is_raw) = 'prefix: {
+        let Some(prefix) = prefix else {
+            break 'prefix (StrLitKind::Utf8Slice, false);
+        };
+
+        if prefix.raw {
+            p.err(
+                Diag::span_err(prefix.span, "unknown string literal prefix").child(
+                    LeafDiag::span_note(
+                        prefix.span.truncate_left(1),
+                        "`@`, the raw identifier indicator, is not expected in any string prefix",
+                    ),
+                ),
+            );
+
+            break 'prefix (StrLitKind::Utf8Slice, false);
+        }
+
+        let (prefix_sym, is_raw) = if let Some(prefix_sym) =
+            prefix.text.as_str(|v| v.strip_prefix('r').map(Symbol::new))
+        {
+            (prefix_sym, true)
+        } else {
+            (prefix.text, false)
+        };
+
+        let Some(lit_kind) = StrLitKind::VARIANTS
+            .into_iter()
+            .find(|v| v.prefix() == prefix_sym)
+        else {
+            p.err(Diag::span_err(
+                prefix.span,
+                format_args!("unknown string literal prefix `{prefix_sym}`"),
+            ));
+
+            break 'prefix (StrLitKind::Utf8Slice, false);
+        };
+
+        (lit_kind, is_raw)
+    };
+
+    if pounds > 0 && !is_raw {
+        p.err(Diag::span_err(
+            prefix_start.until(quote_start),
+            "cannot surround a string literal with `#`s when the string is not raw",
+        ));
+    }
+
+    // Parse the string contents
+    let mut accum = String::new();
+
+    let closing_name = if pounds == 0 {
+        symbol!("`\"`")
+    } else {
+        let mut accum = String::new();
+        accum.push_str("`\"");
+        for _ in 0..pounds {
+            accum.push('#');
+        }
+        accum.push('`');
+        Symbol::new(&accum)
+    };
+
+    loop {
+        // Match closing quote
+        if p.expect(closing_name, |c| {
+            if !match_ch(c, '"') {
+                return false;
+            }
+
+            for _ in 0..pounds {
+                if !match_ch(c, '#') {
+                    return false;
+                }
+            }
+
+            true
+        }) {
+            break;
+        }
+
+        // Match escape
+        if let Some(ch) = parse_char_escape(p) {
+            accum.push(ch);
+            continue;
+        }
+
+        // Match regular character
+        if let Some(ch) = p.expect(symbol!("character"), |c| c.eat()) {
+            accum.push(ch);
+            continue;
+        }
+
+        p.stuck();
+        break;
+    }
+
+    Some(TokenStrLit {
+        span: prefix_start.until(p.span()),
+        kind,
+        value: Symbol::new(&accum),
+    })
+}
+
+fn parse_char_escape(p: P) -> Option<char> {
+    let start = p.span();
+
+    if !p.expect(symbol!("`\\`"), |c| match_ch(c, '\\')) {
+        return None;
+    }
+
+    // Match well-known escapes
+    let well_known = [
+        (symbol!("`r`"), 'r', '\r'),
+        (symbol!("`n`"), 'n', '\n'),
+        (symbol!("`t`"), 't', '\t'),
+        (symbol!("`0`"), '0', '\0'),
+        (symbol!("`\"`"), '"', '"'),
+        (symbol!("`'`"), '\'', '\''),
+    ];
+
+    for (name, ch, escape) in well_known {
+        if p.expect(name, |c| match_ch(c, ch)) {
+            return Some(escape);
+        }
+    }
+
+    // Match ASCII escapes
+    if p.expect(symbol!("`x`"), |c| match_ch(c, 'x')) {
+        let Some(hexits) = p.expect(symbol!("hexadecimal ASCII code"), |c| {
+            Some([
+                c.eat().filter(|c| c.is_ascii_hexdigit())?,
+                c.eat().filter(|c| c.is_ascii_hexdigit())?,
+            ])
+        }) else {
+            p.stuck();
+
+            return None;
+        };
+
+        let hex_seq = [hexits[0] as u8, hexits[1] as u8];
+        let hex_seq = std::str::from_utf8(&hex_seq).unwrap(); // Hexits are ASCII
+
+        let code = u8::from_str_radix(hex_seq, 16).unwrap();
+
+        if code > 0x7F {
+            p.err(Diag::span_err(
+                start.until(p.span()),
+                "ASCII escape code must be at most `\\x7F`",
+            ));
+
+            return None;
+        }
+
+        return Some(code as char);
+    }
+
+    // Match Unicode escapes
+    if p.expect(symbol!("`u`"), |c| match_ch(c, 'u')) {
+        todo!()
+    }
+
+    p.stuck();
+    None
+}
+
 fn match_ch(c: C, ch: char) -> bool {
-    c.lookahead(|c| c.eat() == Some(ch))
+    match_ch_or_eof(c, Some(ch))
+}
+
+fn match_ch_or_eof(c: C, ch: Option<char>) -> bool {
+    c.lookahead(|c| c.eat() == ch)
 }
 
 fn match_chs(c: C, set: &str) -> Option<char> {

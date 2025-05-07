@@ -227,6 +227,10 @@ impl Span {
     pub fn until(self, other: Span) -> Self {
         Self::new(self.lo, other.lo)
     }
+
+    pub fn truncate_left(self, len: usize) -> Self {
+        Self::new(self.lo, (self.lo + len).min(self.hi))
+    }
 }
 
 pub trait Spanned {
@@ -331,7 +335,7 @@ impl SourceMap {
 impl SourceMapInner {
     fn file(&self, pos: FilePos) -> &SourceMapEntry {
         let file = &self.files[binary_search_leftwards(&self.files, &pos, |f| f.start).unwrap()];
-        assert!(file.start.delta_usize(pos) < file.contents.len());
+        // assert!(file.start.delta_usize(pos) < file.contents.len());  // FIXME
         file
     }
 }

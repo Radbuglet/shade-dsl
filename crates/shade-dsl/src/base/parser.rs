@@ -106,25 +106,43 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 
     pub fn hint_syntactic(&mut self, f: impl FnOnce(&mut Cursor<I>, &mut StuckHinter<'_>)) {
         f(
-            &mut self.cursor,
+            &mut self.cursor.clone(),
             &mut StuckHinter(Some(&mut self.stuck_hints)),
         )
     }
 
     pub fn hint_if_passes<R>(
         &mut self,
-        parse: impl FnOnce(&mut Cursor<I>) -> R,
+        parse: impl FnOnce(&mut Cursor<I>, &mut StuckHinter<'_>) -> R,
         gen_diag: impl FnOnce(Span, R) -> LeafDiag,
     ) where
         R: LookaheadResult,
     {
         self.hint_syntactic(|c, hinter| {
             let start = c.span();
-            let res = parse(c);
+            let res = parse(c, hinter);
             if res.is_ok() {
                 hinter.hint(gen_diag(start.until(c.span()), res));
             }
         });
+    }
+
+    pub fn expect_or_hint<R>(
+        &mut self,
+        is_expected: bool,
+        what: Symbol,
+        parse: impl FnOnce(&mut Cursor<I>, &mut StuckHinter<'_>) -> R,
+        gen_diag: impl FnOnce(Span, R) -> LeafDiag,
+    ) -> R
+    where
+        R: LookaheadResult + DefaultReject,
+    {
+        if is_expected {
+            self.expect_hinted(what, parse)
+        } else {
+            self.hint_if_passes(parse, gen_diag);
+            R::default_reject()
+        }
     }
 
     pub fn hint(&mut self, diag: LeafDiag) {
@@ -184,6 +202,10 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
     pub fn dcx(&self) -> &'gcx DiagCtxt {
         &self.gcx.dcx
     }
+
+    pub fn err(&self, diag: Diag) {
+        self.dcx().emit(diag);
+    }
 }
 
 #[derive(Debug)]
@@ -203,7 +225,7 @@ impl StuckHinter<'_> {
     }
 }
 
-pub trait OptionParser<I: CursorIter> {
+pub trait Matcher<I: CursorIter> {
     type Handler: Fn(&mut Cursor<I>, &mut StuckHinter<'_>) -> Self::Output;
     type Output: LookaheadResult;
 
@@ -232,14 +254,23 @@ pub trait OptionParser<I: CursorIter> {
         p: &mut Parser<'_, I>,
         gen_diag: impl FnOnce(Span, Self::Output) -> LeafDiag,
     ) {
-        p.hint_if_passes(
-            |c| self.matcher()(c, &mut StuckHinter::new_dummy()),
-            gen_diag,
-        );
+        p.hint_if_passes(self.matcher(), gen_diag);
+    }
+
+    fn expect_or_hint(
+        &mut self,
+        p: &mut Parser<'_, I>,
+        is_expected: bool,
+        gen_diag: impl FnOnce(Span, Self::Output) -> LeafDiag,
+    ) -> Self::Output
+    where
+        Self::Output: DefaultReject,
+    {
+        p.expect_or_hint(is_expected, self.expectation(), self.matcher(), gen_diag)
     }
 }
 
-impl<C, F, O> OptionParser<C> for (Symbol, F)
+impl<C, F, O> Matcher<C> for (Symbol, F)
 where
     F: Fn(&mut Cursor<C>, &mut StuckHinter<'_>) -> O,
     O: LookaheadResult,
@@ -255,15 +286,6 @@ where
     fn matcher(&self) -> &Self::Handler {
         &self.1
     }
-}
-
-pub fn matcher<C, F, O>(expectation: Symbol, matcher: F) -> (Symbol, F)
-where
-    F: Fn(&mut Cursor<C>, &mut StuckHinter<'_>) -> O,
-    O: LookaheadResult,
-    C: CursorIter,
-{
-    (expectation, matcher)
 }
 
 #[derive(Debug, Clone)]
@@ -331,6 +353,28 @@ impl<T> LookaheadResult for Option<T> {
 impl<T, E> LookaheadResult for Result<T, E> {
     fn is_ok(&self) -> bool {
         self.is_ok()
+    }
+}
+
+pub trait DefaultReject: LookaheadResult {
+    fn default_reject() -> Self;
+}
+
+impl DefaultReject for bool {
+    fn default_reject() -> Self {
+        false
+    }
+}
+
+impl<T> DefaultReject for Option<T> {
+    fn default_reject() -> Self {
+        None
+    }
+}
+
+impl<T, E: Default> DefaultReject for Result<T, E> {
+    fn default_reject() -> Self {
+        Err(E::default())
     }
 }
 
@@ -407,4 +451,16 @@ impl Spanned for SpannedChar {
     fn span(&self) -> Span {
         self.span
     }
+}
+
+pub trait SpanCharMatcher: for<'a> Matcher<SpanCharCursor<'a>> {}
+
+impl<T> SpanCharMatcher for T where T: for<'a> Matcher<SpanCharCursor<'a>> {}
+
+pub fn span_char_matcher<F, R>(name: Symbol, matcher: F) -> (Symbol, F)
+where
+    F: Fn(&mut Cursor<SpanCharCursor>, &mut StuckHinter<'_>) -> R,
+    R: LookaheadResult,
+{
+    (name, matcher)
 }
