@@ -1,7 +1,9 @@
 use std::{ops::Deref, slice, str, sync::Arc};
 
 use crate::{
-    base::{AtomSimplify, Span, Spanned, Symbol},
+    base::{
+        AtomSimplify, Cursor, LookaheadResult, Matcher, Parser, Span, Spanned, StuckHinter, Symbol,
+    },
     symbol,
 };
 
@@ -374,3 +376,78 @@ macro_rules! punct {
 }
 
 pub use punct;
+
+// === TokenCursor === //
+
+pub type TokenParser<'gcx, 'g> = Parser<'gcx, RawTokenCursor<'g>>;
+pub type TokenCursor<'ch> = Cursor<RawTokenCursor<'ch>>;
+
+#[derive(Debug, Clone)]
+pub struct RawTokenCursor<'a> {
+    group: &'a TokenGroup,
+    tokens: std::slice::Iter<'a, TokenTree>,
+}
+
+impl<'a> RawTokenCursor<'a> {
+    pub fn new(group: &'a TokenGroup) -> Self {
+        Self {
+            group,
+            tokens: group.tokens.iter(),
+        }
+    }
+}
+
+impl<'a> From<&'a TokenGroup> for RawTokenCursor<'a> {
+    fn from(value: &'a TokenGroup) -> Self {
+        Self::new(value)
+    }
+}
+
+impl<'a> Iterator for RawTokenCursor<'a> {
+    type Item = TokenCursorElement<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(match self.tokens.next() {
+            Some(token) => TokenCursorElement::Token(token),
+            None => TokenCursorElement::Ending(self.group.span.shrink_to_hi()),
+        })
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum TokenCursorElement<'a> {
+    Ending(Span),
+    Token(&'a TokenTree),
+}
+
+impl Spanned for TokenCursorElement<'_> {
+    fn span(&self) -> Span {
+        match *self {
+            TokenCursorElement::Ending(span) => span,
+            TokenCursorElement::Token(token) => token.span(),
+        }
+    }
+}
+
+impl<'a> AtomSimplify for TokenCursorElement<'a> {
+    type Simplified = Option<&'a TokenTree>;
+
+    fn simplify(self) -> Self::Simplified {
+        match self {
+            TokenCursorElement::Ending(_) => None,
+            TokenCursorElement::Token(token) => Some(token),
+        }
+    }
+}
+
+pub trait TokenMatcher: for<'a> Matcher<RawTokenCursor<'a>> {}
+
+impl<T> TokenMatcher for T where T: for<'a> Matcher<RawTokenCursor<'a>> {}
+
+pub fn token_matcher<F, R>(name: Symbol, matcher: F) -> (Symbol, F)
+where
+    F: Fn(&mut Cursor<RawTokenCursor<'_>>, &mut StuckHinter<'_>) -> R,
+    R: LookaheadResult,
+{
+    (name, matcher)
+}

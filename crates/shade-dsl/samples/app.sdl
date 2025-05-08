@@ -1,10 +1,38 @@
-// This contains `invalid puncts`.
+mod vec_core {
+    const alphabet = "xyzw";
 
-const whee = struct {
+    fn Vec(ty: Ty, dim: u32) -> metatype {
+        let fields = [];
+
+        for ch in alphabet.iter() {
+            fields.push(FieldDef.new(dim, ty));
+        }
+
+        struct {
+            ...fields
+
+            fn [std.overloads.add](self) {
+
+            }
+
+            fn [std.overloads.sub](self) {
+
+            }
+        }
+    };
+
+    fn FindAdapter() {
+
+    }
+}
+
+struct VertexState {
     foo: u32,
     bar: i32,
-};
+    baz: f32,
+}
 
-const add = fn<T: type>(a: T, b: T) -> T {
-    a + r#"whee"# + @ehw .. "whee \n \x0F"
-};
+fn main(data: VertexState) {
+    val whee = data.whee;
+    val woo = data.woo;
+}

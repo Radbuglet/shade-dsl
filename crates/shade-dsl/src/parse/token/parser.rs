@@ -356,12 +356,12 @@ fn parse_char_lit(p: P) -> Option<TokenCharLit> {
         }
 
         p.stuck();
-        return None;
+        '?'
     };
 
     if !p.expect(symbol!("`'`"), |c| match_ch(c, '\'')) {
         p.stuck();
-        return None;
+        // (fallthrough)
     }
 
     Some(TokenCharLit {

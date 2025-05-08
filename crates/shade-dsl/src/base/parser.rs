@@ -2,11 +2,6 @@ use super::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, LeafDiag, Span, Spanned, Symbo
 
 use std::fmt::Write as _;
 
-// === Aliases === //
-
-pub type CharParser<'gcx, 'ch> = Parser<'gcx, SpanCharCursor<'ch>>;
-pub type CharCursor<'ch> = Cursor<SpanCharCursor<'ch>>;
-
 // === Parser Core === //
 
 #[derive(Debug)]
@@ -19,14 +14,18 @@ pub struct Parser<'gcx, I> {
 }
 
 impl<'gcx, I: CursorIter> Parser<'gcx, I> {
-    pub fn new(gcx: Gcx<'gcx>, raw: I) -> Self {
+    pub fn new(gcx: Gcx<'gcx>, raw: impl Into<I>) -> Self {
         Self {
             gcx,
-            cursor: Cursor::new(raw),
+            cursor: Cursor::new(raw.into()),
             context: Vec::new(),
             expected: Vec::new(),
             stuck_hints: Vec::new(),
         }
+    }
+
+    pub fn enter(&self, sub: impl Into<I>) -> Self {
+        Self::new(self.gcx(), sub.into())
     }
 
     fn moved_forwards(&mut self) {
@@ -399,6 +398,9 @@ where
 }
 
 // === Standard Cursors === //
+
+pub type CharParser<'gcx, 'ch> = Parser<'gcx, SpanCharCursor<'ch>>;
+pub type CharCursor<'ch> = Cursor<SpanCharCursor<'ch>>;
 
 #[derive(Debug, Clone)]
 pub struct SpanCharCursor<'a> {
