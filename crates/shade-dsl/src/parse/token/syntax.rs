@@ -2,7 +2,8 @@ use std::{ops::Deref, slice, str, sync::Arc};
 
 use crate::{
     base::{
-        AtomSimplify, Cursor, LookaheadResult, Matcher, Parser, Span, Spanned, StuckHinter, Symbol,
+        AtomSimplify, ConstFmt, Cursor, LookaheadResult, Matcher, Parser, Span, Spanned,
+        StuckHinter, Symbol,
     },
     symbol,
 };
@@ -305,38 +306,13 @@ macro_rules! define_puncts {
 impl Punct {
     pub const fn new(ch: char) -> Self {
         let Some(ch) = Self::try_new(ch) else {
-            const PREFIX: &str = "`";
-            const SUFFIX: &str = "` is not a valid `Punct`";
+            let mut f = ConstFmt::new();
 
-            const fn write_str(target: &mut [u8], len: &mut usize, text: &str) {
-                let mut i = 0;
-                while i < text.len() {
-                    target[*len + i] = text.as_bytes()[i];
-                    i += 1;
-                }
+            f.write('`');
+            f.write(ch);
+            f.write_str("` is not a valid `Punct`");
 
-                *len += text.len();
-            }
-
-            const fn write_ch(target: &mut [u8], len: &mut usize, ch: char) {
-                let mut buf = [0; 4];
-                let buf = ch.encode_utf8(&mut buf);
-                write_str(target, len, buf);
-            }
-
-            let mut str_buf = [0; PREFIX.len() + 4 + SUFFIX.len()];
-            let mut str_len = 0;
-            write_str(&mut str_buf, &mut str_len, PREFIX);
-            write_ch(&mut str_buf, &mut str_len, ch);
-            write_str(&mut str_buf, &mut str_len, SUFFIX);
-
-            let str_buf = unsafe { slice::from_raw_parts(str_buf.as_ptr(), str_len) };
-
-            let Ok(str_buf) = str::from_utf8(str_buf) else {
-                unreachable!();
-            };
-
-            panic!("{}", str_buf);
+            panic!("{}", f.finish());
         };
 
         ch
