@@ -1,5 +1,7 @@
 use std::{ops::Deref, slice, str, sync::Arc};
 
+use ctx2d_utils::lang::ConstFmt;
+
 use crate::{
     base::{
         AtomSimplify, Cursor, LookaheadResult, Matcher, Parser, Span, Spanned, StuckHinter, Symbol,
@@ -298,6 +300,12 @@ macro_rules! define_puncts {
                     $(Self::$name => $ch,)*
                 }
             }
+
+            pub fn expectation_name(self) -> Symbol {
+                match self {
+                    $(Self::$name => symbol!(concat!("`", $ch, "`")),)*
+                }
+            }
         }
     };
 }
@@ -350,7 +358,6 @@ macro_rules! punct {
     };
 }
 
-use ctx2d_utils::lang::ConstFmt;
 pub use punct;
 
 // === TokenCursor === //

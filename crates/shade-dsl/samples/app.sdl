@@ -1,7 +1,7 @@
 mod vec_core {
     const alphabet = "xyzw";
 
-    fn Vec(ty: Ty, dim: u32) -> metatype {
+    fn Vec(ty: ty, dim: u32) -> metatype {
         let fields = [];
 
         for ch in alphabet.iter() {
@@ -27,9 +27,9 @@ mod vec_core {
 }
 
 struct VertexState {
-    foo: u32,
-    bar: i32,
-    baz: f32,
+    let foo: u32;
+    let bar: i32;
+    let baz: f32;
 }
 
 fn main(data: VertexState) {

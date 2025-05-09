@@ -17,5 +17,7 @@ fn main() {
 
         let tokens = tokenize(gcx, span);
         let ast = parse_file(gcx, &tokens);
+
+        dbg!(&ast);
     });
 }

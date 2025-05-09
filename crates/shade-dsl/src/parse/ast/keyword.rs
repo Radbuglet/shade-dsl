@@ -62,11 +62,14 @@ define_keywords! {
     Enum = "enum",
     Fn = "fn",
     If = "if",
+    Let = "let",
     Loop = "loop",
     Mod = "mod",
+    Mut = "mut",
     Pub = "pub",
     Struct = "struct",
     Type = "type",
+    Union = "union",
 }
 
 #[macro_export]
