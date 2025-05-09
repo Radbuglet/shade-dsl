@@ -2,7 +2,7 @@ use std::{fs, path::Path, sync::Arc};
 
 use shade_dsl::{
     base::{GcxOwned, NaiveSegmenter, SourceFileOrigin},
-    parse::token::tokenize,
+    parse::{ast::parse_file, token::tokenize},
 };
 
 fn main() {
@@ -15,6 +15,7 @@ fn main() {
             Arc::new(String::from_utf8(fs::read(path).unwrap()).unwrap()),
         );
 
-        dbg!(tokenize(gcx, span));
+        let tokens = tokenize(gcx, span);
+        let ast = parse_file(gcx, &tokens);
     });
 }

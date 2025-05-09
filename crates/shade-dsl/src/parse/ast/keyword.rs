@@ -66,3 +66,12 @@ define_keywords! {
     Struct = "struct",
     Type = "type",
 }
+
+#[macro_export]
+macro_rules! kw {
+    ($kw:expr) => {
+        const { $crate::parse::ast::Keyword::new($kw) }
+    };
+}
+
+pub use kw;

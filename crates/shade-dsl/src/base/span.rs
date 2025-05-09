@@ -379,6 +379,9 @@ pub struct SegmentInfo {
     /// positions between anchors are assumed to be non-newline single-byte single-width characters
     /// relative to the previous anchor.
     anchors: Vec<(FilePos, LineCol)>,
+
+    /// The length of the string which was segmented.
+    len: FilePos,
 }
 
 impl SegmentInfo {
@@ -403,7 +406,10 @@ impl SegmentInfo {
             }
         });
 
-        Self { anchors }
+        Self {
+            anchors,
+            len: FilePos::new(str.len()),
+        }
     }
 
     pub fn offset_to_loc(&self, offset: FilePos) -> LineCol {
@@ -417,12 +423,16 @@ impl SegmentInfo {
         }
     }
 
-    pub fn loc_to_offset(&self, loc: LineCol) -> FilePos {
+    fn loc_to_offset(&self, loc: LineCol) -> FilePos {
         let (anchor_pos, anchor_loc) = binary_search_leftwards(&self.anchors, &loc, |v| v.1)
             .map(|idx| self.anchors[idx])
             .unwrap_or_default();
 
-        anchor_pos + (loc.column - anchor_loc.column)
+        if anchor_loc.line == loc.line {
+            anchor_pos + (loc.column - anchor_loc.column)
+        } else {
+            self.len
+        }
     }
 
     pub fn line_span(&self, ln_no: u32) -> Span {

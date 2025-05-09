@@ -1,5 +1,7 @@
 use std::{
-    fmt, ops,
+    fmt,
+    marker::PhantomData,
+    ops,
     sync::{
         OnceLock,
         atomic::{AtomicBool, Ordering::*},
@@ -7,14 +9,39 @@ use std::{
 };
 
 use ctx2d_utils::mem::MappedArc;
+use derive_where::derive_where;
 
 use crate::base::{FilePos, SourceFileOrigin, SourceMap, SourceMapFile};
 
 use super::{Gcx, Span};
 
+// === Errors === //
+
 #[derive(Debug, Copy, Clone)]
 #[non_exhaustive]
 pub struct ErrorGuaranteed;
+
+pub trait EmissionGuarantee {
+    const REQUIRES_FATAL: bool;
+
+    fn new_result(err: Option<ErrorGuaranteed>) -> Self;
+}
+
+impl EmissionGuarantee for Option<ErrorGuaranteed> {
+    const REQUIRES_FATAL: bool = false;
+
+    fn new_result(err: Option<ErrorGuaranteed>) -> Self {
+        err
+    }
+}
+
+impl EmissionGuarantee for ErrorGuaranteed {
+    const REQUIRES_FATAL: bool = true;
+
+    fn new_result(err: Option<ErrorGuaranteed>) -> Self {
+        err.expect("mismatched emission guarantee")
+    }
+}
 
 // === Context === //
 
@@ -37,7 +64,7 @@ impl<'gcx> DiagCtxt<'gcx> {
         self.gcx.get().unwrap()
     }
 
-    pub fn emit(&self, diag: Diag) {
+    pub fn emit<E: EmissionGuarantee>(&self, diag: Diag<E>) -> E {
         if diag.is_fatal() {
             self.error_guaranteed.store(true, Relaxed);
         }
@@ -45,18 +72,14 @@ impl<'gcx> DiagCtxt<'gcx> {
         emit_pretty(
             &self.gcx().source_map,
             &mut termcolor::StandardStream::stdout(termcolor::ColorChoice::Auto),
-            &diag,
+            diag.cast_ref(),
         );
+
+        E::new_result(diag.is_fatal().then_some(ErrorGuaranteed))
     }
 
     pub fn had_error(&self) -> bool {
         self.error_guaranteed.load(Relaxed)
-    }
-
-    pub fn err(&self) -> ErrorGuaranteed {
-        assert!(self.error_guaranteed.load(Relaxed));
-
-        ErrorGuaranteed
     }
 }
 
@@ -82,19 +105,50 @@ impl Level {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Diag {
+pub type SoftDiag = Diag<Option<ErrorGuaranteed>>;
+pub type HardDiag = Diag<ErrorGuaranteed>;
+
+#[derive_where(Debug, Clone)]
+#[repr(C)]
+pub struct Diag<E: EmissionGuarantee> {
+    pub _guar: PhantomData<fn(E) -> E>,
     pub me: LeafDiag,
     pub children: Vec<LeafDiag>,
 }
 
-impl Diag {
-    pub fn new(level: Level, message: impl fmt::Display) -> Self {
-        LeafDiag::new(level, message).promote()
+impl<E: EmissionGuarantee> Diag<E> {
+    fn cast_ref<E2: EmissionGuarantee>(&self) -> &Diag<E2> {
+        assert!(!E2::REQUIRES_FATAL || self.is_fatal());
+
+        unsafe { &*(self as *const Diag<E> as *const Diag<E2>) }
     }
 
+    fn cast_mut<E2: EmissionGuarantee>(&mut self) -> &mut Diag<E2> {
+        assert!(!E2::REQUIRES_FATAL || self.is_fatal());
+
+        unsafe { &mut *(self as *mut Diag<E> as *mut Diag<E2>) }
+    }
+
+    fn cast<E2: EmissionGuarantee>(self) -> Diag<E2> {
+        assert!(!E2::REQUIRES_FATAL || self.is_fatal());
+
+        Diag {
+            _guar: PhantomData,
+            me: self.me,
+            children: self.children,
+        }
+    }
+}
+
+impl HardDiag {
     pub fn span_err(span: Span, message: impl fmt::Display) -> Self {
-        LeafDiag::span_err(span, message).promote()
+        LeafDiag::span_err(span, message).promote().cast()
+    }
+}
+
+impl SoftDiag {
+    pub fn new(level: Level, message: impl fmt::Display) -> Self {
+        LeafDiag::new(level, message).promote()
     }
 
     pub fn span_warn(span: Span, message: impl fmt::Display) -> Self {
@@ -108,7 +162,9 @@ impl Diag {
     pub fn span_once_note(span: Span, message: impl fmt::Display) -> Self {
         LeafDiag::span_once_note(span, message).promote()
     }
+}
 
+impl<E: EmissionGuarantee> Diag<E> {
     pub fn primary(mut self, span: Span, message: impl fmt::Display) -> Self {
         self.push_primary(span, message);
         self
@@ -176,8 +232,9 @@ impl LeafDiag {
         Self::new(Level::OnceNote, message).primary(span, "")
     }
 
-    pub fn promote(self) -> Diag {
+    pub fn promote(self) -> SoftDiag {
         Diag {
+            _guar: PhantomData,
             me: self,
             children: Vec::new(),
         }
@@ -227,7 +284,7 @@ pub struct StyledMessage(pub String);
 
 // === Emission Backends === //
 
-fn emit_pretty(source_map: &SourceMap, writer: &mut dyn termcolor::WriteColor, diag: &Diag) {
+fn emit_pretty(source_map: &SourceMap, writer: &mut dyn termcolor::WriteColor, diag: &SoftDiag) {
     use codespan_reporting::{
         diagnostic::{Diagnostic, Label, LabelStyle, Severity},
         files::{Error as FilesError, Files},

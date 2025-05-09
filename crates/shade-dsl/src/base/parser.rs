@@ -1,6 +1,15 @@
-use super::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, LeafDiag, Span, Spanned, Symbol};
+use super::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, HardDiag, LeafDiag, Span, Spanned, Symbol};
 
 use std::fmt::Write as _;
+
+// === Parse Error === //
+
+pub type PResult<T> = Result<T, RecoveryRequired>;
+pub type OptPResult<T> = Result<Option<T>, RecoveryRequired>;
+
+#[derive(Debug, Copy, Clone)]
+#[must_use]
+pub struct RecoveryRequired(pub ErrorGuaranteed);
 
 // === Parser Core === //
 
@@ -148,7 +157,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         self.stuck_hints.push(diag);
     }
 
-    pub fn stuck(&mut self) -> ErrorGuaranteed {
+    pub fn stuck(&mut self) -> RecoveryRequired {
         let mut msg = String::new();
 
         msg.push_str("expected one of ");
@@ -182,12 +191,17 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 
         self.moved_forwards();
 
-        self.dcx().emit(diag);
-        self.dcx().err()
+        RecoveryRequired(self.dcx().emit(diag))
     }
 
     #[must_use]
-    pub fn recover(&mut self, err: ErrorGuaranteed) -> &mut Cursor<I> {
+    pub fn stuck_recover(&mut self) -> &mut Cursor<I> {
+        let err = self.stuck();
+        self.recover(err)
+    }
+
+    #[must_use]
+    pub fn recover(&mut self, err: RecoveryRequired) -> &mut Cursor<I> {
         let _ = err;
         self.moved_forwards();
 
@@ -202,8 +216,8 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         &self.gcx.dcx
     }
 
-    pub fn err(&self, diag: Diag) {
-        self.dcx().emit(diag);
+    pub fn err(&self, diag: HardDiag) -> RecoveryRequired {
+        RecoveryRequired(self.dcx().emit(diag))
     }
 }
 

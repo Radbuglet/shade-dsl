@@ -13,12 +13,12 @@ use super::{
 type P<'a, 'gcx, 'ch> = &'a mut CharParser<'gcx, 'ch>;
 type C<'a, 'gcx, 'ch> = &'a mut CharCursor<'ch>;
 
-pub fn tokenize(gcx: Gcx<'_>, span: Span) -> TokenStream {
+pub fn tokenize(gcx: Gcx<'_>, span: Span) -> TokenGroup {
     let text = gcx.source_map.file(span.lo).text(span);
     let mut parser = Parser::new(gcx, SpanCharCursor::new(span, &text));
 
     parser.context(symbol!("tokenizing the file"), |p| {
-        parse_group(p, GroupDelimiter::File)
+        parse_group(p, p.span(), GroupDelimiter::File)
     })
 }
 
@@ -53,11 +53,11 @@ impl GroupBuilder {
     }
 }
 
-fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
+fn parse_group(p: P, group_start: Span, delimiter: GroupDelimiter) -> TokenGroup {
     let mut builder = GroupBuilder::default();
 
     'parse: loop {
-        let start_span = p.span();
+        let token_start = p.span();
 
         // Parse closing group delimiters
         if let Some(closing_del) = p.expect(delimiter.closing_name(), |c| {
@@ -68,7 +68,7 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         }) {
             if closing_del != delimiter {
                 p.dcx().emit(Diag::span_err(
-                    start_span,
+                    token_start,
                     format_args!(
                         "{} delimiter; expected `{}`, got `{}`",
                         if closing_del == GroupDelimiter::File {
@@ -88,13 +88,7 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         // Parse opening group delimiters
         for open_del in GroupDelimiter::OPENABLE {
             if p.expect(open_del.opening_name(), |c| match_ch(c, open_del.opening())) {
-                let sub_stream = parse_group(p, open_del);
-
-                builder.push(TokenGroup {
-                    span: start_span.until(p.span()),
-                    delimiter,
-                    tokens: sub_stream,
-                });
+                builder.push(parse_group(p, token_start, open_del));
 
                 continue 'parse;
             }
@@ -122,7 +116,7 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
                 pounds += 1;
             }
 
-            if let Some(str) = parse_string_lit(p, &builder, Some(ident), pounds, start_span) {
+            if let Some(str) = parse_string_lit(p, &builder, Some(ident), pounds, token_start) {
                 builder.push(str);
                 continue;
             }
@@ -134,13 +128,14 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
                 continue;
             } else {
                 // Has to be a string :(
-                p.stuck();
+                // Recovery strategy: parse the expected string literal as a regular token.
+                let _ = p.stuck();
                 continue;
             }
         }
 
         // Parse un-prefixed string literals
-        if let Some(str) = parse_string_lit(p, &builder, None, 0, start_span) {
+        if let Some(str) = parse_string_lit(p, &builder, None, 0, token_start) {
             builder.push(str);
             continue;
         }
@@ -157,7 +152,7 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         // Parse punctuation
         if let Some(ch) = p.expect(symbol!("punctuation"), |c| match_chs(c, Punct::CHARSET)) {
             builder.push(TokenPunct {
-                span: start_span,
+                span: token_start,
                 ch: Punct::new(ch),
                 glued: builder.glued_punct().is_some(),
             });
@@ -182,7 +177,11 @@ fn parse_group(p: P, delimiter: GroupDelimiter) -> TokenStream {
         builder.push_space();
     }
 
-    builder.stream
+    TokenGroup {
+        span: group_start.until(p.span()),
+        delimiter,
+        tokens: builder.stream,
+    }
 }
 
 fn parse_ident(p: P) -> Option<Ident> {
@@ -218,7 +217,7 @@ fn parse_string_lit(
     p: P,
     builder: &GroupBuilder,
     prefix: Option<Ident>,
-    pounds: u32,
+    mut pounds: u32,
     prefix_start: Span,
 ) -> Option<TokenStrLit> {
     let quote_start = p.span();
@@ -229,9 +228,8 @@ fn parse_string_lit(
     }
 
     if let Some(ident) = builder.glued_ident() {
-        p.err(Diag::span_err(ident.span, "invalid prefix"));
-
-        return None;
+        // Recovery strategy: continue trying to parse this string as UTF-8
+        let _ = p.err(Diag::span_err(ident.span, "invalid prefix"));
     }
 
     // Interpret the prefix
@@ -241,7 +239,8 @@ fn parse_string_lit(
         };
 
         if prefix.raw {
-            p.err(
+            // Recovery strategy: continue trying to parse this string as UTF-8
+            let _ = p.err(
                 Diag::span_err(prefix.span, "unknown string literal prefix").child(
                     LeafDiag::span_note(
                         prefix.span.truncate_left(1),
@@ -265,7 +264,8 @@ fn parse_string_lit(
             .into_iter()
             .find(|v| v.prefix() == prefix_sym)
         else {
-            p.err(Diag::span_err(
+            // Recovery strategy: continue trying to parse this string as UTF-8
+            let _ = p.err(Diag::span_err(
                 prefix.span,
                 format_args!("unknown string literal prefix `{prefix_sym}`"),
             ));
@@ -277,10 +277,13 @@ fn parse_string_lit(
     };
 
     if pounds > 0 && !is_raw {
-        p.err(Diag::span_err(
+        // Recovery strategy: try parsing this string as if it didn't have pounds.
+        let _ = p.err(Diag::span_err(
             prefix_start.until(quote_start),
             "cannot surround a string literal with `#`s when the string is not raw",
         ));
+
+        pounds = 0;
     }
 
     // Parse the string contents
@@ -317,9 +320,11 @@ fn parse_string_lit(
         }
 
         // Match escape
-        if let Some(ch) = parse_char_escape(p) {
-            accum.push(ch);
-            continue;
+        if !is_raw {
+            if let Some(ch) = parse_char_escape(p) {
+                accum.push(ch);
+                continue;
+            }
         }
 
         // Match regular character
@@ -328,7 +333,9 @@ fn parse_string_lit(
             continue;
         }
 
-        p.stuck();
+        // Recovery strategy: parse this unexpected character (EOF, probably) as a token.
+        let _ = p.stuck();
+
         break;
     }
 
@@ -355,12 +362,16 @@ fn parse_char_lit(p: P) -> Option<TokenCharLit> {
             break 'parse_ch ch;
         }
 
-        p.stuck();
+        // Recovery strategy: parse this unexpected character (EOF, probably) as a token.
+        let _ = p.stuck();
+
         '?'
     };
 
     if !p.expect(symbol!("`'`"), |c| match_ch(c, '\'')) {
-        p.stuck();
+        // Recovery strategy: parse this unexpected character as the next token.
+        let _ = p.stuck();
+
         // (fallthrough)
     }
 
@@ -401,7 +412,8 @@ fn parse_char_escape(p: P) -> Option<char> {
                 c.eat().filter(|c| c.is_ascii_hexdigit())?,
             ])
         }) else {
-            p.stuck();
+            // Recovery strategy: parse the unexpected hexcode as regular string characters.
+            let _ = p.stuck();
 
             return None;
         };
@@ -412,12 +424,14 @@ fn parse_char_escape(p: P) -> Option<char> {
         let code = u8::from_str_radix(hex_seq, 16).unwrap();
 
         if code > 0x7F {
-            p.err(Diag::span_err(
+            // Recovery strategy: pretend the code was valid but substitute it with a placeholder
+            // character.
+            let _ = p.err(Diag::span_err(
                 start.until(p.span()),
                 "ASCII escape code must be at most `\\x7F`",
             ));
 
-            return None;
+            return Some('?');
         }
 
         return Some(code as char);
@@ -428,7 +442,9 @@ fn parse_char_escape(p: P) -> Option<char> {
         todo!()
     }
 
-    p.stuck();
+    // Recovery strategy: parse the unexpected escape as a regular string character.
+    let _ = p.stuck();
+
     None
 }
 
