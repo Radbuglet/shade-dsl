@@ -43,7 +43,7 @@ impl ConstFmt {
     }
 }
 
-pub const fn str_eq(lhs: &str, rhs: &str) -> bool {
+pub const fn const_str_eq(lhs: &str, rhs: &str) -> bool {
     if lhs.len() != rhs.len() {
         return false;
     }

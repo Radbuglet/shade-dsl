@@ -1,15 +1,31 @@
+use ctx2d_utils::lang::Extension;
+
 use super::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, HardDiag, LeafDiag, Span, Spanned, Symbol};
 
 use std::fmt::Write as _;
 
 // === Parse Error === //
 
-pub type PResult<T> = Result<T, RecoveryRequired>;
-pub type OptPResult<T> = Result<Option<T>, RecoveryRequired>;
-
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 #[must_use]
 pub struct RecoveryRequired(pub ErrorGuaranteed);
+
+pub type PResult<T> = Result<T, RecoveryRequired>;
+pub type OptPResult<T> = PResult<Option<T>>;
+
+pub trait OptPResultExt: Sized + Extension<OptPResult<Self::Value>> {
+    type Value;
+
+    fn did_match(self) -> Option<PResult<Self::Value>>;
+}
+
+impl<T> OptPResultExt for OptPResult<T> {
+    type Value = T;
+
+    fn did_match(self) -> Option<PResult<Self::Value>> {
+        self.transpose()
+    }
+}
 
 // === Parser Core === //
 
@@ -160,7 +176,13 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
     pub fn stuck(&mut self) -> RecoveryRequired {
         let mut msg = String::new();
 
-        msg.push_str("expected one of ");
+        msg.push_str("expected ");
+
+        msg.push_str(match self.expected.len() {
+            0 => "nothing (this is likely a bug)",
+            1..=2 => "",
+            3.. => "one of ",
+        });
 
         for (i, expectation) in self.expected.iter().copied().enumerate() {
             if i > 0 && self.expected.len() > 2 {
@@ -218,6 +240,14 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 
     pub fn err(&self, diag: HardDiag) -> RecoveryRequired {
         RecoveryRequired(self.dcx().emit(diag))
+    }
+
+    pub fn cursor_unsafe(&self) -> &Cursor<I> {
+        &self.cursor
+    }
+
+    pub fn cursor_unsafe_mut(&mut self) -> &mut Cursor<I> {
+        &mut self.cursor
     }
 }
 

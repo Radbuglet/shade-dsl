@@ -10,8 +10,8 @@ use super::{
     TokenStream, TokenTree,
 };
 
-type P<'a, 'gcx, 'ch> = &'a mut CharParser<'gcx, 'ch>;
-type C<'a, 'gcx, 'ch> = &'a mut CharCursor<'ch>;
+type P<'gcx, 'a, 'ch> = &'a mut CharParser<'gcx, 'ch>;
+type C<'a, 'ch> = &'a mut CharCursor<'ch>;
 
 pub fn tokenize(gcx: Gcx<'_>, span: Span) -> TokenGroup {
     let text = gcx.source_map.file(span.lo).text(span);

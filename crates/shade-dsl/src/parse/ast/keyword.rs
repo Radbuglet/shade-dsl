@@ -1,6 +1,8 @@
 use std::fmt;
 
-use crate::base::{ConstFmt, Symbol, str_eq, symbol};
+use ctx2d_utils::lang::{ConstFmt, const_str_eq};
+
+use crate::base::{Symbol, symbol};
 
 macro_rules! define_keywords {
     ($( $name:ident = $text:literal ),* $(,)?) => {
@@ -11,7 +13,7 @@ macro_rules! define_keywords {
 
         impl Keyword {
             pub const fn new(v: &str) -> Self {
-                $(if str_eq(v, $text) {
+                $(if const_str_eq(v, $text) {
                     return Self::$name;
                 })*
 

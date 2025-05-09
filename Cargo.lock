@@ -675,6 +675,7 @@ dependencies = [
  "paste",
  "scopeguard",
  "termcolor",
+ "thiserror",
  "unicode-xid",
 ]
 

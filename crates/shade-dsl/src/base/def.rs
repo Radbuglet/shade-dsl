@@ -2,10 +2,16 @@ use std::{hash, mem, ops::Deref, ptr};
 
 use derive_where::derive_where;
 
+use super::Gcx;
+
 #[derive_where(Copy, Clone)]
 pub struct Def<'gcx, T>(&'gcx T);
 
 impl<'a, T> Def<'a, T> {
+    pub fn new_alloc(gcx: Gcx<'a>, val: T) -> Self {
+        Self::new(gcx.alloc(val))
+    }
+
     pub const fn new(value: &'a T) -> Self {
         const {
             if mem::size_of::<T>() == 0 {

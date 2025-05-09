@@ -117,19 +117,19 @@ pub struct Diag<E: EmissionGuarantee> {
 }
 
 impl<E: EmissionGuarantee> Diag<E> {
-    fn cast_ref<E2: EmissionGuarantee>(&self) -> &Diag<E2> {
+    pub fn cast_ref<E2: EmissionGuarantee>(&self) -> &Diag<E2> {
         assert!(!E2::REQUIRES_FATAL || self.is_fatal());
 
         unsafe { &*(self as *const Diag<E> as *const Diag<E2>) }
     }
 
-    fn cast_mut<E2: EmissionGuarantee>(&mut self) -> &mut Diag<E2> {
+    pub fn cast_mut<E2: EmissionGuarantee>(&mut self) -> &mut Diag<E2> {
         assert!(!E2::REQUIRES_FATAL || self.is_fatal());
 
         unsafe { &mut *(self as *mut Diag<E> as *mut Diag<E2>) }
     }
 
-    fn cast<E2: EmissionGuarantee>(self) -> Diag<E2> {
+    pub fn cast<E2: EmissionGuarantee>(self) -> Diag<E2> {
         assert!(!E2::REQUIRES_FATAL || self.is_fatal());
 
         Diag {

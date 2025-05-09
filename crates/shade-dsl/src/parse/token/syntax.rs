@@ -2,8 +2,7 @@ use std::{ops::Deref, slice, str, sync::Arc};
 
 use crate::{
     base::{
-        AtomSimplify, ConstFmt, Cursor, LookaheadResult, Matcher, Parser, Span, Spanned,
-        StuckHinter, Symbol,
+        AtomSimplify, Cursor, LookaheadResult, Matcher, Parser, Span, Spanned, StuckHinter, Symbol,
     },
     symbol,
 };
@@ -351,6 +350,7 @@ macro_rules! punct {
     };
 }
 
+use ctx2d_utils::lang::ConstFmt;
 pub use punct;
 
 // === TokenCursor === //
@@ -370,6 +370,10 @@ impl<'a> RawTokenCursor<'a> {
             group,
             tokens: group.tokens.iter(),
         }
+    }
+
+    pub fn group(&self) -> &'a TokenGroup {
+        self.group
     }
 }
 
