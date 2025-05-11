@@ -1,13 +1,18 @@
 use crate::{
-    base::{Gcx, LeafDiag, Level, Matcher, OptPResult, OptPResultExt},
-    parse::token::{
-        GroupDelimiter, Ident, Punct, TokenCursor, TokenGroup, TokenMatcher, TokenParser,
-        TokenPunct, token_matcher,
+    base::{Bp, Gcx, LeafDiag, Level, Matcher, OptPResult, OptPResultExt},
+    parse::{
+        ast::bp,
+        token::{
+            GroupDelimiter, Ident, Punct, TokenCursor, TokenGroup, TokenMatcher, TokenParser,
+            TokenPunct, token_matcher,
+        },
     },
     punct, symbol,
 };
 
-use super::{AdtKind, AstAdt, AstExpr, AstField, AstMember, AstMemberInit, AstType, Keyword, kw};
+use super::{
+    AdtKind, AstAdt, AstExpr, AstExprKind, AstField, AstMember, AstMemberInit, AstType, Keyword, kw,
+};
 
 type P<'gcx, 'a, 'g> = &'a mut TokenParser<'gcx, 'g>;
 type C<'a, 'g> = &'a mut TokenCursor<'g>;
@@ -51,7 +56,7 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
             continue;
         }
 
-        // Parse `let <name>: <ty>;` fields.
+        // Parse `<name>: <ty>;` fields.
         if let Some(field) = parse_adt_field(p).did_match() {
             if let Ok(field) = field {
                 fields.push(field);
@@ -73,14 +78,9 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
 }
 
 pub fn parse_adt_field(p: P) -> OptPResult<AstField> {
-    // Match `let`
-    if match_kw(kw!("let")).expect(p).is_none() {
-        return Ok(None);
-    }
-
     // Match name
     let Some(name) = match_ident().expect(p) else {
-        return Err(p.stuck());
+        return Ok(None);
     };
 
     // Match annotation colon
@@ -156,15 +156,131 @@ fn parse_ast_member_const(p: P) -> OptPResult<AstMember> {
 
 // === Expression parsing === //
 
-pub fn parse_expr(p: P) -> AstExpr {
-    let start = p.span();
+fn parse_expr(p: P) -> AstExpr {
+    parse_expr_pratt(p, Bp::MIN)
+}
 
-    // TODO
-    p.expect(symbol!("expression"), |c| c.eat());
+fn parse_expr_full(p: P) -> AstExpr {
+    let expr = parse_expr(p);
 
-    AstExpr {
-        span: start.until(p.span()),
+    if !match_eos(p) {
+        // Recovery strategy: ignore
+        let _ = p.stuck();
     }
+
+    expr
+}
+
+// See: https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
+fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
+    // Parse seed expression
+    let seed_start = p.span();
+    let lhs = 'seed: {
+        // Parse unary neg.
+        if match_punct(punct!('-')).expect(p).is_some() {
+            let lhs = parse_expr_pratt(p, bp::PRE_NEG.right);
+
+            break 'seed AstExprKind::UnaryNeg(Box::new(lhs));
+        }
+
+        // Parse unary not.
+        if match_punct(punct!('!')).expect(p).is_some() {
+            let lhs = parse_expr_pratt(p, bp::PRE_NOT.right);
+
+            break 'seed AstExprKind::UnaryNot(Box::new(lhs));
+        }
+
+        // Parse a name.
+        if let Some(ident) = match_ident().expect(p) {
+            break 'seed AstExprKind::Name(ident);
+        }
+
+        // Parse a parenthesis or tuple.
+        if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
+            let mut p = p.enter(&paren);
+            let mut had_comma = false;
+            let mut exprs = Vec::new();
+
+            loop {
+                if match_eos(&mut p) {
+                    break;
+                }
+
+                exprs.push(parse_expr(&mut p));
+
+                if match_punct(punct!(',')).expect(&mut p).is_some() {
+                    had_comma = true;
+                    continue;
+                }
+
+                break;
+            }
+
+            if had_comma || exprs.len() != 1 {
+                break 'seed AstExprKind::Tuple(exprs);
+            } else {
+                break 'seed AstExprKind::Paren(Box::new(exprs.pop().unwrap()));
+            }
+        }
+
+        // Parse a boolean literal.
+        if match_kw(kw!("true")).expect(p).is_some() {
+            break 'seed AstExprKind::BoolLit(true);
+        }
+
+        if match_kw(kw!("false")).expect(p).is_some() {
+            break 'seed AstExprKind::BoolLit(false);
+        }
+
+        // Parse an `if` statement
+        if match_kw(kw!("if")).expect(p).is_some() {
+            let cond = parse_expr(p);
+
+            todo!()
+        }
+
+        // Recovery strategy: do nothing
+        AstExprKind::Error(p.stuck().0)
+    };
+
+    let mut lhs = AstExpr {
+        span: seed_start.until(p.span()),
+        kind: lhs,
+    };
+
+    // Parse postfix and infix operations that bind tighter than our caller.
+    loop {
+        // Match indexing
+        if let Some(group) =
+            match_group(GroupDelimiter::Bracket).maybe_expect(p, bp::POST_BRACKET.left >= min_bp)
+        {
+            let index = parse_expr_full(&mut p.enter(&group));
+
+            lhs = AstExpr {
+                span: group.span,
+                kind: AstExprKind::Index(Box::new(lhs), Box::new(index)),
+            };
+
+            continue;
+        }
+
+        // Match addition
+        if let Some(add) = match_punct(punct!('+')).maybe_expect(p, bp::INFIX_ADD.left >= min_bp) {
+            lhs = AstExpr {
+                span: add.span,
+                kind: AstExprKind::Add(
+                    Box::new(lhs),
+                    Box::new(parse_expr_pratt(p, bp::INFIX_ADD.right)),
+                ),
+            };
+
+            continue;
+        }
+
+        break;
+    }
+
+    lhs
 }
 
 // === Type parsing === //
@@ -207,7 +323,7 @@ fn match_any_ident(c: C) -> Option<Ident> {
 }
 
 fn match_kw(kw: Keyword) -> impl TokenMatcher<Output = Option<Ident>> {
-    token_matcher(kw.symbol(), move |c, _h| {
+    token_matcher(kw.expectation_name(), move |c, _h| {
         match_any_ident(c).filter(|v| !v.raw && v.text == kw.symbol())
     })
 }

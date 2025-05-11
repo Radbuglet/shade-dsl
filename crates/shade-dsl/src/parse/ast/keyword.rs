@@ -44,6 +44,12 @@ macro_rules! define_keywords {
                     $(Self::$name => symbol!($text),)*
                 }
             }
+
+            pub fn expectation_name(self) -> Symbol {
+                match self {
+                    $(Self::$name => symbol!(concat!("`", $text, "`")),)*
+                }
+            }
         }
     };
 }
@@ -60,6 +66,7 @@ define_keywords! {
     Continue = "continue",
     Else = "else",
     Enum = "enum",
+    False = "false",
     Fn = "fn",
     If = "if",
     Let = "let",
@@ -68,6 +75,7 @@ define_keywords! {
     Mut = "mut",
     Pub = "pub",
     Struct = "struct",
+    True = "true",
     Type = "type",
     Union = "union",
 }

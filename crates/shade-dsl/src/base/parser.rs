@@ -169,6 +169,22 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         }
     }
 
+    pub fn maybe_expect<R>(
+        &mut self,
+        is_expected: bool,
+        what: Symbol,
+        f: impl FnOnce(&mut Cursor<I>, &mut StuckHinter<'_>) -> R,
+    ) -> R
+    where
+        R: LookaheadResult + DefaultReject,
+    {
+        if is_expected {
+            self.expect_hinted(what, f)
+        } else {
+            R::default_reject()
+        }
+    }
+
     pub fn hint(&mut self, diag: LeafDiag) {
         self.stuck_hints.push(diag);
     }
@@ -310,6 +326,13 @@ pub trait Matcher<I: CursorIter> {
         Self::Output: DefaultReject,
     {
         p.expect_or_hint(is_expected, self.expectation(), self.matcher(), gen_diag)
+    }
+
+    fn maybe_expect(&mut self, p: &mut Parser<'_, I>, is_expected: bool) -> Self::Output
+    where
+        Self::Output: DefaultReject,
+    {
+        p.maybe_expect(is_expected, self.expectation(), self.matcher())
     }
 }
 
