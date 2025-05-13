@@ -57,14 +57,55 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
         }
 
         // Parse `<name>: <ty>;` fields.
-        if let Some(field) = parse_adt_field(p).did_match() {
-            if let Ok(field) = field {
-                fields.push(field);
+        if kind.can_have_fields() {
+            if let Some(field) = parse_adt_field(p).did_match() {
+                if let Ok(field) = field {
+                    fields.push(field);
+                }
+
+                // recovery strategy: continue parsing where we left off.
+
+                continue;
             }
+        } else {
+            let gcx = p.gcx();
 
-            // recovery strategy: continue parsing where we left off.
+            p.hint_if_passes(
+                |c, _| {
+                    if match_ident().consume(c).is_none() {
+                        return false;
+                    }
 
-            continue;
+                    if match_punct(punct!(':')).consume(c).is_none() {
+                        return false;
+                    }
+
+                    let start = c.prev_span();
+                    let file = gcx.source_map.file(start.lo);
+                    let start = file.pos_to_loc(start.lo).line;
+
+                    c.lookahead(|c| {
+                        loop {
+                            if c.peek().is_none() {
+                                return false;
+                            }
+
+                            if file.pos_to_loc(c.next_span().lo).line != start {
+                                return false;
+                            }
+
+                            if match_punct(punct!(';')).consume(c).is_some() {
+                                return true;
+                            }
+
+                            c.eat();
+                        }
+                    });
+
+                    true
+                },
+                |sp, _| LeafDiag::span_note(sp, "modules cannot define fields"),
+            );
         }
 
         p.stuck_recover().eat();
@@ -174,7 +215,7 @@ fn parse_expr_full(p: P) -> AstExpr {
 // See: https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
 fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
     // Parse seed expression
-    let seed_start = p.span();
+    let seed_start = p.next_span();
     let lhs = 'seed: {
         // Parse unary neg.
         if match_punct(punct!('-')).expect(p).is_some() {
@@ -244,7 +285,7 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
     };
 
     let mut lhs = AstExpr {
-        span: seed_start.until(p.span()),
+        span: seed_start.to(p.prev_span()),
         kind: lhs,
     };
 
@@ -286,13 +327,13 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
 // === Type parsing === //
 
 pub fn parse_ty(p: P) -> AstType {
-    let start = p.span();
+    let start = p.next_span();
 
     // TODO
     p.expect(symbol!("type"), |c| c.eat());
 
     AstType {
-        span: start.until(p.span()),
+        span: start.to(p.prev_span()),
     }
 }
 

@@ -1,7 +1,7 @@
 use unicode_xid::UnicodeXID;
 
 use crate::{
-    base::{CharCursor, CharParser, Diag, Gcx, LeafDiag, Parser, Span, SpanCharCursor, Symbol},
+    base::{CharCursor, CharParser, Diag, Gcx, LeafDiag, Parser, RawCharCursor, Span, Symbol},
     symbol,
 };
 
@@ -15,10 +15,10 @@ type C<'a, 'ch> = &'a mut CharCursor<'ch>;
 
 pub fn tokenize(gcx: Gcx<'_>, span: Span) -> TokenGroup {
     let text = gcx.source_map.file(span.lo).text(span);
-    let mut parser = Parser::new(gcx, SpanCharCursor::new(span, &text));
+    let mut parser = Parser::new(gcx, RawCharCursor::new(span, &text));
 
     parser.context(symbol!("tokenizing the file"), |p| {
-        parse_group(p, p.span(), GroupDelimiter::File)
+        parse_group(p, p.next_span(), GroupDelimiter::File)
     })
 }
 
@@ -57,7 +57,7 @@ fn parse_group(p: P, group_start: Span, delimiter: GroupDelimiter) -> TokenGroup
     let mut builder = GroupBuilder::default();
 
     'parse: loop {
-        let token_start = p.span();
+        let token_start = p.next_span();
 
         // Parse closing group delimiters
         if let Some(closing_del) = p.expect(delimiter.closing_name(), |c| {
@@ -178,14 +178,14 @@ fn parse_group(p: P, group_start: Span, delimiter: GroupDelimiter) -> TokenGroup
     }
 
     TokenGroup {
-        span: group_start.until(p.span()),
+        span: group_start.to(p.prev_span()),
         delimiter,
         tokens: builder.stream,
     }
 }
 
 fn parse_ident(p: P) -> Option<Ident> {
-    let start = p.span();
+    let start = p.next_span();
 
     let first_ch = p.expect(symbol!("identifier"), |c| {
         c.eat().filter(|c| c.is_xid_start())
@@ -207,7 +207,7 @@ fn parse_ident(p: P) -> Option<Ident> {
     }
 
     Some(Ident {
-        span: start.until(p.span()),
+        span: start.to(p.prev_span()),
         text: Symbol::new(&accum),
         raw,
     })
@@ -220,7 +220,7 @@ fn parse_string_lit(
     mut pounds: u32,
     prefix_start: Span,
 ) -> Option<TokenStrLit> {
-    let quote_start = p.span();
+    let quote_start = p.next_span();
 
     // Match the opening quote
     if !p.expect(symbol!("`\"`"), |c| match_ch(c, '"')) {
@@ -340,14 +340,14 @@ fn parse_string_lit(
     }
 
     Some(TokenStrLit {
-        span: prefix_start.until(p.span()),
+        span: prefix_start.to(p.prev_span()),
         kind,
         value: Symbol::new(&accum),
     })
 }
 
 fn parse_char_lit(p: P) -> Option<TokenCharLit> {
-    let start = p.span();
+    let start = p.next_span();
 
     if !p.expect(symbol!("`'`"), |c| match_ch(c, '\'')) {
         return None;
@@ -376,13 +376,13 @@ fn parse_char_lit(p: P) -> Option<TokenCharLit> {
     }
 
     Some(TokenCharLit {
-        span: start.until(p.span()),
+        span: start.to(p.prev_span()),
         value,
     })
 }
 
 fn parse_char_escape(p: P) -> Option<char> {
-    let start = p.span();
+    let start = p.next_span();
 
     if !p.expect(symbol!("`\\`"), |c| match_ch(c, '\\')) {
         return None;
@@ -427,7 +427,7 @@ fn parse_char_escape(p: P) -> Option<char> {
             // Recovery strategy: pretend the code was valid but substitute it with a placeholder
             // character.
             let _ = p.err(Diag::span_err(
-                start.until(p.span()),
+                start.to(p.prev_span()),
                 "ASCII escape code must be at most `\\x7F`",
             ));
 

@@ -1,5 +1,5 @@
 mod vec_core {
-    const alphabet = "xyzw";
+    const alphabet = foo + bar + baz;
 
     fn Vec(ty: ty, dim: u32) -> metatype {
         let fields = [];
@@ -27,12 +27,18 @@ mod vec_core {
 }
 
 struct VertexState {
-    let foo: u32;
-    let bar: i32;
-    let baz: f32;
+    fn whee() {}
+
+    foo: u32;
+    bar: i32;
+    baz: f32;
 }
 
 fn main(data: VertexState) {
-    val whee = data.whee;
-    val woo = data.woo;
+    let whee = data.whee;
+    let woo = data.woo;
 }
+
+whee: woo sjdlkgjslgk sdlgjsdlfgj;
+
+whee: probably not a type...

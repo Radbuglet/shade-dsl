@@ -55,6 +55,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 
     fn moved_forwards(&mut self) {
         self.expected.clear();
+        self.stuck_hints.clear();
     }
 
     pub fn irrefutable<R>(&mut self, f: impl FnOnce(&mut Cursor<I>) -> R) -> R {
@@ -117,12 +118,16 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         self.expect_covert_hinted(true, what, |c, _hinter| f(c))
     }
 
-    pub fn span(&self) -> Span {
-        self.cursor.span()
+    pub fn next_span(&self) -> Span {
+        self.cursor.next_span()
+    }
+
+    pub fn prev_span(&self) -> Span {
+        self.cursor.prev_span()
     }
 
     pub fn context<R>(&mut self, what: Symbol, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.context.push((self.span(), what));
+        self.context.push((self.next_span(), what));
         let res = f(self);
         self.context.pop();
         res
@@ -143,10 +148,10 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         R: LookaheadResult,
     {
         self.hint_syntactic(|c, hinter| {
-            let start = c.span();
+            let start = c.next_span();
             let res = parse(c, hinter);
             if res.is_ok() {
-                hinter.hint(gen_diag(start.until(c.span()), res));
+                hinter.hint(gen_diag(start.to(c.prev_span()), res));
             }
         });
     }
@@ -216,7 +221,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
             write!(msg, "{expectation}").unwrap();
         }
 
-        let mut diag = Diag::span_err(self.span(), msg);
+        let mut diag = Diag::span_err(self.next_span(), msg);
 
         diag.children.extend_from_slice(&self.stuck_hints);
 
@@ -357,15 +362,21 @@ where
 #[derive(Debug, Clone)]
 pub struct Cursor<I> {
     pub raw: I,
+    pub prev_span: Span,
 }
 
 impl<I: CursorIter> Cursor<I> {
-    pub const fn new(raw: I) -> Self {
-        Self { raw }
+    pub fn new(raw: I) -> Self {
+        Self {
+            prev_span: raw.start_span(),
+            raw,
+        }
     }
 
     pub fn eat_full(&mut self) -> I::Item {
-        self.raw.next().unwrap()
+        let next = self.raw.next().unwrap();
+        self.prev_span = next.span();
+        next
     }
 
     pub fn peek_full(&self) -> I::Item {
@@ -380,8 +391,12 @@ impl<I: CursorIter> Cursor<I> {
         self.peek_full().simplify()
     }
 
-    pub fn span(&self) -> Span {
+    pub fn next_span(&self) -> Span {
         self.peek_full().span()
+    }
+
+    pub fn prev_span(&self) -> Span {
+        self.prev_span
     }
 
     pub fn lookahead<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R
@@ -450,15 +465,21 @@ pub trait AtomSimplify {
     fn simplify(self) -> Self::Simplified;
 }
 
+pub trait Delimited {
+    fn start_span(&self) -> Span;
+
+    fn end_span(&self) -> Span;
+}
+
 pub trait CursorIter:
-    Sized + Iterator<Item: AtomSimplify<Simplified = Self::Simplified> + Spanned> + Clone
+    Sized + Iterator<Item: AtomSimplify<Simplified = Self::Simplified> + Spanned> + Clone + Delimited
 {
     type Simplified;
 }
 
 impl<I, A, S> CursorIter for I
 where
-    I: Clone + Iterator<Item = A>,
+    I: Clone + Iterator<Item = A> + Delimited,
     A: AtomSimplify<Simplified = S> + Spanned,
 {
     type Simplified = S;
@@ -466,16 +487,16 @@ where
 
 // === Standard Cursors === //
 
-pub type CharParser<'gcx, 'ch> = Parser<'gcx, SpanCharCursor<'ch>>;
-pub type CharCursor<'ch> = Cursor<SpanCharCursor<'ch>>;
+pub type CharParser<'gcx, 'ch> = Parser<'gcx, RawCharCursor<'ch>>;
+pub type CharCursor<'ch> = Cursor<RawCharCursor<'ch>>;
 
 #[derive(Debug, Clone)]
-pub struct SpanCharCursor<'a> {
+pub struct RawCharCursor<'a> {
     span: Span,
     iter: std::str::CharIndices<'a>,
 }
 
-impl<'a> SpanCharCursor<'a> {
+impl<'a> RawCharCursor<'a> {
     pub fn new(span: Span, contents: &'a str) -> Self {
         Self {
             span,
@@ -484,14 +505,24 @@ impl<'a> SpanCharCursor<'a> {
     }
 }
 
-impl Iterator for SpanCharCursor<'_> {
+impl Delimited for RawCharCursor<'_> {
+    fn start_span(&self) -> Span {
+        self.span.shrink_to_lo()
+    }
+
+    fn end_span(&self) -> Span {
+        self.span.shrink_to_hi()
+    }
+}
+
+impl Iterator for RawCharCursor<'_> {
     type Item = SpannedChar;
 
     fn next(&mut self) -> Option<Self::Item> {
         let Some((pos, ch)) = self.iter.next() else {
             return Some(SpannedChar {
                 ch: None,
-                span: self.span.shrink_to_hi(),
+                span: self.end_span(),
             });
         };
 
@@ -522,13 +553,13 @@ impl Spanned for SpannedChar {
     }
 }
 
-pub trait SpanCharMatcher: for<'a> Matcher<SpanCharCursor<'a>> {}
+pub trait SpanCharMatcher: for<'a> Matcher<RawCharCursor<'a>> {}
 
-impl<T> SpanCharMatcher for T where T: for<'a> Matcher<SpanCharCursor<'a>> {}
+impl<T> SpanCharMatcher for T where T: for<'a> Matcher<RawCharCursor<'a>> {}
 
 pub fn span_char_matcher<F, R>(name: Symbol, matcher: F) -> (Symbol, F)
 where
-    F: Fn(&mut Cursor<SpanCharCursor>, &mut StuckHinter<'_>) -> R,
+    F: Fn(&mut Cursor<RawCharCursor>, &mut StuckHinter<'_>) -> R,
     R: LookaheadResult,
 {
     (name, matcher)

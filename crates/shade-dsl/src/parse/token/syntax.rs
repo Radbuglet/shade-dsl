@@ -4,7 +4,8 @@ use ctx2d_utils::lang::ConstFmt;
 
 use crate::{
     base::{
-        AtomSimplify, Cursor, LookaheadResult, Matcher, Parser, Span, Spanned, StuckHinter, Symbol,
+        AtomSimplify, Cursor, Delimited, LookaheadResult, Matcher, Parser, Span, Spanned,
+        StuckHinter, Symbol,
     },
     symbol,
 };
@@ -398,6 +399,16 @@ impl<'a> Iterator for RawTokenCursor<'a> {
             Some(token) => TokenCursorElement::Token(token),
             None => TokenCursorElement::Ending(self.group.span.shrink_to_hi()),
         })
+    }
+}
+
+impl Delimited for RawTokenCursor<'_> {
+    fn start_span(&self) -> Span {
+        Span::new_sized(self.group.span.lo, 1)
+    }
+
+    fn end_span(&self) -> Span {
+        Span::new_sized(self.group.span.hi - 1u32, 1)
     }
 }
 

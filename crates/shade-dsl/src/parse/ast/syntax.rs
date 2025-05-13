@@ -20,6 +20,12 @@ pub enum AdtKind {
     Union(Span),
 }
 
+impl AdtKind {
+    pub fn can_have_fields(self) -> bool {
+        !matches!(self, AdtKind::Mod(_))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AstField {
     pub name: Ident,
