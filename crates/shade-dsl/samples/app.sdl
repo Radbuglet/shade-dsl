@@ -2,7 +2,7 @@ const WHEE = {
     (a, b, c) * d;
 
     if !whee {
-        todo["whee", 'w'];
+        todo["whee"];
         foo("kk", {
             foo
         }).push(("hihi"))[haha]
@@ -10,14 +10,24 @@ const WHEE = {
         whee;
     }
 
-    if wazoo {
+    return if wazoo {
         return
+    } else if whee {
+        {
+            break ();
+        }
     } else {
         foo(return "haha" + "hihi", return hehe);
+    };
+
+    while whee + "who" {
+        ;;;;;
     }
 
-    {
-        foo
+    loop {
+        foo;
+        break "h";
+        continue;
     }
     a + b
 };

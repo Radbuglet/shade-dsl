@@ -79,6 +79,7 @@ define_keywords! {
     True = "true",
     Type = "type",
     Union = "union",
+    While = "while",
 }
 
 #[macro_export]

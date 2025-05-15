@@ -85,15 +85,31 @@ pub enum AstExprKind {
     /// A tuple constructor (e.g. `(foo, bar)` or `(baz,)`).
     Tuple(Vec<AstExpr>),
 
-    /// An `if` expression (e.g. `if foo { bar }`, `if cond { abc } else { def }`).
+    /// An `if` expression (e.g. `if foo { bar }`, `if cond { abc } else { def }`, or
+    /// `if cond { hi } else if cond { hello }`).
     If {
         cond: Box<AstExpr>,
         truthy: Box<AstBlock>,
         falsy: Option<Box<AstBlock>>,
     },
 
+    /// An `while` expression (e.g. `while foo { bar }`).
+    While {
+        cond: Box<AstExpr>,
+        block: Box<AstBlock>,
+    },
+
+    /// A `loop` expression (e.g. `loop { baz }`)
+    Loop(Box<AstBlock>),
+
     /// A `return` expression (e.g. `return`, `return foo`).
     Return(Option<Box<AstExpr>>),
+
+    /// A `continue` expression (e.g. `continue`).
+    Continue,
+
+    /// A `break` expression (e.g. `break`, `break foo`).
+    Break(Option<Box<AstExpr>>),
 
     // === Prefix === //
 
@@ -143,7 +159,10 @@ pub enum AstExprKind {
 impl AstExprKind {
     pub fn needs_semi(&self) -> bool {
         match self {
-            AstExprKind::Block(..) | AstExprKind::If { .. } => false,
+            AstExprKind::Block(..)
+            | AstExprKind::If { .. }
+            | AstExprKind::While { .. }
+            | AstExprKind::Loop(..) => false,
             AstExprKind::Name(..)
             | AstExprKind::BoolLit(..)
             | AstExprKind::StrLit(..)
@@ -151,6 +170,8 @@ impl AstExprKind {
             | AstExprKind::Paren(..)
             | AstExprKind::Tuple(..)
             | AstExprKind::Return(..)
+            | AstExprKind::Continue
+            | AstExprKind::Break(..)
             | AstExprKind::UnaryNeg(..)
             | AstExprKind::UnaryNot(..)
             | AstExprKind::Add(..)
@@ -204,6 +225,7 @@ pub mod bp {
     pub const PRE_NEG: PrefixBp = PrefixBp::new(9);
     pub const PRE_NOT: PrefixBp = PrefixBp::new(9);
     pub const PRE_RETURN: PrefixBp = PrefixBp::new(1);
+    pub const PRE_BREAK: PrefixBp = PrefixBp::new(1);
 
     pub const INFIX_ADD: InfixBp = InfixBp::new_left(2);
     pub const INFIX_SUB: InfixBp = InfixBp::new_left(2);
