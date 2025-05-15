@@ -1,5 +1,5 @@
 use crate::{
-    base::{Bp, Gcx, LeafDiag, Level, Matcher, OptPResult, OptPResultExt},
+    base::{Bp, Gcx, InfixBp, LeafDiag, Level, Matcher, OptPResult, OptPResultExt},
     parse::{
         ast::bp,
         token::{
@@ -11,7 +11,8 @@ use crate::{
 };
 
 use super::{
-    AdtKind, AstAdt, AstExpr, AstExprKind, AstField, AstMember, AstMemberInit, AstType, Keyword, kw,
+    AdtKind, AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstMember, AstMemberInit, AstStmt,
+    AstStmtKind, AstType, Keyword, kw,
 };
 
 type P<'gcx, 'a, 'g> = &'a mut TokenParser<'gcx, 'g>;
@@ -217,23 +218,18 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
     // Parse seed expression
     let seed_start = p.next_span();
     let lhs = 'seed: {
-        // Parse unary neg.
-        if match_punct(punct!('-')).expect(p).is_some() {
-            let lhs = parse_expr_pratt(p, bp::PRE_NEG.right);
-
-            break 'seed AstExprKind::UnaryNeg(Box::new(lhs));
-        }
-
-        // Parse unary not.
-        if match_punct(punct!('!')).expect(p).is_some() {
-            let lhs = parse_expr_pratt(p, bp::PRE_NOT.right);
-
-            break 'seed AstExprKind::UnaryNot(Box::new(lhs));
-        }
-
         // Parse a name.
         if let Some(ident) = match_ident().expect(p) {
             break 'seed AstExprKind::Name(ident);
+        }
+
+        // Parse a boolean literal.
+        if match_kw(kw!("true")).expect(p).is_some() {
+            break 'seed AstExprKind::BoolLit(true);
+        }
+
+        if match_kw(kw!("false")).expect(p).is_some() {
+            break 'seed AstExprKind::BoolLit(false);
         }
 
         // Parse a parenthesis or tuple.
@@ -264,20 +260,52 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
             }
         }
 
-        // Parse a boolean literal.
-        if match_kw(kw!("true")).expect(p).is_some() {
-            break 'seed AstExprKind::BoolLit(true);
-        }
-
-        if match_kw(kw!("false")).expect(p).is_some() {
-            break 'seed AstExprKind::BoolLit(false);
+        // Parse a block expression.
+        if let Some(brace) = match_group(GroupDelimiter::Brace).expect(p) {
+            break 'seed AstExprKind::Block(Box::new(parse_block(&mut p.enter(&brace), None)));
         }
 
         // Parse an `if` statement
         if match_kw(kw!("if")).expect(p).is_some() {
             let cond = parse_expr(p);
 
-            todo!()
+            let Some(truthy) = match_group(GroupDelimiter::Brace).expect(p) else {
+                // Recovery strategy: do nothing
+                break 'seed AstExprKind::Error(p.stuck().0);
+            };
+
+            let truthy = Box::new(parse_block(&mut p.enter(&truthy), None));
+
+            let falsy = if match_kw(kw!("else")).expect(p).is_some() {
+                let Some(falsy) = match_group(GroupDelimiter::Brace).expect(p) else {
+                    // Recovery strategy: do nothing
+                    break 'seed AstExprKind::Error(p.stuck().0);
+                };
+
+                Some(Box::new(parse_block(&mut p.enter(&falsy), None)))
+            } else {
+                None
+            };
+
+            break 'seed AstExprKind::If {
+                cond: Box::new(cond),
+                truthy,
+                falsy,
+            };
+        }
+
+        // Parse unary neg.
+        if match_punct(punct!('-')).expect(p).is_some() {
+            let lhs = parse_expr_pratt(p, bp::PRE_NEG.right);
+
+            break 'seed AstExprKind::UnaryNeg(Box::new(lhs));
+        }
+
+        // Parse unary not.
+        if match_punct(punct!('!')).expect(p).is_some() {
+            let lhs = parse_expr_pratt(p, bp::PRE_NOT.right);
+
+            break 'seed AstExprKind::UnaryNot(Box::new(lhs));
         }
 
         // Recovery strategy: do nothing
@@ -290,7 +318,7 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
     };
 
     // Parse postfix and infix operations that bind tighter than our caller.
-    loop {
+    'chaining: loop {
         // Match indexing
         if let Some(group) =
             match_group(GroupDelimiter::Bracket).maybe_expect(p, bp::POST_BRACKET.left >= min_bp)
@@ -305,23 +333,85 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
             continue;
         }
 
-        // Match addition
-        if let Some(add) = match_punct(punct!('+')).maybe_expect(p, bp::INFIX_ADD.left >= min_bp) {
-            lhs = AstExpr {
-                span: add.span,
-                kind: AstExprKind::Add(
-                    Box::new(lhs),
-                    Box::new(parse_expr_pratt(p, bp::INFIX_ADD.right)),
-                ),
-            };
+        // Match punctuation-demarcated infix operations
+        type PunctInfixOp = (
+            Punct,
+            InfixBp,
+            fn(Box<AstExpr>, Box<AstExpr>) -> AstExprKind,
+        );
 
-            continue;
+        const PUNCT_INFIX_OPS: [PunctInfixOp; 5] = [
+            (punct!('+'), bp::INFIX_ADD, AstExprKind::Add),
+            (punct!('-'), bp::INFIX_SUB, AstExprKind::Sub),
+            (punct!('*'), bp::INFIX_MUL, AstExprKind::Mul),
+            (punct!('/'), bp::INFIX_DIV, AstExprKind::Div),
+            (punct!('%'), bp::INFIX_MOD, AstExprKind::Mod),
+        ];
+
+        for (punct, op_bp, op_ctor) in PUNCT_INFIX_OPS {
+            if let Some(op_punct) = match_punct(punct).maybe_expect(p, op_bp.left >= min_bp) {
+                lhs = AstExpr {
+                    span: op_punct.span,
+                    kind: op_ctor(Box::new(lhs), Box::new(parse_expr_pratt(p, op_bp.right))),
+                };
+
+                continue 'chaining;
+            }
         }
 
         break;
     }
 
     lhs
+}
+
+pub fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
+    let start = p.next_span();
+
+    let mut stmts = Vec::new();
+
+    let last_expr = loop {
+        // Match EOS without unterminated expression.
+        if match_eos(p) {
+            break None;
+        }
+
+        // Match empty statements.
+        if match_punct(punct!(';')).expect(p).is_some() {
+            continue;
+        }
+
+        // Match let statements
+        if match_kw(kw!("let")).expect(p).is_some() {
+            todo!()
+        }
+
+        // Match expressions
+        let expr = parse_expr(p);
+
+        if match_eos(p) {
+            break Some(expr);
+        }
+
+        let needs_semi = expr.kind.needs_semi();
+
+        stmts.push(AstStmt {
+            span: expr.span,
+            kind: AstStmtKind::Expr(expr.kind),
+        });
+
+        if needs_semi && match_punct(punct!(';')).expect(p).is_none() {
+            // Recovery strategy: ignore
+            let _ = p.stuck_recover();
+        }
+    };
+
+    AstBlock {
+        label,
+        span: start.to(p.prev_span()),
+        stmts,
+        last_expr,
+    }
 }
 
 // === Type parsing === //

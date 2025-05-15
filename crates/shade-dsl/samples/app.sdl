@@ -1,44 +1,14 @@
-mod vec_core {
-    const alphabet = foo + bar + baz;
+const WHEE = {
+    (a, b, c) * d;
 
-    fn Vec(ty: ty, dim: u32) -> metatype {
-        let fields = [];
-
-        for ch in alphabet.iter() {
-            fields.push(FieldDef.new(dim, ty));
-        }
-
-        struct {
-            ...fields
-
-            fn [std.overloads.add](self) {
-
-            }
-
-            fn [std.overloads.sub](self) {
-
-            }
-        }
-    };
-
-    fn FindAdapter() {
-
+    if !whee {
+        todo[true]
+    } else {
+        whee;
     }
-}
 
-struct VertexState {
-    fn whee() {}
-
-    foo: u32;
-    bar: i32;
-    baz: f32;
-}
-
-fn main(data: VertexState) {
-    let whee = data.whee;
-    let woo = data.woo;
-}
-
-whee: woo sjdlkgjslgk sdlgjsdlfgj;
-
-whee: probably not a type...
+    {
+        foo
+    }
+    a + b
+};

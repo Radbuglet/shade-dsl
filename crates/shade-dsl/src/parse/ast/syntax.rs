@@ -67,6 +67,9 @@ pub enum AstExprKind {
     /// A name expression (e.g. a local, a generic, an upvar, ...)
     Name(Ident),
 
+    /// A boolean literal (e.g. `true` or `false`).
+    BoolLit(bool),
+
     /// A parenthesized expression (e.g. `(foo)`).
     Paren(Box<AstExpr>),
 
@@ -83,9 +86,6 @@ pub enum AstExprKind {
         falsy: Option<Box<AstBlock>>,
     },
 
-    /// A boolean literal (e.g. `true` or `false`).
-    BoolLit(bool),
-
     // === Prefix === //
 
     /// A unary negation operation (e.g. `-foo`).
@@ -98,6 +98,18 @@ pub enum AstExprKind {
 
     /// An addition expression (e.g. `foo + bar`).
     Add(Box<AstExpr>, Box<AstExpr>),
+
+    /// A subtraction expression (e.g. `foo - bar`).
+    Sub(Box<AstExpr>, Box<AstExpr>),
+
+    /// A multiplication expression (e.g. `foo * bar`).
+    Mul(Box<AstExpr>, Box<AstExpr>),
+
+    /// A division expression (e.g. `foo / bar`).
+    Div(Box<AstExpr>, Box<AstExpr>),
+
+    /// A modulo expression (e.g. `foo % bar`).
+    Mod(Box<AstExpr>, Box<AstExpr>),
 
     // === Postfix === //
 
@@ -119,8 +131,58 @@ pub enum AstExprKind {
     Error(ErrorGuaranteed),
 }
 
+impl AstExprKind {
+    pub fn needs_semi(&self) -> bool {
+        match self {
+            AstExprKind::Block(..) | AstExprKind::If { .. } => false,
+            AstExprKind::Name(..)
+            | AstExprKind::BoolLit(..)
+            | AstExprKind::Paren(..)
+            | AstExprKind::Tuple(..)
+            | AstExprKind::UnaryNeg(..)
+            | AstExprKind::UnaryNot(..)
+            | AstExprKind::Add(..)
+            | AstExprKind::Sub(..)
+            | AstExprKind::Mul(..)
+            | AstExprKind::Div(..)
+            | AstExprKind::Mod(..)
+            | AstExprKind::Index(..)
+            | AstExprKind::Instantiate(..)
+            | AstExprKind::Call(..)
+            | AstExprKind::NamedIndex(..)
+            | AstExprKind::Error(..) => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub struct AstBlock {}
+pub struct AstBlock {
+    pub label: Option<Ident>,
+    pub span: Span,
+    pub stmts: Vec<AstStmt>,
+    pub last_expr: Option<AstExpr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AstStmt {
+    pub span: Span,
+    pub kind: AstStmtKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum AstStmtKind {
+    Expr(AstExprKind),
+    Let {
+        binding: AstPat,
+        ty: Option<AstType>,
+        init: Option<Box<AstExpr>>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct AstPat {
+    pub name: Ident,
+}
 
 // === Binding Powers === //
 
@@ -131,6 +193,10 @@ pub mod bp {
     pub const PRE_NOT: PrefixBp = PrefixBp::new(9);
 
     pub const INFIX_ADD: InfixBp = InfixBp::new_left(2);
+    pub const INFIX_SUB: InfixBp = InfixBp::new_left(2);
+    pub const INFIX_MUL: InfixBp = InfixBp::new_left(3);
+    pub const INFIX_DIV: InfixBp = InfixBp::new_left(3);
+    pub const INFIX_MOD: InfixBp = InfixBp::new_left(3);
 
     pub const POST_BRACKET: PostfixBp = PostfixBp::new(11);
 }

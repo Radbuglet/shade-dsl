@@ -44,15 +44,15 @@ pub struct InfixBp {
 impl InfixBp {
     pub const fn new_left(base: u32) -> Self {
         Self {
-            left: Bp::new(base, true),
-            right: Bp::new(base, false),
+            left: Bp::new(base, false),
+            right: Bp::new(base, true),
         }
     }
 
     pub const fn new_right(base: u32) -> Self {
         Self {
-            left: Bp::new(base, false),
-            right: Bp::new(base, true),
+            left: Bp::new(base, true),
+            right: Bp::new(base, false),
         }
     }
 }
