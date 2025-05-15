@@ -10,6 +10,12 @@ const WHEE = {
         whee;
     }
 
+    if wazoo {
+        return
+    } else {
+        foo(return "haha" + "hihi", return hehe);
+    }
+
     {
         foo
     }

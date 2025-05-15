@@ -92,6 +92,9 @@ pub enum AstExprKind {
         falsy: Option<Box<AstBlock>>,
     },
 
+    /// A `return` expression (e.g. `return`, `return foo`).
+    Return(Option<Box<AstExpr>>),
+
     // === Prefix === //
 
     /// A unary negation operation (e.g. `-foo`).
@@ -147,6 +150,7 @@ impl AstExprKind {
             | AstExprKind::CharLit(..)
             | AstExprKind::Paren(..)
             | AstExprKind::Tuple(..)
+            | AstExprKind::Return(..)
             | AstExprKind::UnaryNeg(..)
             | AstExprKind::UnaryNot(..)
             | AstExprKind::Add(..)
@@ -199,6 +203,7 @@ pub mod bp {
 
     pub const PRE_NEG: PrefixBp = PrefixBp::new(9);
     pub const PRE_NOT: PrefixBp = PrefixBp::new(9);
+    pub const PRE_RETURN: PrefixBp = PrefixBp::new(1);
 
     pub const INFIX_ADD: InfixBp = InfixBp::new_left(2);
     pub const INFIX_SUB: InfixBp = InfixBp::new_left(2);

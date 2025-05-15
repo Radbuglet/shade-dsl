@@ -74,6 +74,7 @@ define_keywords! {
     Mod = "mod",
     Mut = "mut",
     Pub = "pub",
+    Return = "return",
     Struct = "struct",
     True = "true",
     Type = "type",

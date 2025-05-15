@@ -213,8 +213,16 @@ fn parse_expr_full(p: P) -> AstExpr {
     expr
 }
 
-// See: https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
 fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
+    parse_expr_pratt_inner(p, min_bp, false).unwrap()
+}
+
+fn parse_expr_pratt_opt(p: P, min_bp: Bp) -> Option<AstExpr> {
+    parse_expr_pratt_inner(p, min_bp, true)
+}
+
+// See: https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
+fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr> {
     // Parse seed expression
     let seed_start = p.next_span();
     let lhs = 'seed: {
@@ -270,12 +278,12 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
             }
         }
 
-        // Parse a block expression.
+        // Parse a block expression
         if let Some(brace) = match_group(GroupDelimiter::Brace).expect(p) {
             break 'seed AstExprKind::Block(Box::new(parse_block(&mut p.enter(&brace), None)));
         }
 
-        // Parse an `if` statement
+        // Parse an `if` expression
         if match_kw(kw!("if")).expect(p).is_some() {
             let cond = parse_expr(p);
 
@@ -304,6 +312,13 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
             };
         }
 
+        // Parse a `return` expression
+        if match_kw(kw!("return")).expect(p).is_some() {
+            let expr = parse_expr_pratt_opt(p, bp::PRE_RETURN.right);
+
+            break 'seed AstExprKind::Return(expr.map(Box::new));
+        }
+
         // Parse unary neg.
         if match_punct(punct!('-')).expect(p).is_some() {
             let lhs = parse_expr_pratt(p, bp::PRE_NEG.right);
@@ -318,10 +333,14 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
             break 'seed AstExprKind::UnaryNot(Box::new(lhs));
         }
 
-        // Recovery strategy: eat a token
-        AstExprKind::Error(p.stuck_recover_with(|c| {
-            c.eat();
-        }))
+        if is_optional {
+            return None;
+        } else {
+            // Recovery strategy: eat a token
+            AstExprKind::Error(p.stuck_recover_with(|c| {
+                c.eat();
+            }))
+        }
     };
 
     let mut lhs = AstExpr {
@@ -428,7 +447,7 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
         break;
     }
 
-    lhs
+    Some(lhs)
 }
 
 pub fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
