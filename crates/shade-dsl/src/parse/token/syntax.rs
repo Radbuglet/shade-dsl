@@ -218,7 +218,7 @@ impl Spanned for TokenPunct {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct TokenStrLit {
     pub span: Span,
     pub kind: StrLitKind,
@@ -250,7 +250,7 @@ impl StrLitKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct TokenNumLit {
     pub span: Span,
     // TODO
@@ -262,7 +262,7 @@ impl Spanned for TokenNumLit {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct TokenCharLit {
     pub span: Span,
     pub value: char,

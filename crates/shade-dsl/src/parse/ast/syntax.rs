@@ -1,6 +1,6 @@
 use crate::{
     base::{ErrorGuaranteed, Span},
-    parse::token::Ident,
+    parse::token::{Ident, TokenCharLit, TokenStrLit},
 };
 
 // === ASTs === //
@@ -70,6 +70,12 @@ pub enum AstExprKind {
     /// A boolean literal (e.g. `true` or `false`).
     BoolLit(bool),
 
+    /// A string literal (e.g. `"whee"`).
+    StrLit(TokenStrLit),
+
+    /// A character literal (e.g. `'a'`).
+    CharLit(TokenCharLit),
+
     /// A parenthesized expression (e.g. `(foo)`).
     Paren(Box<AstExpr>),
 
@@ -79,7 +85,7 @@ pub enum AstExprKind {
     /// A tuple constructor (e.g. `(foo, bar)` or `(baz,)`).
     Tuple(Vec<AstExpr>),
 
-    /// An `if` expression (e.g. `if cond { abc } else { def }`).
+    /// An `if` expression (e.g. `if foo { bar }`, `if cond { abc } else { def }`).
     If {
         cond: Box<AstExpr>,
         truthy: Box<AstBlock>,
@@ -116,14 +122,14 @@ pub enum AstExprKind {
     /// Array indexing (e.g. `foo[3]`).
     Index(Box<AstExpr>, Box<AstExpr>),
 
-    /// Function instantiation (e.g. `Array.<u32, {8}>`).
-    Instantiate(Box<AstExpr>, Vec<AstType>),
-
     /// A function call (e.g. `foo(a, b, c)`)
     Call(Box<AstExpr>, Vec<AstExpr>),
 
+    /// Function instantiation (e.g. `Array.<u32, {8}>`).
+    Instantiate(Box<AstExpr>, Vec<AstType>),
+
     /// A named indexing operation (e.g. `foo.bar`).
-    NamedIndex(Box<AstExprKind>, Ident),
+    NamedIndex(Box<AstExpr>, Ident),
 
     // === Misc === //
 
@@ -137,6 +143,8 @@ impl AstExprKind {
             AstExprKind::Block(..) | AstExprKind::If { .. } => false,
             AstExprKind::Name(..)
             | AstExprKind::BoolLit(..)
+            | AstExprKind::StrLit(..)
+            | AstExprKind::CharLit(..)
             | AstExprKind::Paren(..)
             | AstExprKind::Tuple(..)
             | AstExprKind::UnaryNeg(..)
@@ -199,4 +207,6 @@ pub mod bp {
     pub const INFIX_MOD: InfixBp = InfixBp::new_left(3);
 
     pub const POST_BRACKET: PostfixBp = PostfixBp::new(11);
+    pub const POST_CALL: PostfixBp = PostfixBp::new(11);
+    pub const POST_DOT: PostfixBp = PostfixBp::new(11);
 }

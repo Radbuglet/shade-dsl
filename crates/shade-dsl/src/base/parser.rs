@@ -243,12 +243,29 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         self.recover(err)
     }
 
+    pub fn stuck_recover_with(&mut self, f: impl FnOnce(&mut Cursor<I>)) -> ErrorGuaranteed {
+        let err = self.stuck();
+        self.recover_with(err, f)
+    }
+
     #[must_use]
     pub fn recover(&mut self, err: RecoveryRequired) -> &mut Cursor<I> {
         let _ = err;
         self.moved_forwards();
 
         &mut self.cursor
+    }
+
+    pub fn recover_with(
+        &mut self,
+        err: RecoveryRequired,
+        f: impl FnOnce(&mut Cursor<I>),
+    ) -> ErrorGuaranteed {
+        let err_guar = err.0;
+
+        f(self.recover(err));
+
+        err_guar
     }
 
     pub fn gcx(&self) -> Gcx<'gcx> {

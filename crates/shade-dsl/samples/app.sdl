@@ -2,7 +2,10 @@ const WHEE = {
     (a, b, c) * d;
 
     if !whee {
-        todo[true]
+        todo["whee", 'w'];
+        foo("kk", {
+            foo
+        }).push(("hihi"))[haha]
     } else {
         whee;
     }

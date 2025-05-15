@@ -3,8 +3,8 @@ use crate::{
     parse::{
         ast::bp,
         token::{
-            GroupDelimiter, Ident, Punct, TokenCursor, TokenGroup, TokenMatcher, TokenParser,
-            TokenPunct, token_matcher,
+            GroupDelimiter, Ident, Punct, TokenCharLit, TokenCursor, TokenGroup, TokenMatcher,
+            TokenParser, TokenPunct, TokenStrLit, token_matcher,
         },
     },
     punct, symbol,
@@ -232,6 +232,16 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
             break 'seed AstExprKind::BoolLit(false);
         }
 
+        // Parse a string literal.
+        if let Some(lit) = match_str_lit().expect(p) {
+            break 'seed AstExprKind::StrLit(lit);
+        }
+
+        // Parse a character literal.
+        if let Some(lit) = match_char_lit().expect(p) {
+            break 'seed AstExprKind::CharLit(lit);
+        }
+
         // Parse a parenthesis or tuple.
         if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
             let mut p = p.enter(&paren);
@@ -308,8 +318,10 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
             break 'seed AstExprKind::UnaryNot(Box::new(lhs));
         }
 
-        // Recovery strategy: do nothing
-        AstExprKind::Error(p.stuck().0)
+        // Recovery strategy: eat a token
+        AstExprKind::Error(p.stuck_recover_with(|c| {
+            c.eat();
+        }))
     };
 
     let mut lhs = AstExpr {
@@ -331,6 +343,60 @@ fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
             };
 
             continue;
+        }
+
+        // Match calls
+        if let Some(group) =
+            match_group(GroupDelimiter::Paren).maybe_expect(p, bp::POST_CALL.left >= min_bp)
+        {
+            let mut args = Vec::new();
+            let mut p = p.enter(&group);
+
+            loop {
+                if match_eos(&mut p) {
+                    break;
+                }
+
+                let expr = parse_expr(&mut p);
+                args.push(expr);
+
+                if match_punct(punct!(',')).expect(&mut p).is_none() {
+                    if match_eos(&mut p) {
+                        break;
+                    }
+
+                    // Recovery strategy: ignore remainder.
+                    let _ = p.stuck();
+                    break;
+                }
+            }
+
+            lhs = AstExpr {
+                span: group.span,
+                kind: AstExprKind::Call(Box::new(lhs), args),
+            };
+
+            continue;
+        }
+
+        // Match instantiations and named indexes
+        if let Some(dot) = match_punct(punct!('.')).maybe_expect(p, bp::POST_DOT.left >= min_bp) {
+            if match_punct(punct!('<')).expect(p).is_some() {
+                todo!()
+            } else {
+                let Some(name) = match_ident().expect(p) else {
+                    // Recovery strategy: keep trying to chain.
+                    let _ = p.stuck();
+                    continue 'chaining;
+                };
+
+                lhs = AstExpr {
+                    span: dot.span.to(name.span),
+                    kind: AstExprKind::NamedIndex(Box::new(lhs), name),
+                };
+            }
+
+            continue 'chaining;
         }
 
         // Match punctuation-demarcated infix operations
@@ -498,5 +564,17 @@ fn match_punct(punct: Punct) -> impl TokenMatcher<Output = Option<TokenPunct>> {
             .and_then(|v| v.punct())
             .filter(|v| v.ch == punct)
             .copied()
+    })
+}
+
+fn match_str_lit() -> impl TokenMatcher<Output = Option<TokenStrLit>> {
+    token_matcher(symbol!("string literal"), |c, _| {
+        c.eat().and_then(|v| v.str_lit()).copied()
+    })
+}
+
+fn match_char_lit() -> impl TokenMatcher<Output = Option<TokenCharLit>> {
+    token_matcher(symbol!("string literal"), |c, _| {
+        c.eat().and_then(|v| v.char_lit()).copied()
     })
 }
