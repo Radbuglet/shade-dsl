@@ -188,7 +188,7 @@ fn parse_ident(p: P) -> Option<Ident> {
     let start = p.next_span();
 
     let first_ch = p.expect(symbol!("identifier"), |c| {
-        c.eat().filter(|c| c.is_xid_start())
+        c.eat().filter(|&c| c.is_xid_start() || c == '_')
     })?;
 
     let mut accum = String::new();

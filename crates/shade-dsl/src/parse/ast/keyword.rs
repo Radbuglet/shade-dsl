@@ -68,6 +68,7 @@ define_keywords! {
     Enum = "enum",
     False = "false",
     Fn = "fn",
+    Hole = "_",
     If = "if",
     Let = "let",
     Loop = "loop",

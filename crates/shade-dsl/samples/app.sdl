@@ -1,5 +1,5 @@
 const WHEE = {
-    (a, b, c) * d;
+    wazoo = (a, b, c) * d;
 
     if !whee {
         todo["whee"];

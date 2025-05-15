@@ -511,6 +511,19 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             continue 'chaining;
         }
 
+        // Match infix assignment
+        if let Some(punct) =
+            match_punct(punct!('=')).maybe_expect(p, bp::INFIX_ASSIGN.left >= min_bp)
+        {
+            lhs = AstExpr {
+                span: punct.span,
+                kind: AstExprKind::Assign(
+                    Box::new(lhs),
+                    Box::new(parse_expr_pratt(p, bp::INFIX_ASSIGN.right)),
+                ),
+            };
+        }
+
         // Match punctuation-demarcated infix operations
         type PunctInfixOp = (
             Punct,

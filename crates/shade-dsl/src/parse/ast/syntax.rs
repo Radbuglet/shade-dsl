@@ -136,6 +136,9 @@ pub enum AstExprKind {
     /// A modulo expression (e.g. `foo % bar`).
     Mod(Box<AstExpr>, Box<AstExpr>),
 
+    /// An assignment expression (e.g. `foo = bar`).
+    Assign(Box<AstExpr>, Box<AstExpr>),
+
     // === Postfix === //
 
     /// Array indexing (e.g. `foo[3]`).
@@ -179,6 +182,7 @@ impl AstExprKind {
             | AstExprKind::Mul(..)
             | AstExprKind::Div(..)
             | AstExprKind::Mod(..)
+            | AstExprKind::Assign(..)
             | AstExprKind::Index(..)
             | AstExprKind::Instantiate(..)
             | AstExprKind::Call(..)
@@ -214,7 +218,18 @@ pub enum AstStmtKind {
 
 #[derive(Debug, Clone)]
 pub struct AstPat {
-    pub name: Ident,
+    pub span: Span,
+    pub kind: AstPatKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum AstPatKind {
+    Hole,
+    Name(Ident),
+    Tuple {
+        children: Vec<AstPat>,
+        rest: Option<Span>,
+    },
 }
 
 // === Binding Powers === //
@@ -232,6 +247,7 @@ pub mod bp {
     pub const INFIX_MUL: InfixBp = InfixBp::new_left(3);
     pub const INFIX_DIV: InfixBp = InfixBp::new_left(3);
     pub const INFIX_MOD: InfixBp = InfixBp::new_left(3);
+    pub const INFIX_ASSIGN: InfixBp = InfixBp::new_right(1);
 
     pub const POST_BRACKET: PostfixBp = PostfixBp::new(11);
     pub const POST_CALL: PostfixBp = PostfixBp::new(11);
