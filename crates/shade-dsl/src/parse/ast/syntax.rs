@@ -79,7 +79,8 @@ pub enum AstExprKind {
 
     /// A parenthesized expression (e.g. `(foo)`).
     ///
-    /// Can be parsed in both type and expression parsing contexts.
+    /// Can be parsed in both type and expression parsing contexts. The sub-expressions inherit the
+    /// parsing context of their parent.
     Paren(Box<AstExpr>),
 
     /// A block expression (e.g. `{ let x = 2; x }`).
@@ -190,12 +191,14 @@ pub enum AstExprKind {
 
     /// Array indexing (e.g. `foo[3]`).
     ///
-    /// Can only be parsed in expression parsing contexts.
+    /// Can only be parsed in expression parsing contexts. The sub-expressions inherit the parsing
+    /// context of their parent.
     Index(Box<AstExpr>, Box<AstExpr>),
 
     /// A function call (e.g. `foo(a, b, c)`).
     ///
-    /// Can be parsed in both type and expression parsing contexts.
+    /// Can be parsed in both type and expression parsing contexts. The sub-expressions inherit the
+    /// parsing context of their parent.
     Call(Box<AstExpr>, Vec<AstExpr>),
 
     /// Function instantiation (e.g. `Array.<u32, {8}>`).
@@ -206,7 +209,8 @@ pub enum AstExprKind {
 
     /// A named indexing operation (e.g. `foo.bar`).
     ///
-    /// Can be parsed in both type and expression parsing contexts.
+    /// Can be parsed in both type and expression parsing contexts.The sub-expressions inherit the
+    /// parsing context of their parent.
     NamedIndex(Box<AstExpr>, Ident),
 
     // === Type Constructors === //
@@ -218,8 +222,9 @@ pub enum AstExprKind {
 
     /// A type constructor for arrays (e.g. `[Foo; 3]`).
     ///
-    /// Can only be parsed in type parsing contexts.
-    TypeArray(Vec<AstExpr>),
+    /// Can only be parsed in type parsing contexts. The element type is parsed as a type but the
+    /// length is parsed as a normal expression.
+    TypeArray(Box<AstExpr>, Box<AstExpr>),
 
     /// A type constructor for pointers (e.g. `*const u32`, `*mut i32`).
     ///
@@ -296,6 +301,10 @@ pub enum AstStmtKind {
         ty: Option<AstExpr>,
         init: Option<Box<AstExpr>>,
     },
+    Const {
+        name: Ident,
+        init: Box<AstExpr>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -353,4 +362,9 @@ pub mod expr_bp {
     pub const POST_DOT: PostfixBp = PostfixBp::new(11);
 }
 
-pub mod ty_bp {}
+pub mod ty_bp {
+    use crate::base::PrefixBp;
+
+    pub const PRE_POINTER: PrefixBp = PrefixBp::new(1);
+    pub const PRE_FUNC_RETVAL: PrefixBp = PrefixBp::new(1);
+}

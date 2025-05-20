@@ -2,7 +2,12 @@ use std::fmt;
 
 use ctx2d_utils::lang::{ConstFmt, const_str_eq};
 
-use crate::base::{Symbol, symbol};
+use crate::{
+    base::{Symbol, symbol},
+    parse::token::{Punct, punct},
+};
+
+// === Keywords === //
 
 macro_rules! define_keywords {
     ($( $name:ident = $text:literal ),* $(,)?) => {
@@ -91,3 +96,67 @@ macro_rules! kw {
 }
 
 pub use kw;
+
+// === Punctuation sequences === //
+
+macro_rules! define_punct_seqs {
+    ($($name:ident = $($text:literal)*),* $(,)?) => {
+        #[derive(Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd)]
+        pub enum PunctSeq {
+            $($name,)*
+        }
+
+        impl PunctSeq {
+            pub const fn new(v: &str) -> Self {
+                $(if const_str_eq(v, concat!($($text),*)) {
+                    return Self::$name;
+                })*
+
+                let mut f = ConstFmt::new();
+
+                f.write('`');
+                f.write_str(v);
+                f.write_str("` is not a valid `Punct`");
+
+                panic!("{}", f.finish());
+            }
+
+            pub fn try_new(v: &str) -> Option<Self> {
+                match v {
+                    $(concat!($($text),*) => Some(Self::$name),)*
+                    _ => None,
+                }
+            }
+
+            pub const fn seq(self) -> &'static [Punct] {
+                match self {
+                    $(Self::$name => &[$( punct!($text), )*],)*
+                }
+            }
+
+            pub fn expectation_name(self) -> Symbol {
+                match self {
+                    $(Self::$name => symbol!(concat!(
+                        "`",
+                        $($text,)*
+                        "`"
+                    )),)*
+                }
+            }
+        }
+    };
+}
+
+define_punct_seqs! {
+    Arrow = '-' '>',
+    LogicalEq = '=' '=',
+}
+
+#[macro_export]
+macro_rules! puncts {
+    ($kw:expr) => {
+        const { $crate::parse::ast::PunctSeq::new($kw) }
+    };
+}
+
+pub use puncts;

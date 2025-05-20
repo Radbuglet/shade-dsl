@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     AdtKind, AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstMember, AstMemberInit, AstStmt,
-    AstStmtKind, Keyword, Mutability, kw,
+    AstStmtKind, Keyword, Mutability, PunctSeq, kw, puncts, ty_bp,
 };
 
 type P<'gcx, 'a, 'g> = &'a mut TokenParser<'gcx, 'g>;
@@ -388,13 +388,6 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             break 'seed build_expr(AstExprKind::Break(expr.map(Box::new)), p);
         }
 
-        // Parse a `return` expression
-        if match_kw(kw!("return")).expect(p).is_some() {
-            let expr = parse_expr_pratt_opt(p, expr_bp::PRE_RETURN.right);
-
-            break 'seed build_expr(AstExprKind::Return(expr.map(Box::new)), p);
-        }
-
         // Parse unary neg.
         if match_punct(punct!('-')).expect(p).is_some() {
             let lhs = parse_expr_pratt(p, expr_bp::PRE_NEG.right);
@@ -516,13 +509,54 @@ fn parse_ty_pratt(p: P, min_bp: Bp) -> AstExpr {
         }
 
         // Parse an array type constructor.
-        // TODO
+        if let Some(arr) = match_group(GroupDelimiter::Bracket).expect(p) {
+            let mut p2 = p.enter(&arr);
+
+            let ty = parse_ty(&mut p2);
+
+            if match_punct(punct!(';')).expect(&mut p2).is_none() {
+                // Recovery strategy: ignore and continue
+                p2.stuck_recover_with(|_c| {});
+            }
+
+            let count = parse_expr_full(&mut p2);
+
+            break 'seed build_expr(AstExprKind::TypeArray(Box::new(ty), Box::new(count)), p);
+        }
 
         // Parse a pointer type constructor.
-        // TODO
+        if match_punct(punct!('*')).expect(p).is_some() {
+            let Some(muta) = parse_ptr_mutability(p) else {
+                break 'seed build_expr(
+                    AstExprKind::Error(p.stuck_recover_with(|c| {
+                        // Recovery strategy: eat the bad identifier; otherwise ignore.
+                        match_any_ident(c);
+                    })),
+                    p,
+                );
+            };
+
+            let ty = parse_ty_pratt(p, ty_bp::PRE_POINTER.right);
+
+            break 'seed build_expr(AstExprKind::TypePointer(muta, Box::new(ty)), p);
+        }
 
         // Parse a function type constructor.
-        // TODO
+        if match_kw(kw!("fn")).expect(p).is_some() {
+            let Some(group) = match_group(GroupDelimiter::Paren).expect(p) else {
+                // Recovery strategy: ignore
+                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+            };
+
+            let args = parse_comma_group(&mut p.enter(&group), parse_ty).elems;
+
+            let return_ty = match_punct_seq(puncts!("->"))
+                .expect(p)
+                .map(|_| parse_ty_pratt(p, ty_bp::PRE_FUNC_RETVAL.right))
+                .map(Box::new);
+
+            break 'seed build_expr(AstExprKind::TypeFn(args, return_ty), p);
+        }
 
         // Recovery strategy: eat a token
         build_expr(
@@ -786,6 +820,22 @@ fn match_punct(punct: Punct) -> impl TokenMatcher<Output = Option<TokenPunct>> {
     })
 }
 
+fn match_punct_seq(punct: PunctSeq) -> impl TokenMatcher<Output = Option<Span>> {
+    token_matcher(punct.expectation_name(), move |c, _| {
+        let start = c.next_span();
+
+        if punct
+            .seq()
+            .iter()
+            .all(|&v| match_punct(v).consume(c).is_some())
+        {
+            Some(start.to(c.prev_span()))
+        } else {
+            None
+        }
+    })
+}
+
 fn match_str_lit() -> impl TokenMatcher<Output = Option<TokenStrLit>> {
     token_matcher(symbol!("string literal"), |c, _| {
         c.eat().and_then(|v| v.str_lit()).copied()
@@ -793,7 +843,7 @@ fn match_str_lit() -> impl TokenMatcher<Output = Option<TokenStrLit>> {
 }
 
 fn match_char_lit() -> impl TokenMatcher<Output = Option<TokenCharLit>> {
-    token_matcher(symbol!("string literal"), |c, _| {
+    token_matcher(symbol!("character literal"), |c, _| {
         c.eat().and_then(|v| v.char_lit()).copied()
     })
 }
