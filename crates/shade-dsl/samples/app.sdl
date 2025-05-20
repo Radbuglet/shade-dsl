@@ -1,33 +1,5 @@
-const WHEE = {
-    wazoo = (a, b, c) * d;
+const FOO = {
+    // bar = type(*const u32);
 
-    if !whee {
-        todo["whee"];
-        foo("kk", {
-            foo
-        }).push(("hihi"))[haha]
-    } else {
-        whee;
-    }
-
-    return if wazoo {
-        return
-    } else if whee {
-        {
-            break ();
-        }
-    } else {
-        foo(return "haha" + "hihi", return hehe);
-    };
-
-    while whee + "who" {
-        ;;;;;
-    }
-
-    loop {
-        foo;
-        break "h";
-        continue;
-    }
-    a + b
+    foo.<u32,>(type(u32))
 };
