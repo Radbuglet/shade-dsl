@@ -260,30 +260,15 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
 
         // Parse a parenthesis or tuple.
         if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
-            let mut p2 = p.enter(&paren);
-            let mut had_comma = false;
-            let mut exprs = Vec::new();
+            let res = parse_comma_group(&mut p.enter(&paren), parse_expr);
 
-            loop {
-                if match_eos(&mut p2) {
-                    break;
-                }
-
-                exprs.push(parse_expr(&mut p2));
-
-                if match_punct(punct!(',')).expect(&mut p2).is_some() {
-                    had_comma = true;
-                    continue;
-                }
-
-                break;
-            }
-
-            if had_comma || exprs.len() != 1 {
-                break 'seed build_expr(AstExprKind::Tuple(exprs), p);
-            } else {
-                break 'seed build_expr(AstExprKind::Paren(Box::new(exprs.pop().unwrap())), p);
-            }
+            break 'seed build_expr(
+                match res.to_singleton() {
+                    Ok(expr) => AstExprKind::Paren(Box::new(expr)),
+                    Err(exprs) => AstExprKind::Tuple(exprs),
+                },
+                p,
+            );
         }
 
         // Parse a block expression
@@ -473,34 +458,14 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
         }
 
         // Match calls
-        if let Some(group) =
+        if let Some(paren) =
             match_group(GroupDelimiter::Paren).maybe_expect(p, expr_bp::POST_CALL.left >= min_bp)
         {
-            let mut args = Vec::new();
-            let mut p = p.enter(&group);
-
-            loop {
-                if match_eos(&mut p) {
-                    break;
-                }
-
-                let expr = parse_expr(&mut p);
-                args.push(expr);
-
-                if match_punct(punct!(',')).expect(&mut p).is_none() {
-                    if match_eos(&mut p) {
-                        break;
-                    }
-
-                    // Recovery strategy: ignore remainder.
-                    let _ = p.stuck();
-                    break;
-                }
-            }
+            let res = parse_comma_group(&mut p.enter(&paren), parse_expr);
 
             lhs = AstExpr {
-                span: group.span,
-                kind: AstExprKind::Call(Box::new(lhs), args),
+                span: paren.span,
+                kind: AstExprKind::Call(Box::new(lhs), res.elems),
             };
 
             continue;
@@ -511,33 +476,17 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             match_punct(punct!('.')).maybe_expect(p, expr_bp::POST_DOT.left >= min_bp)
         {
             if match_punct(punct!('<')).expect(p).is_some() {
-                let mut args = Vec::new();
-
-                loop {
-                    if match_punct(punct!('>')).expect(p).is_some() {
-                        break;
-                    }
-
-                    args.push(parse_ty(p));
-
-                    if match_punct(punct!('>')).expect(p).is_some() {
-                        break;
-                    }
-
-                    if match_punct(punct!(',')).expect(p).is_none() {
-                        if match_punct(punct!('>')).expect(p).is_none() {
-                            // Recovery strategy: ignore.
-                            p.stuck_recover_with(|_| {});
-                            break;
-                        }
-
-                        break;
-                    }
-                }
+                let res = parse_delimited(
+                    p,
+                    &mut (),
+                    |p, _| parse_ty(p),
+                    |p, _| match_punct(punct!(',')).expect(p).is_some(),
+                    |p, _| match_punct(punct!(',')).expect(p).is_some(),
+                );
 
                 lhs = AstExpr {
                     span: dot.span.to(p.prev_span()),
-                    kind: AstExprKind::Instantiate(Box::new(lhs), args),
+                    kind: AstExprKind::Instantiate(Box::new(lhs), res.elems),
                 };
             } else {
                 let Some(name) = match_ident().expect(p) else {
@@ -775,4 +724,66 @@ fn match_char_lit() -> impl TokenMatcher<Output = Option<TokenCharLit>> {
     token_matcher(symbol!("string literal"), |c, _| {
         c.eat().and_then(|v| v.char_lit()).copied()
     })
+}
+
+struct Delimited<E> {
+    elems: Vec<E>,
+    trailing: bool,
+}
+
+impl<E> Delimited<E> {
+    fn is_multi(&self) -> bool {
+        self.elems.len() != 1 || self.trailing
+    }
+
+    fn to_singleton(mut self) -> Result<E, Vec<E>> {
+        if !self.is_multi() {
+            Ok(self.elems.pop().unwrap())
+        } else {
+            Err(self.elems)
+        }
+    }
+}
+
+fn parse_delimited<C: ?Sized, E>(
+    p: P,
+    cx: &mut C,
+    mut match_elem: impl FnMut(P, &mut C) -> E,
+    mut match_delimiter: impl FnMut(P, &mut C) -> bool,
+    mut match_eos: impl FnMut(P, &mut C) -> bool,
+) -> Delimited<E> {
+    let mut elems = Vec::new();
+
+    let trailing = loop {
+        if match_eos(p, cx) {
+            break !elems.is_empty();
+        }
+
+        elems.push(match_elem(p, cx));
+
+        if match_eos(p, cx) {
+            break false;
+        }
+
+        if !match_delimiter(p, cx) {
+            if !match_eos(p, cx) {
+                // Recovery strategy: ignore.
+                p.stuck_recover_with(|_| {});
+            }
+
+            break false;
+        }
+    };
+
+    Delimited { elems, trailing }
+}
+
+fn parse_comma_group<E>(p: P, mut match_elem: impl FnMut(P) -> E) -> Delimited<E> {
+    parse_delimited(
+        p,
+        &mut (),
+        |p, _| match_elem(p),
+        |p, _| match_punct(punct!(',')).expect(p).is_some(),
+        |p, _| match_eos(p),
+    )
 }
