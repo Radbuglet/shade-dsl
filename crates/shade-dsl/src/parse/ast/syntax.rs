@@ -317,10 +317,9 @@ pub struct AstPat {
 pub enum AstPatKind {
     Hole,
     Name(Mutability, Ident),
-    Tuple {
-        children: Vec<AstPat>,
-        rest: Option<Span>,
-    },
+    Tuple(Vec<AstPat>),
+    Paren(Box<AstPat>),
+    Error(ErrorGuaranteed),
 }
 
 #[derive(Debug, Clone)]

@@ -11,8 +11,8 @@ use crate::{
 };
 
 use super::{
-    AdtKind, AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstMember, AstMemberInit, AstStmt,
-    AstStmtKind, Keyword, Mutability, PunctSeq, kw, puncts, ty_bp,
+    AdtKind, AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstMember, AstMemberInit, AstPat,
+    AstPatKind, AstStmt, AstStmtKind, Keyword, Mutability, PunctSeq, kw, puncts, ty_bp,
 };
 
 type P<'gcx, 'a, 'g> = &'a mut TokenParser<'gcx, 'g>;
@@ -714,8 +714,26 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
         }
 
         // Match let statements
-        if match_kw(kw!("let")).expect(p).is_some() {
-            todo!()
+        if let Some(let_kw) = match_kw(kw!("let")).expect(p) {
+            let binding = parse_pat(p);
+            let ty = match_punct(punct!(':')).expect(p).map(|_| parse_ty(p));
+            let init = match_punct(punct!('=')).expect(p).map(|_| parse_expr(p));
+
+            if match_punct(punct!(';')).expect(p).is_none() {
+                // Recovery strategy: ignore
+                let _ = p.stuck_recover();
+            }
+
+            stmts.push(AstStmt {
+                span: let_kw.span.to(p.prev_span()),
+                kind: AstStmtKind::Let {
+                    binding,
+                    ty,
+                    init: init.map(Box::new),
+                },
+            });
+
+            continue;
         }
 
         // Match expressions
@@ -744,6 +762,50 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
         stmts,
         last_expr,
     }
+}
+
+// === Patterns === //
+
+fn parse_pat(p: P) -> AstPat {
+    let start = p.next_span();
+
+    AstPat {
+        span: start.to(p.prev_span()),
+        kind: parse_pat_inner(p),
+    }
+}
+
+fn parse_pat_inner(p: P) -> AstPatKind {
+    // Match `mut <name>`.
+    if match_kw(kw!("mut")).expect(p).is_some() {
+        let Some(name) = match_ident().expect(p) else {
+            // Recovery strategy: do nothing
+            return AstPatKind::Error(p.stuck_recover_with(|_| {}));
+        };
+
+        return AstPatKind::Name(Mutability::Mut, name);
+    }
+
+    // Match `<name>`.
+    if let Some(name) = match_ident().expect(p) {
+        return AstPatKind::Name(Mutability::Not, name);
+    }
+
+    // Match holes.
+    if match_kw(kw!("_")).expect(p).is_some() {
+        return AstPatKind::Hole;
+    }
+
+    // Match parens or tuple destructuring
+    if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
+        return match parse_comma_group(&mut p.enter(&paren), parse_pat).into_singleton() {
+            Ok(single) => AstPatKind::Paren(Box::new(single)),
+            Err(list) => AstPatKind::Tuple(list),
+        };
+    }
+
+    // Recovery strategy: do nothing
+    AstPatKind::Error(p.stuck_recover_with(|_| {}))
 }
 
 // === Parsing helpers === //
