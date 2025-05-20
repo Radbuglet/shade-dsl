@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     AdtKind, AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstMember, AstMemberInit, AstStmt,
-    AstStmtKind, Keyword, kw,
+    AstStmtKind, Keyword, Mutability, kw,
 };
 
 type P<'gcx, 'a, 'g> = &'a mut TokenParser<'gcx, 'g>;
@@ -234,28 +234,9 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
     };
 
     let mut lhs = 'seed: {
-        // Parse a name.
-        if let Some(ident) = match_ident().expect(p) {
-            break 'seed build_expr(AstExprKind::Name(ident), p);
-        }
-
-        // Parse a boolean literal.
-        if match_kw(kw!("true")).expect(p).is_some() {
-            break 'seed build_expr(AstExprKind::BoolLit(true), p);
-        }
-
-        if match_kw(kw!("false")).expect(p).is_some() {
-            break 'seed build_expr(AstExprKind::BoolLit(false), p);
-        }
-
-        // Parse a string literal.
-        if let Some(lit) = match_str_lit().expect(p) {
-            break 'seed build_expr(AstExprKind::StrLit(lit), p);
-        }
-
-        // Parse a character literal.
-        if let Some(lit) = match_char_lit().expect(p) {
-            break 'seed build_expr(AstExprKind::CharLit(lit), p);
+        // Parse seeds common with type expressions.
+        if let Some(expr) = parse_common_expr_seeds(p) {
+            break 'seed build_expr(expr, p);
         }
 
         // Parse a parenthesis or tuple.
@@ -263,7 +244,7 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             let res = parse_comma_group(&mut p.enter(&paren), parse_expr);
 
             break 'seed build_expr(
-                match res.to_singleton() {
+                match res.into_singleton() {
                     Ok(expr) => AstExprKind::Paren(Box::new(expr)),
                     Err(exprs) => AstExprKind::Tuple(exprs),
                 },
@@ -443,65 +424,14 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
 
     // Parse postfix and infix operations that bind tighter than our caller.
     'chaining: loop {
-        // Match indexing
-        if let Some(group) = match_group(GroupDelimiter::Bracket)
-            .maybe_expect(p, expr_bp::POST_BRACKET.left >= min_bp)
+        // Match chaining syntaxes common with types.
         {
-            let index = parse_expr_full(&mut p.enter(&group));
+            let (new_lhs, did_chain) = parse_common_expr_chains(p, lhs, min_bp);
+            lhs = new_lhs;
 
-            lhs = AstExpr {
-                span: group.span,
-                kind: AstExprKind::Index(Box::new(lhs), Box::new(index)),
-            };
-
-            continue;
-        }
-
-        // Match calls
-        if let Some(paren) =
-            match_group(GroupDelimiter::Paren).maybe_expect(p, expr_bp::POST_CALL.left >= min_bp)
-        {
-            let res = parse_comma_group(&mut p.enter(&paren), parse_expr);
-
-            lhs = AstExpr {
-                span: paren.span,
-                kind: AstExprKind::Call(Box::new(lhs), res.elems),
-            };
-
-            continue;
-        }
-
-        // Match instantiations and named indexes
-        if let Some(dot) =
-            match_punct(punct!('.')).maybe_expect(p, expr_bp::POST_DOT.left >= min_bp)
-        {
-            if match_punct(punct!('<')).expect(p).is_some() {
-                let res = parse_delimited(
-                    p,
-                    &mut (),
-                    |p, _| parse_ty(p),
-                    |p, _| match_punct(punct!(',')).expect(p).is_some(),
-                    |p, _| match_punct(punct!(',')).expect(p).is_some(),
-                );
-
-                lhs = AstExpr {
-                    span: dot.span.to(p.prev_span()),
-                    kind: AstExprKind::Instantiate(Box::new(lhs), res.elems),
-                };
-            } else {
-                let Some(name) = match_ident().expect(p) else {
-                    // Recovery strategy: keep trying to chain.
-                    let _ = p.stuck();
-                    continue 'chaining;
-                };
-
-                lhs = AstExpr {
-                    span: dot.span.to(name.span),
-                    kind: AstExprKind::NamedIndex(Box::new(lhs), name),
-                };
+            if did_chain {
+                continue 'chaining;
             }
-
-            continue 'chaining;
         }
 
         // Match infix assignment
@@ -562,11 +492,36 @@ fn parse_ty_pratt(p: P, min_bp: Bp) -> AstExpr {
     };
 
     let mut lhs = 'seed: {
-        // Parse a name.
-        if let Some(ident) = match_ident().expect(p) {
-            break 'seed build_expr(AstExprKind::Name(ident), p);
+        // Parse seeds common with value expressions.
+        if let Some(expr) = parse_common_expr_seeds(p) {
+            break 'seed build_expr(expr, p);
         }
 
+        // Parse a parenthesis or tuple type constructor.
+        if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
+            let res = parse_comma_group(&mut p.enter(&paren), parse_expr);
+
+            break 'seed build_expr(
+                match res.into_singleton() {
+                    Ok(expr) => AstExprKind::Paren(Box::new(expr)),
+                    Err(exprs) => AstExprKind::TypeTuple(exprs),
+                },
+                p,
+            );
+        }
+
+        // Parse a block expression.
+        if let Some(block) = parse_brace_block(p) {
+            break 'seed build_expr(AstExprKind::Block(Box::new(block)), p);
+        }
+
+        // Parse an array type constructor.
+        // TODO
+
+        // Parse a pointer type constructor.
+        // TODO
+
+        // Parse a function type constructor.
         // TODO
 
         // Recovery strategy: eat a token
@@ -578,9 +533,126 @@ fn parse_ty_pratt(p: P, min_bp: Bp) -> AstExpr {
         )
     };
 
-    // TODO
+    // Parse postfix and infix operations that bind tighter than our caller.
+    'chaining: loop {
+        // Match chaining syntaxes common with types.
+        {
+            let (new_lhs, did_chain) = parse_common_expr_chains(p, lhs, min_bp);
+            lhs = new_lhs;
+
+            if did_chain {
+                continue 'chaining;
+            }
+        }
+
+        break;
+    }
 
     lhs
+}
+
+fn parse_common_expr_seeds(p: P) -> Option<AstExprKind> {
+    // Parse a name.
+    if let Some(ident) = match_ident().expect(p) {
+        return Some(AstExprKind::Name(ident));
+    }
+
+    // Parse a boolean literal.
+    if match_kw(kw!("true")).expect(p).is_some() {
+        return Some(AstExprKind::BoolLit(true));
+    }
+
+    if match_kw(kw!("false")).expect(p).is_some() {
+        return Some(AstExprKind::BoolLit(false));
+    }
+
+    // Parse a string literal.
+    if let Some(lit) = match_str_lit().expect(p) {
+        return Some(AstExprKind::StrLit(lit));
+    }
+
+    // Parse a character literal.
+    if let Some(lit) = match_char_lit().expect(p) {
+        return Some(AstExprKind::CharLit(lit));
+    }
+
+    None
+}
+
+#[must_use]
+fn parse_common_expr_chains(p: P, mut lhs: AstExpr, min_bp: Bp) -> (AstExpr, bool) {
+    // Match indexing
+    if let Some(group) =
+        match_group(GroupDelimiter::Bracket).maybe_expect(p, expr_bp::POST_BRACKET.left >= min_bp)
+    {
+        let index = parse_expr_full(&mut p.enter(&group));
+
+        lhs = AstExpr {
+            span: group.span,
+            kind: AstExprKind::Index(Box::new(lhs), Box::new(index)),
+        };
+
+        return (lhs, true);
+    }
+
+    // Match calls
+    if let Some(paren) =
+        match_group(GroupDelimiter::Paren).maybe_expect(p, expr_bp::POST_CALL.left >= min_bp)
+    {
+        let res = parse_comma_group(&mut p.enter(&paren), parse_expr);
+
+        lhs = AstExpr {
+            span: paren.span,
+            kind: AstExprKind::Call(Box::new(lhs), res.elems),
+        };
+
+        return (lhs, true);
+    }
+
+    // Match instantiations and named indexes
+    if let Some(dot) = match_punct(punct!('.')).maybe_expect(p, expr_bp::POST_DOT.left >= min_bp) {
+        if match_punct(punct!('<')).expect(p).is_some() {
+            let res = parse_delimited(
+                p,
+                &mut (),
+                |p, _| parse_ty(p),
+                |p, _| match_punct(punct!(',')).expect(p).is_some(),
+                |p, _| match_punct(punct!('>')).expect(p).is_some(),
+            );
+
+            lhs = AstExpr {
+                span: dot.span.to(p.prev_span()),
+                kind: AstExprKind::Instantiate(Box::new(lhs), res.elems),
+            };
+        } else {
+            let Some(name) = match_ident().expect(p) else {
+                // Recovery strategy: keep trying to chain.
+                let _ = p.stuck();
+                return (lhs, true);
+            };
+
+            lhs = AstExpr {
+                span: dot.span.to(name.span),
+                kind: AstExprKind::NamedIndex(Box::new(lhs), name),
+            };
+        }
+
+        return (lhs, true);
+    }
+
+    (lhs, false)
+}
+
+fn parse_ptr_mutability(p: P) -> Option<Mutability> {
+    if match_kw(kw!("const")).expect(p).is_some() {
+        return Some(Mutability::Not);
+    }
+
+    if match_kw(kw!("mut")).expect(p).is_some() {
+        return Some(Mutability::Mut);
+    }
+
+    None
 }
 
 // === Block parsing === //
@@ -736,7 +808,7 @@ impl<E> Delimited<E> {
         self.elems.len() != 1 || self.trailing
     }
 
-    fn to_singleton(mut self) -> Result<E, Vec<E>> {
+    fn into_singleton(mut self) -> Result<E, Vec<E>> {
         if !self.is_multi() {
             Ok(self.elems.pop().unwrap())
         } else {
