@@ -11,8 +11,9 @@ use crate::{
 };
 
 use super::{
-    AdtKind, AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstMember, AstMemberInit, AstPat,
-    AstPatKind, AstStmt, AstStmtKind, Keyword, Mutability, PunctSeq, kw, puncts, ty_bp,
+    AdtKind, AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstFuncDef, AstFuncParam, AstMember,
+    AstMemberInit, AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, Mutability, PunctSeq, kw,
+    puncts, ty_bp,
 };
 
 type P<'gcx, 'a, 'g> = &'a mut TokenParser<'gcx, 'g>;
@@ -256,6 +257,58 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
         if let Some(block) = parse_brace_block(p) {
             // TODO: Labels
             break 'seed build_expr(AstExprKind::Block(Box::new(block)), p);
+        }
+
+        // Parse a function expression
+        if match_kw(kw!("fn")).expect(p).is_some() {
+            let sig_start = p.next_span();
+
+            let generics = match_punct(punct!('<')).expect(p).map(|_| {
+                parse_delimited(
+                    p,
+                    &mut (),
+                    |p, _| parse_func_param(p),
+                    |p, _| match_punct(punct!(',')).expect(p).is_some(),
+                    |p, _| match_punct(punct!('>')).expect(p).is_some(),
+                )
+                .elems
+            });
+
+            let params = match_group(GroupDelimiter::Paren)
+                .expect(p)
+                .map(|group| parse_comma_group(&mut p.enter(&group), parse_func_param).elems);
+
+            if generics.is_none() && params.is_none() {
+                p.hint(LeafDiag::new(
+                    Level::Note,
+                    "both generic and runtime arguments are optional for a function but at least one must be present",
+                ));
+
+                // Recovery strategy: ignore
+                p.stuck_recover_with(|_| {});
+            }
+
+            let ret_ty = match_punct_seq(puncts!("->"))
+                .expect(p)
+                .map(|_| Box::new(parse_ty(p)));
+
+            let sig_span = sig_start.to(p.prev_span());
+
+            let Some(body) = parse_brace_block(p) else {
+                // Recovery strategy: ignore
+                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+            };
+
+            break 'seed build_expr(
+                AstExprKind::FuncDef(Box::new(AstFuncDef {
+                    sig_span,
+                    generics: generics.unwrap_or_default(),
+                    params,
+                    ret_ty,
+                    body: Box::new(body),
+                })),
+                p,
+            );
         }
 
         // Parse a type expression
@@ -687,6 +740,25 @@ fn parse_ptr_mutability(p: P) -> Option<Mutability> {
     }
 
     None
+}
+
+fn parse_func_param(p: P) -> AstFuncParam {
+    let start = p.next_span();
+
+    let binding = parse_pat(p);
+
+    if match_punct(punct!(':')).expect(p).is_none() {
+        // Recovery strategy: ignore
+        p.stuck_recover_with(|_| {});
+    }
+
+    let ty = parse_ty(p);
+
+    AstFuncParam {
+        span: start.to(p.prev_span()),
+        binding,
+        ty,
+    }
 }
 
 // === Block parsing === //

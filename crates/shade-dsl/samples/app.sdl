@@ -1,8 +1,11 @@
-const foo = {
-    let mut whee = Vec.new();
+const Vec = fn<T: metatype> -> metatype {
+    // ...
+};
 
-    let (woo, ()) = create_a_tuple();
-    let foo: [kale; 
-    
-    ] = [a, b, c];
+const add = fn(mut lhs: u32, rhs: u32) -> u32 {
+    lhs + rhs
+};
+
+const magic = fn<T: metatype, HANDLER: fn(T, T)>(lhs: T, rhs: T) {
+    HANDLER(lhs, rhs);
 };
