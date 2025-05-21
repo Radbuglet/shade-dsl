@@ -2,4 +2,7 @@ const foo = {
     let mut whee = Vec.new();
 
     let (woo, ()) = create_a_tuple();
+    let foo: [kale; 
+    
+    ] = [a, b, c];
 };

@@ -397,7 +397,7 @@ impl<'a> Iterator for RawTokenCursor<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         Some(match self.tokens.next() {
             Some(token) => TokenCursorElement::Token(token),
-            None => TokenCursorElement::Ending(self.group.span.shrink_to_hi()),
+            None => TokenCursorElement::Ending(self.end_span()),
         })
     }
 }

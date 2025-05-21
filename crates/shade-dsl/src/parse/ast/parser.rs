@@ -768,10 +768,11 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
 
 fn parse_pat(p: P) -> AstPat {
     let start = p.next_span();
+    let kind = parse_pat_inner(p);
 
     AstPat {
         span: start.to(p.prev_span()),
-        kind: parse_pat_inner(p),
+        kind,
     }
 }
 
