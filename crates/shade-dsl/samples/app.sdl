@@ -1,5 +1,5 @@
 const Vec = fn<T: metatype> -> metatype {
-    // ...
+    let @fn = 1234;
 };
 
 const add = fn(mut lhs: u32, rhs: u32) -> u32 {

@@ -941,7 +941,7 @@ fn match_group(group: GroupDelimiter) -> impl TokenMatcher<Output = Option<Token
 }
 
 fn match_eos(p: P) -> bool {
-    let closing_name = p.cursor_unsafe().raw.group().delimiter.closing_name();
+    let closing_name = p.cursor_unsafe().iter.group().delimiter.closing_name();
 
     p.expect(closing_name, |v| v.eat().is_none())
 }

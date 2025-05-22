@@ -4,7 +4,7 @@ use ctx2d_utils::lang::ConstFmt;
 
 use crate::{
     base::{
-        AtomSimplify, Cursor, Delimited, LookaheadResult, Matcher, Parser, Span, Spanned,
+        AtomSimplify, Cursor, Delimited, Gcx, LookaheadResult, Matcher, Parser, Span, Spanned,
         StuckHinter, Symbol,
     },
     symbol,
@@ -253,12 +253,60 @@ impl StrLitKind {
 #[derive(Debug, Copy, Clone)]
 pub struct TokenNumLit {
     pub span: Span,
-    // TODO
+    pub text: Symbol,
+}
+
+impl TokenNumLit {
+    pub fn base(self, gcx: Gcx<'_>) -> NumLitBase {
+        let text = gcx.symbols.lookup(self.text);
+
+        if text.starts_with("0x") {
+            return NumLitBase::Hexadecimal;
+        }
+
+        if text.starts_with("0b") {
+            return NumLitBase::Binary;
+        }
+
+        if text.starts_with("0o") {
+            return NumLitBase::Octal;
+        }
+
+        NumLitBase::Decimal
+    }
 }
 
 impl Spanned for TokenNumLit {
     fn span(&self) -> Span {
         self.span
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum NumLitBase {
+    Decimal,
+    Binary,
+    Hexadecimal,
+    Octal,
+}
+
+impl NumLitBase {
+    pub fn digit_name(self) -> Symbol {
+        match self {
+            NumLitBase::Decimal => symbol!("decimal digit"),
+            NumLitBase::Binary => symbol!("binary digit"),
+            NumLitBase::Hexadecimal => symbol!("hexadecimal digit"),
+            NumLitBase::Octal => symbol!("octal digit"),
+        }
+    }
+
+    pub fn radix(self) -> u32 {
+        match self {
+            NumLitBase::Decimal => 10,
+            NumLitBase::Binary => 2,
+            NumLitBase::Hexadecimal => 16,
+            NumLitBase::Octal => 8,
+        }
     }
 }
 

@@ -378,7 +378,7 @@ where
 
 #[derive(Debug, Clone)]
 pub struct Cursor<I> {
-    pub raw: I,
+    pub iter: I,
     pub prev_span: Span,
 }
 
@@ -386,18 +386,18 @@ impl<I: CursorIter> Cursor<I> {
     pub fn new(raw: I) -> Self {
         Self {
             prev_span: raw.start_span(),
-            raw,
+            iter: raw,
         }
     }
 
     pub fn eat_full(&mut self) -> I::Item {
-        let next = self.raw.next().unwrap();
+        let next = self.iter.next().unwrap();
         self.prev_span = next.span();
         next
     }
 
     pub fn peek_full(&self) -> I::Item {
-        self.raw.clone().next().unwrap()
+        self.iter.clone().next().unwrap()
     }
 
     pub fn eat(&mut self) -> I::Simplified {
@@ -519,6 +519,10 @@ impl<'a> RawCharCursor<'a> {
             span,
             iter: contents.char_indices(),
         }
+    }
+
+    pub fn remaining_text(&self) -> &'a str {
+        self.iter.as_str()
     }
 }
 

@@ -358,6 +358,16 @@ fn emit_pretty(source_map: &SourceMap, writer: &mut dyn termcolor::WriteColor, d
                         message: msg.0.clone(),
                     }
                 })
+                .chain(diag.spans.secondary.iter().map(|(sp, msg)| {
+                    let file = source_map.file(sp.lo);
+
+                    Label {
+                        style: LabelStyle::Secondary,
+                        file_id: sp.lo,
+                        range: file.start().delta_usize(sp.lo)..file.start().delta_usize(sp.hi),
+                        message: msg.0.clone(),
+                    }
+                }))
                 .collect(),
         )
     }
