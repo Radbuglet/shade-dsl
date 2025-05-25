@@ -4,7 +4,7 @@ use crate::{
         ast::expr_bp,
         token::{
             GroupDelimiter, Ident, Punct, TokenCharLit, TokenCursor, TokenGroup, TokenMatcher,
-            TokenParser, TokenPunct, TokenStrLit, token_matcher,
+            TokenNumLit, TokenParser, TokenPunct, TokenStrLit, token_matcher,
         },
     },
     punct, symbol,
@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     AdtKind, AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstFuncDef, AstFuncParam, AstMember,
-    AstMemberInit, AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, Mutability, PunctSeq, kw,
+    AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, MetaTypeKind, Mutability, PunctSeq, kw,
     puncts, ty_bp,
 };
 
@@ -34,17 +34,6 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
     loop {
         if match_eos(p) {
             break;
-        }
-
-        // Parse `<mod|struct|enum|...> <name>` members.
-        if let Some(member) = parse_adt_member_adt(p).did_match() {
-            if let Ok(member) = member {
-                members.push(member);
-            }
-
-            // recovery strategy: continue parsing where we left off.
-
-            continue;
         }
 
         // Parse `const <name> = <expr>;` members.
@@ -145,31 +134,6 @@ fn parse_adt_field(p: P) -> OptPResult<AstField> {
     }))
 }
 
-fn parse_adt_member_adt(p: P) -> OptPResult<AstMember> {
-    // Match `mod`
-    let Some(kind) = parse_adt_kind(p) else {
-        return Ok(None);
-    };
-
-    // Match module name
-    let Some(name) = match_ident().expect(p) else {
-        return Err(p.stuck());
-    };
-
-    // Match group
-    let Some(group) = match_group(GroupDelimiter::Brace).expect(p) else {
-        return Err(p.stuck());
-    };
-
-    // Match inner ADT
-    let adt = parse_adt_contents(&mut p.enter(&group), kind);
-
-    Ok(Some(AstMember {
-        name,
-        initializer: AstMemberInit::Adt(Box::new(adt)),
-    }))
-}
-
 fn parse_ast_member_const(p: P) -> OptPResult<AstMember> {
     // Match `const`
     if match_kw(kw!("const")).expect(p).is_none() {
@@ -196,7 +160,7 @@ fn parse_ast_member_const(p: P) -> OptPResult<AstMember> {
 
     Ok(Some(AstMember {
         name,
-        initializer: AstMemberInit::Const(Box::new(initializer)),
+        initializer: Box::new(initializer),
     }))
 }
 
@@ -311,14 +275,26 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             );
         }
 
-        // Parse a type expression
+        // Parse a `sym` expression
+        if match_kw(kw!("sym")).expect(p).is_some() {
+            let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
+                // Recovery strategy: do nothing
+                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+            };
+
+            let ty = parse_expr_full(&mut p.enter(&block));
+
+            break 'seed build_expr(AstExprKind::SymDef(Box::new(ty)), p);
+        }
+
+        // Parse a `type` expression
         if match_kw(kw!("type")).expect(p).is_some() {
             let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
                 // Recovery strategy: do nothing
                 break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
             };
 
-            let ty = parse_ty(&mut p.enter(&block));
+            let ty = parse_ty_full(&mut p.enter(&block));
 
             break 'seed build_expr(AstExprKind::TypeExpr(Box::new(ty)), p);
         }
@@ -441,6 +417,11 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             break 'seed build_expr(AstExprKind::Break(expr.map(Box::new)), p);
         }
 
+        // Parse a `self` expression.
+        if match_kw(kw!("self")).expect(p).is_some() {
+            break 'seed build_expr(AstExprKind::SelfRef, p);
+        }
+
         // Parse unary neg.
         if match_punct(punct!('-')).expect(p).is_some() {
             let lhs = parse_expr_pratt(p, expr_bp::PRE_NEG.right);
@@ -525,6 +506,17 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
     Some(lhs)
 }
 
+fn parse_ty_full(p: P) -> AstExpr {
+    let expr = parse_ty(p);
+
+    if !match_eos(p) {
+        // Recovery strategy: ignore
+        let _ = p.stuck();
+    }
+
+    expr
+}
+
 fn parse_ty(p: P) -> AstExpr {
     parse_ty_pratt(p, Bp::MIN)
 }
@@ -594,21 +586,38 @@ fn parse_ty_pratt(p: P, min_bp: Bp) -> AstExpr {
             break 'seed build_expr(AstExprKind::TypePointer(muta, Box::new(ty)), p);
         }
 
+        // Parse various single-keyword types.
+        if match_kw(kw!("type")).expect(p).is_some() {
+            break 'seed build_expr(AstExprKind::TypeMeta(MetaTypeKind::Type), p);
+        }
+
+        if match_kw(kw!("sym")).expect(p).is_some() {
+            break 'seed build_expr(AstExprKind::TypeMeta(MetaTypeKind::Sym), p);
+        }
+
+        if match_kw(kw!("Self")).expect(p).is_some() {
+            break 'seed build_expr(AstExprKind::TypeSelf, p);
+        }
+
         // Parse a function type constructor.
         if match_kw(kw!("fn")).expect(p).is_some() {
-            let Some(group) = match_group(GroupDelimiter::Paren).expect(p) else {
-                // Recovery strategy: ignore
-                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
-            };
+            if let Some(group) = match_group(GroupDelimiter::Paren).expect(p) {
+                let args = parse_comma_group(&mut p.enter(&group), parse_ty).elems;
 
-            let args = parse_comma_group(&mut p.enter(&group), parse_ty).elems;
+                let return_ty = match_punct_seq(puncts!("->"))
+                    .expect(p)
+                    .map(|_| parse_ty_pratt(p, ty_bp::PRE_FUNC_RETVAL.right))
+                    .map(Box::new);
 
-            let return_ty = match_punct_seq(puncts!("->"))
-                .expect(p)
-                .map(|_| parse_ty_pratt(p, ty_bp::PRE_FUNC_RETVAL.right))
-                .map(Box::new);
+                break 'seed build_expr(AstExprKind::TypeFn(args, return_ty), p);
+            }
 
-            break 'seed build_expr(AstExprKind::TypeFn(args, return_ty), p);
+            if match_punct_seq(puncts!("...")).expect(p).is_some() {
+                break 'seed build_expr(AstExprKind::TypeMeta(MetaTypeKind::Fn), p);
+            }
+
+            // Recovery strategy: ignore
+            break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
         }
 
         // Recovery strategy: eat a token
@@ -661,6 +670,24 @@ fn parse_common_expr_seeds(p: P) -> Option<AstExprKind> {
     // Parse a character literal.
     if let Some(lit) = match_char_lit().expect(p) {
         return Some(AstExprKind::CharLit(lit));
+    }
+
+    // Parse a numeric literal.
+    if let Some(lit) = match_num_lit().expect(p) {
+        return Some(AstExprKind::NumLit(lit));
+    }
+
+    // Parse ADTs.
+    if let Some(kind) = parse_adt_kind(p) {
+        let Some(group) = match_group(GroupDelimiter::Brace).expect(p) else {
+            return Some(AstExprKind::Error(p.stuck_recover_with(|_| {
+                // Recovery strategy: ignore
+            })));
+        };
+
+        let contents = parse_adt_contents(&mut p.enter(&group), kind);
+
+        return Some(AstExprKind::AdtDef(Box::new(contents)));
     }
 
     None
@@ -849,19 +876,28 @@ fn parse_pat(p: P) -> AstPat {
 }
 
 fn parse_pat_inner(p: P) -> AstPatKind {
-    // Match `mut <name>`.
+    // Match `mut <name>` or `mut self`.
     if match_kw(kw!("mut")).expect(p).is_some() {
-        let Some(name) = match_ident().expect(p) else {
-            // Recovery strategy: do nothing
-            return AstPatKind::Error(p.stuck_recover_with(|_| {}));
-        };
+        if let Some(name) = match_ident().expect(p) {
+            return AstPatKind::Name(Mutability::Mut, name);
+        }
 
-        return AstPatKind::Name(Mutability::Mut, name);
+        if match_kw(kw!("self")).expect(p).is_some() {
+            return AstPatKind::Self_(Mutability::Mut);
+        }
+
+        // Recovery strategy: do nothing
+        return AstPatKind::Error(p.stuck_recover_with(|_| {}));
     }
 
     // Match `<name>`.
     if let Some(name) = match_ident().expect(p) {
         return AstPatKind::Name(Mutability::Not, name);
+    }
+
+    // Match `self`.
+    if match_kw(kw!("self")).expect(p).is_some() {
+        return AstPatKind::Self_(Mutability::Not);
     }
 
     // Match holes.
@@ -980,6 +1016,12 @@ fn match_str_lit() -> impl TokenMatcher<Output = Option<TokenStrLit>> {
 fn match_char_lit() -> impl TokenMatcher<Output = Option<TokenCharLit>> {
     token_matcher(symbol!("character literal"), |c, _| {
         c.eat().and_then(|v| v.char_lit()).copied()
+    })
+}
+
+fn match_num_lit() -> impl TokenMatcher<Output = Option<TokenNumLit>> {
+    token_matcher(symbol!("numeric literal"), |c, _| {
+        c.eat().and_then(|v| v.num_lit()).copied()
     })
 }
 

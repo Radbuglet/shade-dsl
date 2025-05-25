@@ -1,6 +1,6 @@
 use crate::{
     base::{ErrorGuaranteed, Span},
-    parse::token::{Ident, TokenCharLit, TokenStrLit},
+    parse::token::{Ident, TokenCharLit, TokenNumLit, TokenStrLit},
 };
 
 // === ASTs === //
@@ -35,13 +35,7 @@ pub struct AstField {
 #[derive(Debug, Clone)]
 pub struct AstMember {
     pub name: Ident,
-    pub initializer: AstMemberInit,
-}
-
-#[derive(Debug, Clone)]
-pub enum AstMemberInit {
-    Adt(Box<AstAdt>),
-    Const(Box<AstExpr>),
+    pub initializer: Box<AstExpr>,
 }
 
 // === Expressions === //
@@ -77,6 +71,11 @@ pub enum AstExprKind {
     /// Can be parsed in both type and expression parsing contexts.
     CharLit(TokenCharLit),
 
+    /// A numeric literal (e.g. `123`, `0xBADF00D`, or `4.34E-4`).
+    ///
+    /// Can be parsed in both type and expression parsing contexts.
+    NumLit(TokenNumLit),
+
     /// A parenthesized expression (e.g. `(foo)`).
     ///
     /// Can be parsed in both type and expression parsing contexts. The sub-expressions inherit the
@@ -88,6 +87,11 @@ pub enum AstExprKind {
     /// Can be parsed in both type and expression parsing contexts. Always parses its contents in
     /// an expression context.
     Block(Box<AstBlock>),
+
+    /// An ADT literal (e.g. `struct {}`, `mod {}`).
+    ///
+    /// Can be parsed in both type and expression parsing contexts.
+    AdtDef(Box<AstAdt>),
 
     /// A no-op expression whose contents are parsed in a type context
     /// (e.g. `return type(*const u32)`).
@@ -142,6 +146,14 @@ pub enum AstExprKind {
     ///
     /// Can only be parsed in expression parsing contexts.
     FuncDef(Box<AstFuncDef>),
+
+    /// A symbol definition (e.g. `sym("this is my symbol")`).
+    ///
+    /// Can only be parsed in expression parsing contexts.
+    SymDef(Box<AstExpr>),
+
+    /// A reference to the `self` parameter to a function.
+    SelfRef,
 
     // === Prefix === //
 
@@ -232,7 +244,19 @@ pub enum AstExprKind {
     TypePointer(Mutability, Box<AstExpr>),
 
     /// A type constructor for function pointers (e.g. `fn(Foo, Bar, Baz) -> Maz`).
+    ///
+    /// Can only be parsed in type parsing contexts.
     TypeFn(Vec<AstExpr>, Option<Box<AstExpr>>),
+
+    /// A meta-type type constructor (e.g. `fn...`, `type`, `sym`).
+    ///
+    /// Can only be parsed in type parsing contexts.
+    TypeMeta(MetaTypeKind),
+
+    /// The `Self` type (e.g. `Self`).
+    ///
+    /// Can only be parsed in type parsing contexts.
+    TypeSelf,
 
     // === Misc === //
 
@@ -251,13 +275,17 @@ impl AstExprKind {
             | AstExprKind::BoolLit(..)
             | AstExprKind::StrLit(..)
             | AstExprKind::CharLit(..)
+            | AstExprKind::NumLit(..)
             | AstExprKind::Paren(..)
+            | AstExprKind::AdtDef(..)
             | AstExprKind::TypeExpr(..)
             | AstExprKind::Tuple(..)
             | AstExprKind::Return(..)
             | AstExprKind::Continue
             | AstExprKind::Break(..)
             | AstExprKind::FuncDef(..)
+            | AstExprKind::SymDef(..)
+            | AstExprKind::SelfRef
             | AstExprKind::UnaryNeg(..)
             | AstExprKind::UnaryNot(..)
             | AstExprKind::Add(..)
@@ -274,6 +302,8 @@ impl AstExprKind {
             | AstExprKind::TypeArray(..)
             | AstExprKind::TypePointer(..)
             | AstExprKind::TypeFn(..)
+            | AstExprKind::TypeMeta(..)
+            | AstExprKind::TypeSelf
             | AstExprKind::Error(..) => true,
         }
     }
@@ -317,6 +347,7 @@ pub struct AstPat {
 pub enum AstPatKind {
     Hole,
     Name(Mutability, Ident),
+    Self_(Mutability),
     Tuple(Vec<AstPat>),
     Paren(Box<AstPat>),
     Error(ErrorGuaranteed),
@@ -336,6 +367,13 @@ pub struct AstFuncParam {
     pub span: Span,
     pub binding: AstPat,
     pub ty: AstExpr,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum MetaTypeKind {
+    Fn,
+    Sym,
+    Type,
 }
 
 // === Mutability === //

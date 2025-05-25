@@ -75,7 +75,7 @@ fn parse_group(p: P, group_start: Span, delimiter: GroupDelimiter) -> TokenGroup
                 p.dcx().emit(Diag::span_err(
                     token_start,
                     format_args!(
-                        "{} delimiter; expected `{}`, got `{}`",
+                        "{} delimiter; expected {}, got {}",
                         if closing_del == GroupDelimiter::File {
                             "unclosed"
                         } else {

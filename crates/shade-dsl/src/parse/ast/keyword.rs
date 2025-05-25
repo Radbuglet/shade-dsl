@@ -81,7 +81,10 @@ define_keywords! {
     Mut = "mut",
     Pub = "pub",
     Return = "return",
+    SelfLower = "self",
+    SelfUpper = "Self",
     Struct = "struct",
+    Sym = "sym",
     True = "true",
     Type = "type",
     Union = "union",
@@ -150,6 +153,7 @@ macro_rules! define_punct_seqs {
 define_punct_seqs! {
     Arrow = '-' '>',
     LogicalEq = '=' '=',
+    TriDots = '.' '.' '.',
 }
 
 #[macro_export]

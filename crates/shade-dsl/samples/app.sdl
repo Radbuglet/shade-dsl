@@ -1,11 +1,48 @@
-const Vec = fn<T: metatype> -> metatype {
-    let @fn = 1234;
+const std = mod {
+    const ops = mod {
+        const index = sym("indexing operator");
+    };
 };
 
-const add = fn(mut lhs: u32, rhs: u32) -> u32 {
-    lhs + rhs
+const MyEnum = enum {
+    const Super = type(Self);
+
+    whee: (u32, i32);
+    woo: struct {
+        waz: *const Super;
+        kaz: f32;
+    };
 };
 
-const magic = fn<T: metatype, HANDLER: fn(T, T)>(lhs: T, rhs: T) {
-    HANDLER(lhs, rhs);
+const Vec = fn<T: type> -> type {
+    struct {
+        base: *mut T;
+        len: usize;
+        cap: usize;
+
+        const new = fn() -> Self {
+            todo()
+        };
+
+        const len = fn(self: *const Self) -> usize {
+            self.len
+        };
+
+        const capacity = fn(self: *const Self) -> usize {
+            self.cap
+        };
+
+        const push = fn(self: *mut Self, value: T) {
+            todo()
+        };
+
+        const [std.ops.index] = mod {
+            const Index = type(usize);
+            const Output = type(u32);
+
+            const deref = fn(self: *mut Self) -> *mut Output {
+                todo()
+            };
+        };
+    }
 };
