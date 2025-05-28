@@ -154,6 +154,11 @@ pub enum AstExprKind {
     /// Can only be parsed in expression parsing contexts.
     SymDef(Box<AstExpr>),
 
+    /// A use expression (e.g. `use("path/to/other.sdl")`).
+    ///
+    /// Can only be parsed in expression parsing contexts.
+    Use(Box<TokenStrLit>),
+
     // === Prefix === //
 
     /// A unary negation operation (e.g. `-foo`).
@@ -284,6 +289,7 @@ impl AstExprKind {
             | AstExprKind::Break(..)
             | AstExprKind::FuncDef(..)
             | AstExprKind::SymDef(..)
+            | AstExprKind::Use(..)
             | AstExprKind::UnaryNeg(..)
             | AstExprKind::UnaryNot(..)
             | AstExprKind::Add(..)

@@ -1,3 +1,5 @@
+const thing = use("lib").thing;
+
 const std = mod {
     const ops = mod {
         const index = sym("indexing operator");

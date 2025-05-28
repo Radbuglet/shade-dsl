@@ -1,3 +1,3 @@
 pub mod ast;
-pub mod resolver;
+pub mod lower;
 pub mod token;

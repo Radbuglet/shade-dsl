@@ -150,6 +150,34 @@ pub enum ValueAdt<'gcx> {
     Composite(ValueList<'gcx>),
 }
 
+// === ADTs === //
+
+pub type TyAdtSignature<'gcx> = Intern<'gcx, TyAdtSignatureInner<'gcx>>;
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+pub struct TyAdtSignatureInner<'gcx> {
+    pub kind: TyAdtKind,
+    pub field_names: ListIntern<'gcx, Symbol>,
+    pub field_types: TyList<'gcx>,
+    pub members: TyAdtMemberList<'gcx>,
+}
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub enum TyAdtKind {
+    Module,
+    Struct,
+    TaggedUnion,
+    UntaggedUnion,
+}
+
+pub type TyAdtMemberList<'gcx> = ListIntern<'gcx, TyAdtMember<'gcx>>;
+
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
+pub struct TyAdtMember<'gcx> {
+    pub name: Symbol,
+    pub init: Instance<'gcx>,
+}
+
 // === Types === //
 
 pub type Ty<'gcx> = Intern<'gcx, TyKind<'gcx>>;
@@ -230,33 +258,4 @@ pub type BoundValueList<'gcx> = ListIntern<'gcx, BoundValue<'gcx>>;
 pub enum BoundValue<'gcx> {
     Value(Value<'gcx>),
     Bound(FuncGeneric<'gcx>),
-}
-
-// === ADTs === //
-
-pub type TyAdtSignature<'gcx> = Intern<'gcx, TyAdtSignatureInner<'gcx>>;
-
-#[derive(Clone, Hash, Eq, PartialEq)]
-pub struct TyAdtSignatureInner<'gcx> {
-    pub kind: TyAdtKind,
-    pub field_names: ListIntern<'gcx, Symbol>,
-    pub field_types: TyList<'gcx>,
-    pub methods: TyAdtMemberList<'gcx>,
-    pub statics: TyAdtMemberList<'gcx>,
-}
-
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub enum TyAdtKind {
-    Module,
-    Struct,
-    TaggedUnion,
-    UntaggedUnion,
-}
-
-pub type TyAdtMemberList<'gcx> = ListIntern<'gcx, TyAdtMember<'gcx>>;
-
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct TyAdtMember<'gcx> {
-    pub name: Symbol,
-    pub init: Instance<'gcx>,
 }

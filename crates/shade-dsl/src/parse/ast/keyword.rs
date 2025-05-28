@@ -66,6 +66,7 @@ impl fmt::Debug for Keyword {
 }
 
 define_keywords! {
+    As = "as",
     Break = "break",
     Const = "const",
     Continue = "continue",
@@ -75,6 +76,7 @@ define_keywords! {
     Fn = "fn",
     Hole = "_",
     If = "if",
+    In = "in",
     Let = "let",
     Loop = "loop",
     Mod = "mod",
@@ -87,6 +89,7 @@ define_keywords! {
     True = "true",
     Type = "type",
     Union = "union",
+    Use = "use",
     While = "while",
 }
 

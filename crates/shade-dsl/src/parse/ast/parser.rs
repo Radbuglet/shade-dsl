@@ -291,6 +291,29 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             break 'seed build_expr(AstExprKind::SymDef(Box::new(ty)), p);
         }
 
+        // Parse a `use` expression
+        if match_kw(kw!("use")).expect(p).is_some() {
+            let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
+                // Recovery strategy: do nothing
+                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+            };
+
+            let mut p2 = p.enter(&block);
+
+            let Some(name) = match_str_lit().expect(&mut p2) else {
+                // Recovery strategy: do nothing
+                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+            };
+
+            if !match_eos(&mut p2) {
+                p2.stuck_recover_with(|_| {
+                    // Recovery strategy: ignore
+                });
+            }
+
+            break 'seed build_expr(AstExprKind::Use(Box::new(name)), p);
+        }
+
         // Parse a `type` expression
         if match_kw(kw!("type")).expect(p).is_some() {
             let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
