@@ -81,7 +81,6 @@ define_keywords! {
     Mut = "mut",
     Pub = "pub",
     Return = "return",
-    SelfLower = "self",
     SelfUpper = "Self",
     Struct = "struct",
     Sym = "sym",

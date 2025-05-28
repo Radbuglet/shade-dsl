@@ -4,7 +4,7 @@ const std = mod {
     };
 };
 
-const MyEnum = enum {
+pub const MyEnum = enum {
     const Super = type(Self);
 
     whee: (u32, i32);
@@ -14,35 +14,39 @@ const MyEnum = enum {
     };
 };
 
-const Vec = fn<T: type> -> type {
+pub const Vec = fn<T: type> -> type {
     struct {
         base: *mut T;
         len: usize;
         cap: usize;
 
-        const new = fn() -> Self {
+        pub const new = fn() -> Self {
             todo()
         };
 
-        const len = fn(self: *const Self) -> usize {
+        pub const len = fn(self: *const Self) -> usize {
             self.len
         };
 
-        const capacity = fn(self: *const Self) -> usize {
+        pub const capacity = fn(self: *const Self) -> usize {
             self.cap
         };
 
-        const push = fn(self: *mut Self, value: T) {
+        pub const push = fn(self: *mut Self, value: T) {
             todo()
         };
 
-        const [std.ops.index] = mod {
-            const Index = type(usize);
-            const Output = type(u32);
+        const resize = fn() {
 
-            const deref = fn(self: *mut Self) -> *mut Output {
-                todo()
-            };
         };
+
+        // const [std.ops.index] = mod {
+        //     const Index = type(usize);
+        //     const Output = type(u32);
+        //
+        //     const deref = fn(self: *mut Self) -> *mut Output {
+        //         todo()
+        //     };
+        // };
     }
 };

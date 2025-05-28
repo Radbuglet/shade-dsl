@@ -36,8 +36,10 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
             break;
         }
 
+        let is_public = match_kw(kw!("pub")).expect(p).is_some();
+
         // Parse `const <name> = <expr>;` members.
-        if let Some(member) = parse_ast_member_const(p).did_match() {
+        if let Some(member) = parse_ast_member_const(p, is_public).did_match() {
             if let Ok(member) = member {
                 members.push(member);
             }
@@ -49,7 +51,7 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
 
         // Parse `<name>: <ty>;` fields.
         if kind.can_have_fields() {
-            if let Some(field) = parse_adt_field(p).did_match() {
+            if let Some(field) = parse_adt_field(p, is_public).did_match() {
                 if let Ok(field) = field {
                     fields.push(field);
                 }
@@ -109,7 +111,7 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
     }
 }
 
-fn parse_adt_field(p: P) -> OptPResult<AstField> {
+fn parse_adt_field(p: P, is_public: bool) -> OptPResult<AstField> {
     // Match name
     let Some(name) = match_ident().expect(p) else {
         return Ok(None);
@@ -131,10 +133,11 @@ fn parse_adt_field(p: P) -> OptPResult<AstField> {
     Ok(Some(AstField {
         name,
         ty: Box::new(ty),
+        is_public,
     }))
 }
 
-fn parse_ast_member_const(p: P) -> OptPResult<AstMember> {
+fn parse_ast_member_const(p: P, is_public: bool) -> OptPResult<AstMember> {
     // Match `const`
     if match_kw(kw!("const")).expect(p).is_none() {
         return Ok(None);
@@ -161,6 +164,7 @@ fn parse_ast_member_const(p: P) -> OptPResult<AstMember> {
     Ok(Some(AstMember {
         name,
         initializer: Box::new(initializer),
+        is_public,
     }))
 }
 
@@ -415,11 +419,6 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             let expr = parse_expr_pratt_opt(p, expr_bp::PRE_BREAK.right);
 
             break 'seed build_expr(AstExprKind::Break(expr.map(Box::new)), p);
-        }
-
-        // Parse a `self` expression.
-        if match_kw(kw!("self")).expect(p).is_some() {
-            break 'seed build_expr(AstExprKind::SelfRef, p);
         }
 
         // Parse unary neg.
@@ -876,14 +875,10 @@ fn parse_pat(p: P) -> AstPat {
 }
 
 fn parse_pat_inner(p: P) -> AstPatKind {
-    // Match `mut <name>` or `mut self`.
+    // Match `mut <name>`.
     if match_kw(kw!("mut")).expect(p).is_some() {
         if let Some(name) = match_ident().expect(p) {
             return AstPatKind::Name(Mutability::Mut, name);
-        }
-
-        if match_kw(kw!("self")).expect(p).is_some() {
-            return AstPatKind::Self_(Mutability::Mut);
         }
 
         // Recovery strategy: do nothing
@@ -893,11 +888,6 @@ fn parse_pat_inner(p: P) -> AstPatKind {
     // Match `<name>`.
     if let Some(name) = match_ident().expect(p) {
         return AstPatKind::Name(Mutability::Not, name);
-    }
-
-    // Match `self`.
-    if match_kw(kw!("self")).expect(p).is_some() {
-        return AstPatKind::Self_(Mutability::Not);
     }
 
     // Match holes.

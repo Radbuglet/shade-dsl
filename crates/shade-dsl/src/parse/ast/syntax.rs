@@ -30,12 +30,14 @@ impl AdtKind {
 pub struct AstField {
     pub name: Ident,
     pub ty: Box<AstExpr>,
+    pub is_public: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct AstMember {
     pub name: Ident,
     pub initializer: Box<AstExpr>,
+    pub is_public: bool,
 }
 
 // === Expressions === //
@@ -151,9 +153,6 @@ pub enum AstExprKind {
     ///
     /// Can only be parsed in expression parsing contexts.
     SymDef(Box<AstExpr>),
-
-    /// A reference to the `self` parameter to a function.
-    SelfRef,
 
     // === Prefix === //
 
@@ -285,7 +284,6 @@ impl AstExprKind {
             | AstExprKind::Break(..)
             | AstExprKind::FuncDef(..)
             | AstExprKind::SymDef(..)
-            | AstExprKind::SelfRef
             | AstExprKind::UnaryNeg(..)
             | AstExprKind::UnaryNot(..)
             | AstExprKind::Add(..)
@@ -347,7 +345,6 @@ pub struct AstPat {
 pub enum AstPatKind {
     Hole,
     Name(Mutability, Ident),
-    Self_(Mutability),
     Tuple(Vec<AstPat>),
     Paren(Box<AstPat>),
     Error(ErrorGuaranteed),
