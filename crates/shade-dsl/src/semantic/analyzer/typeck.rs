@@ -50,7 +50,7 @@ impl<'gcx> Typeck<'gcx> {
     }
 
     pub fn check_expr(&mut self, analyzer: &mut Analyzer<'gcx>, expr: FuncExpr<'gcx>) -> Ty<'gcx> {
-        let ty = match **expr {
+        let ty = match ***expr {
             FuncExprKind::Local(local) => self.results.locals[&local],
             FuncExprKind::Call(callee, args) => {
                 let callee = self.check_expr(analyzer, callee);
