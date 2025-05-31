@@ -101,6 +101,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbit"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb3c0414a6935bfc469811f47c2d9a7226f11d068c732deedec6f8548e602347"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -669,6 +680,7 @@ name = "shade-dsl"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
+ "cbit",
  "codespan-reporting",
  "ctx2d-utils",
  "derive-where",
