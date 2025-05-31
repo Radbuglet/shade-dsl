@@ -37,8 +37,9 @@ use derive_where::derive_where;
 
 // === IsoGraph === //
 
-pub trait IsoGraph {
+pub trait IsoGraph: Sized {
     type Node: fmt::Debug + Clone + hash::Hash + Eq;
+    type Placeholder: fmt::Debug + Clone + hash::Hash + Eq;
 
     fn data_eq(&self, lhs: &Self::Node, rhs: &Self::Node) -> bool;
 
@@ -47,8 +48,14 @@ pub trait IsoGraph {
     fn successors<B>(
         &self,
         node: &Self::Node,
-        f: impl FnMut(Self::Node) -> ControlFlow<B>,
+        f: impl FnMut(IsoSuccessor<Self>) -> ControlFlow<B>,
     ) -> ControlFlow<B>;
+}
+
+#[derive_where(Debug, Clone)]
+pub enum IsoSuccessor<G: IsoGraph> {
+    Node(G::Node),
+    Placeholder(G::Placeholder),
 }
 
 // Adapted from: https://en.wikipedia.org/w/index.php?title=Tarjan%27s_strongly_connected_components_algorithm&oldid=1270884973#The_algorithm_in_pseudocode
@@ -106,6 +113,10 @@ where
 
             // Consider successors of `v`
             cbit::cbit!(for w in self.graph.successors(&v) {
+                let IsoSuccessor::Node(w) = w else {
+                    continue;
+                };
+
                 if self.anno.get(&w).index.is_none() {
                     // Successor `w` has not yet been visited; recurse on it
                     self.strong_connect(w.clone())?;
@@ -157,17 +168,23 @@ where
     ControlFlow::Continue(())
 }
 
-#[derive_where(Debug; G::Node: fmt::Debug)]
+#[derive_where(Debug)]
 struct IsoSubgraph<G: IsoGraph> {
     /// The internal nodes forming this sub-graph. The order of these nodes is deterministic w.r.t
     /// a given key and sub-graph structure.
     internal_nodes: Vec<G::Node>,
 
     /// Internal edges from source node indices to destination node indices.
-    internal_edges: Vec<(u32, u32)>,
+    internal_edges: Vec<(u32, EdgeDest<G>)>,
 
     /// Edges from internal nodes to pre-interned external nodes.
     external_edges: Vec<(u32, G::Node)>,
+}
+
+#[derive_where(Debug, Hash, Eq, PartialEq)]
+enum EdgeDest<G: IsoGraph> {
+    Node(u32),
+    Placeholder(G::Placeholder),
 }
 
 impl<G: IsoGraph> IsoSubgraph<G> {
@@ -201,6 +218,14 @@ impl<G: IsoGraph> IsoSubgraph<G> {
 
         while let Some((curr, curr_idx)) = stack.pop() {
             cbit::cbit!(for successor in graph.successors(&curr) {
+                let successor = match successor {
+                    IsoSuccessor::Node(node) => node,
+                    IsoSuccessor::Placeholder(ref placeholder) => {
+                        internal_edges.push((curr_idx, EdgeDest::Placeholder(placeholder.clone())));
+                        continue;
+                    }
+                };
+
                 if let Some(external) = map_external(&successor) {
                     external_edges.push((curr_idx, external));
                 } else {
@@ -210,7 +235,7 @@ impl<G: IsoGraph> IsoSubgraph<G> {
                         stack.push((successor.clone(), successor_idx));
                     }
 
-                    internal_edges.push((curr_idx, successor_idx));
+                    internal_edges.push((curr_idx, EdgeDest::Node(successor_idx)));
                 }
             });
         }
@@ -265,8 +290,7 @@ impl<G: IsoGraph> IsoSubgraph<G> {
 
 // === IsoInterner === //
 
-#[derive_where(Debug; G::Node: fmt::Debug)]
-#[derive_where(Default)]
+#[derive_where(Debug, Default)]
 pub struct IsoInterner<G: IsoGraph> {
     roots: FxHashMap<(IsoSubgraph<G>, u64), ()>,
 }
@@ -409,6 +433,7 @@ mod tests {
 
     impl IsoGraph for ConsGraph {
         type Node = Cons;
+        type Placeholder = ();
 
         fn data_eq(&self, lhs: &Self::Node, rhs: &Self::Node) -> bool {
             self.nodes[lhs.0].label == self.nodes[rhs.0].label
@@ -421,15 +446,17 @@ mod tests {
         fn successors<B>(
             &self,
             node: &Self::Node,
-            mut f: impl FnMut(Self::Node) -> ControlFlow<B>,
+            mut f: impl FnMut(IsoSuccessor<Self>) -> ControlFlow<B>,
         ) -> ControlFlow<B> {
-            if let Some(left) = self.nodes[node.0].left {
-                f(left)?;
-            }
+            f(match self.nodes[node.0].left {
+                Some(node) => IsoSuccessor::Node(node),
+                None => IsoSuccessor::Placeholder(()),
+            })?;
 
-            if let Some(right) = self.nodes[node.0].right {
-                f(right)?;
-            }
+            f(match self.nodes[node.0].right {
+                Some(node) => IsoSuccessor::Node(node),
+                None => IsoSuccessor::Placeholder(()),
+            })?;
 
             ControlFlow::Continue(())
         }
@@ -466,5 +493,31 @@ mod tests {
         graph.set_left(foo_3, Some(bar_2));
 
         assert!(interner.intern(&graph, &foo_3) == foo_1);
+
+        // Disjoint graph 1
+        let foo_4 = graph.spawn("foo");
+
+        graph.set_left(foo_4, Some(foo_1));
+
+        assert!(interner.intern(&graph, &foo_4) == foo_4);
+
+        // Disjoint graph 2
+        let foo_5 = graph.spawn("foo");
+        let bar_5 = graph.spawn("bar");
+
+        graph.set_left(foo_5, Some(bar_5));
+        graph.set_left(bar_5, Some(bar_5));
+
+        assert!(interner.intern(&graph, &foo_5) == foo_5);
+
+        // Disjoint graph 3
+        let foo_6 = graph.spawn("foo");
+        let bar_6 = graph.spawn("bar");
+
+        graph.set_left(foo_6, Some(bar_6));
+        graph.set_left(bar_6, Some(bar_6));
+        graph.set_right(bar_6, Some(bar_6));
+
+        assert!(interner.intern(&graph, &foo_6) == foo_6);
     }
 }
