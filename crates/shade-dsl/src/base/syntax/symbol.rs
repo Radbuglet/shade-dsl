@@ -3,7 +3,7 @@ use std::{fmt, num::NonZeroU32, sync::RwLock};
 use bumpalo::Bump;
 use ctx2d_utils::hash::{FxHashMap, fx_hash_one, hash_map};
 
-use super::GcxOwned;
+use crate::base::GcxOwned;
 
 // === Symbol === //
 
@@ -153,11 +153,11 @@ pub mod symbol_internals {
 #[macro_export]
 macro_rules! symbol {
     (fn $text:expr) => {{
-        fn _symbol_getter() -> $crate::base::symbol_internals::Symbol {
-            static LATE: $crate::base::symbol_internals::LateSymbol =
-                $crate::base::symbol_internals::LateSymbol::new();
+        fn _symbol_getter() -> $crate::base::syntax::symbol_internals::Symbol {
+            static LATE: $crate::base::syntax::symbol_internals::LateSymbol =
+                $crate::base::syntax::symbol_internals::LateSymbol::new();
 
-            const INIT: &'static $crate::base::symbol_internals::str = $text;
+            const INIT: &'static $crate::base::syntax::symbol_internals::str = $text;
 
             LATE.get(INIT)
         }
@@ -165,7 +165,7 @@ macro_rules! symbol {
         _symbol_getter
     }};
     ($text:expr) => {{
-        $crate::base::symbol_internals::symbol!(fn $text)()
+        $crate::base::syntax::symbol_internals::symbol!(fn $text)()
     }};
 }
 

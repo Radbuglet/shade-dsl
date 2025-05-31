@@ -1,5 +1,5 @@
 use crate::{
-    base::{ErrorGuaranteed, Span},
+    base::{ErrorGuaranteed, syntax::Span},
     parse::token::{Ident, TokenCharLit, TokenNumLit, TokenStrLit},
 };
 
@@ -390,7 +390,7 @@ pub enum Mutability {
 // === Binding Powers === //
 
 pub mod expr_bp {
-    use crate::base::{InfixBp, PostfixBp, PrefixBp};
+    use crate::base::syntax::{InfixBp, PostfixBp, PrefixBp};
 
     pub const PRE_NEG: PrefixBp = PrefixBp::new(9);
     pub const PRE_NOT: PrefixBp = PrefixBp::new(9);
@@ -410,7 +410,7 @@ pub mod expr_bp {
 }
 
 pub mod ty_bp {
-    use crate::base::PrefixBp;
+    use crate::base::syntax::PrefixBp;
 
     pub const PRE_POINTER: PrefixBp = PrefixBp::new(1);
     pub const PRE_FUNC_RETVAL: PrefixBp = PrefixBp::new(1);

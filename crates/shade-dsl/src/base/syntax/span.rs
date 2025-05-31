@@ -8,7 +8,7 @@ use std::{
 
 use ctx2d_utils::mem::MappedArc;
 
-use super::GcxOwned;
+use crate::base::GcxOwned;
 
 // === Span === //
 

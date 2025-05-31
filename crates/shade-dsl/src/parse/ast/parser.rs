@@ -1,5 +1,8 @@
 use crate::{
-    base::{Bp, Gcx, InfixBp, LeafDiag, Level, Matcher, OptPResult, OptPResultExt, Span},
+    base::{
+        Gcx, LeafDiag, Level,
+        syntax::{Bp, InfixBp, Matcher, OptPResult, OptPResultExt, Span},
+    },
     parse::{
         ast::expr_bp,
         token::{

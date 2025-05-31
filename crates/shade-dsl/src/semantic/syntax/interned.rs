@@ -1,6 +1,9 @@
 use std::hash;
 
-use crate::base::{Intern, ListIntern, Symbol};
+use crate::base::{
+    alloc::{Intern, ListIntern},
+    syntax::Symbol,
+};
 
 use super::{Func, FuncGeneric};
 

@@ -11,9 +11,10 @@ use std::{
 use ctx2d_utils::mem::MappedArc;
 use derive_where::derive_where;
 
-use crate::base::{FilePos, SourceFileOrigin, SourceMap, SourceMapFile};
-
-use super::{Gcx, Span};
+use crate::base::{
+    Gcx,
+    syntax::{FilePos, SourceFileOrigin, SourceMap, SourceMapFile, Span},
+};
 
 // === Errors === //
 

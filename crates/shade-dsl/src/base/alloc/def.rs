@@ -2,7 +2,7 @@ use std::{cell::OnceCell, hash, ops::Deref, ptr};
 
 use derive_where::derive_where;
 
-use super::Gcx;
+use crate::base::Gcx;
 
 #[derive_where(Copy, Clone)]
 pub struct Def<'gcx, T>(&'gcx DefInner<T>);

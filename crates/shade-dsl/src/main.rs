@@ -1,7 +1,10 @@
 use std::{fs, path::Path, sync::Arc};
 
 use shade_dsl::{
-    base::{GcxOwned, NaiveSegmenter, SourceFileOrigin},
+    base::{
+        GcxOwned,
+        syntax::{NaiveSegmenter, SourceFileOrigin},
+    },
     parse::{ast::parse_file, token::tokenize},
 };
 

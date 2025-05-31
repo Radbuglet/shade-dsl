@@ -3,7 +3,9 @@ use std::{cell::Cell, fmt, hash, ptr::NonNull, sync::OnceLock};
 use crate::semantic::syntax::{BoundValue, Ty, TyAdtMember, TyKind, Value, ValueInner};
 
 use super::{
-    DiagCtxt, Intern, Interner, ListIntern, ListInterner, SourceMap, Symbol, SymbolInterner,
+    DiagCtxt,
+    alloc::{Intern, Interner, ListIntern, ListInterner},
+    syntax::{SourceMap, Symbol, SymbolInterner},
 };
 
 pub type Gcx<'gcx> = &'gcx GcxOwned<'gcx>;

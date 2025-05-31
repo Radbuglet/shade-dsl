@@ -1,6 +1,8 @@
 use ctx2d_utils::lang::Extension;
 
-use super::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, HardDiag, LeafDiag, Span, Spanned, Symbol};
+use crate::base::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, HardDiag, LeafDiag};
+
+use super::{Span, Spanned, Symbol};
 
 use std::fmt::Write as _;
 

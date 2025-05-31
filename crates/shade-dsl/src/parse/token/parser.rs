@@ -1,7 +1,10 @@
 use unicode_xid::UnicodeXID;
 
 use crate::{
-    base::{CharCursor, CharParser, Diag, Gcx, LeafDiag, Parser, RawCharCursor, Span, Symbol},
+    base::{
+        Diag, Gcx, LeafDiag,
+        syntax::{CharCursor, CharParser, Parser, RawCharCursor, Span, Symbol},
+    },
     parse::token::{NumLitBase, TokenNumLit, punct},
     symbol,
 };

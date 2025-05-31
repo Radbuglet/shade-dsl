@@ -1,5 +1,5 @@
 use crate::{
-    base::{Dp, Gcx},
+    base::{Gcx, analysis::Dp},
     semantic::{
         analyzer::{Typeck, TypeckResults},
         syntax::{Instance, Ty, TyKind, Value, ValueKind},

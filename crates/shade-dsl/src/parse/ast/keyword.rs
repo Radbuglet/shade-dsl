@@ -3,7 +3,7 @@ use std::fmt;
 use ctx2d_utils::lang::{ConstFmt, const_str_eq};
 
 use crate::{
-    base::{Symbol, symbol},
+    base::syntax::{Symbol, symbol},
     parse::token::{Punct, punct},
 };
 
