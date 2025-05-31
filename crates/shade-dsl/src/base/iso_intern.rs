@@ -38,15 +38,15 @@ use derive_where::derive_where;
 // === IsoGraph === //
 
 pub trait IsoGraph {
-    type Node: Clone + hash::Hash + Eq;
+    type Node: fmt::Debug + Clone + hash::Hash + Eq;
 
     fn data_eq(&self, lhs: &Self::Node, rhs: &Self::Node) -> bool;
 
-    fn data_hash(&self, data: &Self::Node, hasher: &mut impl hash::Hasher);
+    fn data_hash(&self, node: &Self::Node, hasher: &mut impl hash::Hasher);
 
     fn successors<B>(
         &self,
-        of: &Self::Node,
+        node: &Self::Node,
         f: impl FnMut(Self::Node) -> ControlFlow<B>,
     ) -> ControlFlow<B>;
 }
@@ -99,7 +99,7 @@ where
             self.stack.push(v.clone());
             *self.anno.get(&v) = Bookkeeping {
                 index: Some(self.index),
-                low_link: u32::MAX,
+                low_link: self.index,
                 on_stack: true,
             };
             self.index += 1;
@@ -110,12 +110,11 @@ where
                     // Successor `w` has not yet been visited; recurse on it
                     self.strong_connect(w.clone())?;
 
-                    let w_ll = self.anno.get(&w).low_link;
-                    let v_ll = &mut self.anno.get(&v).low_link;
-                    *v_ll = (*v_ll).min(w_ll);
+                    let w_low_link = self.anno.get(&w).low_link;
+                    let v_low_link = &mut self.anno.get(&v).low_link;
+                    *v_low_link = (*v_low_link).min(w_low_link);
                 } else if self.anno.get(&w).on_stack {
                     // Successor `w` is in stack `S` and hence in the current SCC.
-                } else {
                     // If `w` is not on stack, then `(v, w)` is an edge pointing to an SCC
                     // already found and must be ignored.
 
@@ -198,7 +197,7 @@ impl<G: IsoGraph> IsoSubgraph<G> {
         let mut stack = Vec::new();
 
         debug_assert!(map_external(&key).is_none());
-        stack.push((key.clone(), 0u32));
+        stack.push((key.clone(), get_internal_id(&key).0));
 
         while let Some((curr, curr_idx)) = stack.pop() {
             cbit::cbit!(for successor in graph.successors(&curr) {
@@ -277,17 +276,6 @@ impl<G: IsoGraph> IsoInterner<G> {
         let mut external_canonicals = FxHashMap::<G::Node, G::Node>::default();
 
         cbit::cbit!(for scc in tarjan(graph, [node.clone()]) {
-            // Hash the data of each node. This also provides a map for quickly determining node
-            // membership within the component.
-            let data_hashes = scc
-                .iter()
-                .map(|n| {
-                    let mut hasher = FxHasher::default();
-                    graph.data_hash(n, &mut hasher);
-                    (n, hasher.finish())
-                })
-                .collect::<FxHashMap<_, _>>();
-
             // Determine a small number of candidate "key" elements for this SCC based
             // deterministically off of component structure.
             let keys = {
@@ -295,7 +283,11 @@ impl<G: IsoGraph> IsoInterner<G> {
                 let mut min_hash = None;
 
                 for candidate in scc {
-                    let candidate_hash = data_hashes[candidate];
+                    let candidate_hash = {
+                        let mut hasher = FxHasher::default();
+                        graph.data_hash(candidate, &mut hasher);
+                        hasher.finish()
+                    };
 
                     if min_hash.is_none_or(|min_hash| candidate_hash < min_hash) {
                         keys.clear();
@@ -317,7 +309,7 @@ impl<G: IsoGraph> IsoInterner<G> {
             let tmp;
             let (src_sub_graph, canonical_sub_graph) = 'canonicalize: {
                 // See if any of the keys lead to an interned version of this component.
-                let mut first_sg = None;
+                let mut first_sub_graph = None;
 
                 for key in keys {
                     let sub_graph = IsoSubgraph::new(graph, key.clone(), |node| {
@@ -342,11 +334,11 @@ impl<G: IsoGraph> IsoInterner<G> {
                         break 'canonicalize (&tmp, canonical_sub_graph);
                     }
 
-                    _ = first_sg.get_or_insert((sub_graph, hash));
+                    _ = first_sub_graph.get_or_insert((sub_graph, hash));
                 }
 
                 // Otherwise, intern the SCC.
-                let (sub_graph, hash) = first_sg.unwrap();
+                let (sub_graph, hash) = first_sub_graph.unwrap();
 
                 let hash_map::RawEntryMut::Vacant(entry) =
                     self.roots.raw_entry_mut().from_hash(hash, |_| false)
@@ -379,74 +371,63 @@ impl<G: IsoGraph> IsoInterner<G> {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, marker::PhantomData, ptr};
-
     use super::*;
 
-    struct Cons<'a> {
-        label: &'static str,
-        left: Cell<Option<&'a Self>>,
-        right: Cell<Option<&'a Self>>,
-    }
-
-    impl Eq for Cons<'_> {}
-
-    impl PartialEq for Cons<'_> {
-        fn eq(&self, other: &Self) -> bool {
-            ptr::addr_eq(self, other)
-        }
-    }
-
-    impl hash::Hash for Cons<'_> {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            (self as *const Self).hash(state);
-        }
-    }
-
-    impl<'a> Cons<'a> {
-        fn new(label: &'static str) -> Self {
-            Self {
-                label,
-                left: Cell::new(None),
-                right: Cell::new(None),
-            }
-        }
-
-        fn set_left(&self, to: Option<&'a Self>) {
-            self.left.set(to);
-        }
-
-        fn set_right(&self, to: Option<&'a Self>) {
-            self.right.set(to);
-        }
-    }
+    #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+    struct Cons(usize);
 
     #[derive(Default)]
-    struct ConsGraph<'a> {
-        _ty: PhantomData<&'a ()>,
+    struct ConsGraph {
+        nodes: Vec<ConsData>,
     }
 
-    impl<'a> IsoGraph for ConsGraph<'a> {
-        type Node = &'a Cons<'a>;
+    struct ConsData {
+        label: &'static str,
+        left: Option<Cons>,
+        right: Option<Cons>,
+    }
 
-        fn data_eq(&self, lhs: &Self::Node, rhs: &Self::Node) -> bool {
-            lhs.label == rhs.label
+    impl ConsGraph {
+        fn spawn(&mut self, label: &'static str) -> Cons {
+            let handle = Cons(self.nodes.len());
+            self.nodes.push(ConsData {
+                label,
+                left: None,
+                right: None,
+            });
+            handle
         }
 
-        fn data_hash(&self, data: &Self::Node, hasher: &mut impl hash::Hasher) {
-            data.label.hash(hasher);
+        pub fn set_left(&mut self, src: Cons, dst: Option<Cons>) {
+            self.nodes[src.0].left = dst;
+        }
+
+        pub fn set_right(&mut self, src: Cons, dst: Option<Cons>) {
+            self.nodes[src.0].right = dst;
+        }
+    }
+
+    impl IsoGraph for ConsGraph {
+        type Node = Cons;
+
+        fn data_eq(&self, lhs: &Self::Node, rhs: &Self::Node) -> bool {
+            self.nodes[lhs.0].label == self.nodes[rhs.0].label
+        }
+
+        fn data_hash(&self, node: &Self::Node, hasher: &mut impl hash::Hasher) {
+            self.nodes[node.0].label.hash(hasher);
         }
 
         fn successors<B>(
             &self,
-            of: &Self::Node,
+            node: &Self::Node,
             mut f: impl FnMut(Self::Node) -> ControlFlow<B>,
         ) -> ControlFlow<B> {
-            if let Some(left) = of.left.get() {
+            if let Some(left) = self.nodes[node.0].left {
                 f(left)?;
             }
 
-            if let Some(right) = of.right.get() {
+            if let Some(right) = self.nodes[node.0].right {
                 f(right)?;
             }
 
@@ -456,16 +437,34 @@ mod tests {
 
     #[test]
     fn simple() {
-        let foo = &Cons::new("foo");
-        let bar = &Cons::new("bar");
-
-        foo.set_left(Some(bar));
-        bar.set_left(Some(foo));
-
         let mut interner = IsoInterner::default();
-        let graph = &ConsGraph::default();
+        let mut graph = ConsGraph::default();
 
-        assert!(interner.intern(graph, &foo) == foo);
-        assert!(interner.intern(graph, &bar) == bar);
+        // First alias
+        let foo_1 = graph.spawn("foo");
+        let bar_1 = graph.spawn("bar");
+
+        graph.set_left(foo_1, Some(bar_1));
+        graph.set_right(bar_1, Some(bar_1));
+
+        assert!(interner.intern(&graph, &foo_1) == foo_1);
+        assert!(interner.intern(&graph, &bar_1) == bar_1);
+
+        // Second alias
+        let foo_2 = graph.spawn("foo");
+        let bar_2 = graph.spawn("bar");
+
+        graph.set_left(foo_2, Some(bar_2));
+        graph.set_right(bar_2, Some(bar_2));
+
+        assert!(interner.intern(&graph, &foo_2) == foo_1);
+        assert!(interner.intern(&graph, &bar_2) == bar_1);
+
+        // Third alias
+        let foo_3 = graph.spawn("foo");
+
+        graph.set_left(foo_3, Some(bar_2));
+
+        assert!(interner.intern(&graph, &foo_3) == foo_1);
     }
 }
