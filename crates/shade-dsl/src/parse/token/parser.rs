@@ -2,8 +2,8 @@ use unicode_xid::UnicodeXID;
 
 use crate::{
     base::{
-        Diag, Gcx, LeafDiag,
-        syntax::{CharCursor, CharParser, Parser, RawCharCursor, Span, Symbol},
+        Diag, LeafDiag, Session,
+        syntax::{CharCursor, CharParser, Parser, RawCharCursor, SourceMap, Span, Symbol},
     },
     parse::token::{NumLitBase, TokenNumLit, punct},
     symbol,
@@ -14,12 +14,12 @@ use super::{
     TokenStream, TokenTree,
 };
 
-type P<'gcx, 'a, 'ch> = &'a mut CharParser<'gcx, 'ch>;
+type P<'a, 'ch> = &'a mut CharParser<'ch>;
 type C<'a, 'ch> = &'a mut CharCursor<'ch>;
 
-pub fn tokenize(gcx: Gcx<'_>, span: Span) -> TokenGroup {
-    let text = gcx.source_map.file(span.lo).text(span);
-    let mut parser = Parser::new(gcx, RawCharCursor::new(span, &text));
+pub fn tokenize(span: Span) -> TokenGroup {
+    let text = Session::fetch().get::<SourceMap>().file(span.lo).text(span);
+    let mut parser = Parser::new(RawCharCursor::new(span, &text));
 
     parser.context(symbol!("tokenizing the file"), |p| {
         if p.expect(symbol!("byte order mark"), |c| match_ch(c, '\u{feff}')) {
@@ -75,7 +75,7 @@ fn parse_group(p: P, group_start: Span, delimiter: GroupDelimiter) -> TokenGroup
                 .find(|v| match_ch_or_eof(c, v.closing()))
         }) {
             if closing_del != delimiter {
-                p.dcx().emit(Diag::span_err(
+                Diag::span_err(
                     token_start,
                     format_args!(
                         "{} delimiter; expected {}, got {}",
@@ -87,7 +87,8 @@ fn parse_group(p: P, group_start: Span, delimiter: GroupDelimiter) -> TokenGroup
                         delimiter.closing_name(),
                         closing_del.closing_name()
                     ),
-                ));
+                )
+                .emit();
             }
 
             break;
@@ -272,8 +273,11 @@ fn parse_string_lit(
             break 'prefix (StrLitKind::Utf8Slice, false);
         }
 
-        let (prefix_sym, is_raw) = if let Some(prefix_sym) =
-            prefix.text.as_str(|v| v.strip_prefix('r').map(Symbol::new))
+        let (prefix_sym, is_raw) = if let Some(prefix_sym) = prefix
+            .text
+            .as_str(&Session::fetch())
+            .strip_prefix('r')
+            .map(Symbol::new)
         {
             (prefix_sym, true)
         } else {

@@ -2,19 +2,16 @@ use std::{
     fmt,
     marker::PhantomData,
     ops,
-    sync::{
-        OnceLock,
-        atomic::{AtomicBool, Ordering::*},
-    },
+    sync::atomic::{AtomicBool, Ordering::*},
 };
 
 use ctx2d_utils::mem::MappedArc;
 use derive_where::derive_where;
+use late_struct::late_field;
 
-use crate::base::{
-    Gcx,
-    syntax::{FilePos, SourceFileOrigin, SourceMap, SourceMapFile, Span},
-};
+use crate::base::syntax::{FilePos, SourceFileOrigin, SourceMap, SourceMapFile, Span};
+
+use super::Session;
 
 // === Errors === //
 
@@ -47,22 +44,15 @@ impl EmissionGuarantee for ErrorGuaranteed {
 // === Context === //
 
 #[derive(Debug, Default)]
-pub struct DiagCtxt<'gcx> {
+pub struct DiagCtxt {
     error_guaranteed: AtomicBool,
-    gcx: OnceLock<Gcx<'gcx>>,
 }
 
-impl<'gcx> DiagCtxt<'gcx> {
+late_field!(DiagCtxt[Session] => DiagCtxt);
+
+impl DiagCtxt {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn bind_gcx(&self, gcx: Gcx<'gcx>) {
-        self.gcx.set(gcx).unwrap();
-    }
-
-    pub fn gcx(&self) -> Gcx<'gcx> {
-        self.gcx.get().unwrap()
     }
 
     pub fn emit<E: EmissionGuarantee>(&self, diag: Diag<E>) -> E {
@@ -71,7 +61,7 @@ impl<'gcx> DiagCtxt<'gcx> {
         }
 
         emit_pretty(
-            &self.gcx().source_map,
+            Session::fetch().get::<SourceMap>(),
             &mut termcolor::StandardStream::stdout(termcolor::ColorChoice::Auto),
             diag.cast_ref(),
         );
@@ -138,6 +128,10 @@ impl<E: EmissionGuarantee> Diag<E> {
             me: self.me,
             children: self.children,
         }
+    }
+
+    pub fn emit(self) -> E {
+        Session::fetch().get::<DiagCtxt>().emit(self)
     }
 }
 

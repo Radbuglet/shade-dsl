@@ -7,8 +7,9 @@ use std::{
 };
 
 use ctx2d_utils::mem::MappedArc;
+use late_struct::late_field;
 
-use crate::base::GcxOwned;
+use crate::base::Session;
 
 // === Span === //
 
@@ -17,11 +18,8 @@ pub struct FilePos(NonZeroU32);
 
 impl fmt::Debug for FilePos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        GcxOwned::fetch_tls(|gcx| {
-            let file = gcx.source_map.file(*self);
-
-            write!(f, "{}:{}", file.origin(), file.pos_to_loc(*self))
-        })
+        let file = self.file();
+        write!(f, "{}:{}", file.origin(), file.pos_to_loc(*self))
     }
 }
 
@@ -86,6 +84,10 @@ impl FilePos {
 
     pub fn delta_usize(self, other: Self) -> usize {
         (other.u32() - self.u32()) as usize
+    }
+
+    pub fn file(self) -> Arc<SourceMapFile> {
+        Session::fetch().get::<SourceMap>().file(self)
     }
 }
 
@@ -159,25 +161,23 @@ pub struct Span {
 
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        GcxOwned::fetch_tls(|gcx| {
-            let file = gcx.source_map.file(self.lo);
+        let file = self.lo.file();
 
-            let lo = file.pos_to_loc(self.lo);
-            let hi = file.pos_to_loc(self.hi);
+        let lo = file.pos_to_loc(self.lo);
+        let hi = file.pos_to_loc(self.hi);
 
-            if lo.line == hi.line {
-                write!(
-                    f,
-                    "{}:{}:{}-{}",
-                    file.origin(),
-                    lo.line + 1,
-                    lo.column + 1,
-                    hi.column + 1
-                )
-            } else {
-                write!(f, "{}:{lo}-{hi}", file.origin())
-            }
-        })
+        if lo.line == hi.line {
+            write!(
+                f,
+                "{}:{}:{}-{}",
+                file.origin(),
+                lo.line + 1,
+                lo.column + 1,
+                hi.column + 1
+            )
+        } else {
+            write!(f, "{}:{lo}-{hi}", file.origin())
+        }
     }
 }
 
@@ -270,6 +270,14 @@ pub struct SourceMap(RwLock<SourceMapInner>);
 struct SourceMapInner {
     files: Vec<Arc<SourceMapFile>>,
     len: FilePos,
+}
+
+late_field!(SourceMap[Session] => SourceMap);
+
+impl fmt::Debug for SourceMap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("SourceMap").finish_non_exhaustive()
+    }
 }
 
 impl SourceMap {

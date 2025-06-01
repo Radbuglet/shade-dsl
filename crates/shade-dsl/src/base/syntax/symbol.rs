@@ -2,8 +2,9 @@ use std::{fmt, num::NonZeroU32, sync::RwLock};
 
 use bumpalo::Bump;
 use ctx2d_utils::hash::{FxHashMap, fx_hash_one, hash_map};
+use late_struct::late_field;
 
-use crate::base::GcxOwned;
+use crate::base::Session;
 
 // === Symbol === //
 
@@ -12,23 +13,23 @@ pub struct Symbol(NonZeroU32);
 
 impl fmt::Debug for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.as_str(|s| write!(f, "{:?}#{}", s, self.0))
+        write!(f, "{:?}#{}", self.as_str(&Session::fetch()), self.0)
     }
 }
 
 impl fmt::Display for Symbol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.as_str(|s| f.write_str(s))
+        f.write_str(self.as_str(&Session::fetch()))
     }
 }
 
 impl Symbol {
     pub fn new(value: &str) -> Self {
-        GcxOwned::fetch_tls(|gcx| gcx.symbols.intern(value))
+        Session::fetch().get::<SymbolInterner>().intern(value)
     }
 
-    pub fn as_str<R>(self, f: impl FnOnce(&str) -> R) -> R {
-        GcxOwned::fetch_tls(|gcx| f(gcx.symbols.lookup(self)))
+    pub fn as_str(self, s: &Session) -> &str {
+        s.get::<SymbolInterner>().lookup(self)
     }
 }
 
@@ -36,6 +37,8 @@ impl Symbol {
 
 #[derive(Default)]
 pub struct SymbolInterner(RwLock<SymbolInternInner>);
+
+late_field!(SymbolInterner[Session] => SymbolInterner);
 
 #[derive(Default)]
 struct SymbolInternInner {

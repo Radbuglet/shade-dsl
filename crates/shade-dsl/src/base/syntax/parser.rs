@@ -1,6 +1,6 @@
 use ctx2d_utils::lang::Extension;
 
-use crate::base::{Diag, DiagCtxt, ErrorGuaranteed, Gcx, HardDiag, LeafDiag};
+use crate::base::{Diag, ErrorGuaranteed, HardDiag, LeafDiag};
 
 use super::{Span, Spanned, Symbol};
 
@@ -32,18 +32,16 @@ impl<T> OptPResultExt for OptPResult<T> {
 // === Parser Core === //
 
 #[derive(Debug)]
-pub struct Parser<'gcx, I> {
-    gcx: Gcx<'gcx>,
+pub struct Parser<I> {
     cursor: Cursor<I>,
     context: Vec<(Span, Symbol)>,
     expected: Vec<Symbol>,
     stuck_hints: Vec<LeafDiag>,
 }
 
-impl<'gcx, I: CursorIter> Parser<'gcx, I> {
-    pub fn new(gcx: Gcx<'gcx>, raw: impl Into<I>) -> Self {
+impl<I: CursorIter> Parser<I> {
+    pub fn new(raw: impl Into<I>) -> Self {
         Self {
-            gcx,
             cursor: Cursor::new(raw.into()),
             context: Vec::new(),
             expected: Vec::new(),
@@ -52,7 +50,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
     }
 
     pub fn enter(&self, sub: impl Into<I>) -> Self {
-        Self::new(self.gcx(), sub.into())
+        Self::new(sub.into())
     }
 
     fn moved_forwards(&mut self) {
@@ -236,7 +234,7 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
 
         self.moved_forwards();
 
-        RecoveryRequired(self.dcx().emit(diag))
+        RecoveryRequired(diag.emit())
     }
 
     #[must_use]
@@ -270,16 +268,8 @@ impl<'gcx, I: CursorIter> Parser<'gcx, I> {
         err_guar
     }
 
-    pub fn gcx(&self) -> Gcx<'gcx> {
-        self.gcx
-    }
-
-    pub fn dcx(&self) -> &'gcx DiagCtxt<'gcx> {
-        &self.gcx.dcx
-    }
-
     pub fn err(&self, diag: HardDiag) -> RecoveryRequired {
-        RecoveryRequired(self.dcx().emit(diag))
+        RecoveryRequired(diag.emit())
     }
 
     pub fn cursor_unsafe(&self) -> &Cursor<I> {
@@ -324,17 +314,17 @@ pub trait Matcher<I: CursorIter> {
         self.consume(c).is_ok()
     }
 
-    fn expect(&self, p: &mut Parser<'_, I>) -> Self::Output {
+    fn expect(&self, p: &mut Parser<I>) -> Self::Output {
         p.expect_hinted(self.expectation(), self.matcher())
     }
 
-    fn expect_covert(&self, visible: bool, p: &mut Parser<'_, I>) -> Self::Output {
+    fn expect_covert(&self, visible: bool, p: &mut Parser<I>) -> Self::Output {
         p.expect_covert_hinted(visible, self.expectation(), self.matcher())
     }
 
     fn hint_if_match(
         &self,
-        p: &mut Parser<'_, I>,
+        p: &mut Parser<I>,
         gen_diag: impl FnOnce(Span, Self::Output) -> LeafDiag,
     ) {
         p.hint_if_passes(self.matcher(), gen_diag);
@@ -342,7 +332,7 @@ pub trait Matcher<I: CursorIter> {
 
     fn expect_or_hint(
         &mut self,
-        p: &mut Parser<'_, I>,
+        p: &mut Parser<I>,
         is_expected: bool,
         gen_diag: impl FnOnce(Span, Self::Output) -> LeafDiag,
     ) -> Self::Output
@@ -352,7 +342,7 @@ pub trait Matcher<I: CursorIter> {
         p.expect_or_hint(is_expected, self.expectation(), self.matcher(), gen_diag)
     }
 
-    fn maybe_expect(&mut self, p: &mut Parser<'_, I>, is_expected: bool) -> Self::Output
+    fn maybe_expect(&mut self, p: &mut Parser<I>, is_expected: bool) -> Self::Output
     where
         Self::Output: DefaultReject,
     {
@@ -506,7 +496,7 @@ where
 
 // === Standard Cursors === //
 
-pub type CharParser<'gcx, 'ch> = Parser<'gcx, RawCharCursor<'ch>>;
+pub type CharParser<'ch> = Parser<RawCharCursor<'ch>>;
 pub type CharCursor<'ch> = Cursor<RawCharCursor<'ch>>;
 
 #[derive(Debug, Clone)]

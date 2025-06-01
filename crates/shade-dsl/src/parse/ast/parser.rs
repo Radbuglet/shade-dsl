@@ -1,6 +1,6 @@
 use crate::{
     base::{
-        Gcx, LeafDiag, Level,
+        LeafDiag, Level, Session,
         syntax::{Bp, InfixBp, Matcher, OptPResult, OptPResultExt, Span},
     },
     parse::{
@@ -19,13 +19,13 @@ use super::{
     puncts, ty_bp,
 };
 
-type P<'gcx, 'a, 'g> = &'a mut TokenParser<'gcx, 'g>;
+type P<'a, 'g> = &'a mut TokenParser<'g>;
 type C<'a, 'g> = &'a mut TokenCursor<'g>;
 
 // === ADT Parsing === //
 
-pub fn parse_file(gcx: Gcx<'_>, tokens: &TokenGroup) -> AstAdt {
-    let mut p = TokenParser::new(gcx, tokens);
+pub fn parse_file(tokens: &TokenGroup) -> AstAdt {
+    let mut p = TokenParser::new(tokens);
 
     parse_adt_contents(&mut p, AdtKind::Mod(tokens.span.shrink_to_lo()))
 }
@@ -64,8 +64,6 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
                 continue;
             }
         } else {
-            let gcx = p.gcx();
-
             p.hint_if_passes(
                 |c, _| {
                     if match_ident().consume(c).is_none() {
@@ -77,7 +75,7 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
                     }
 
                     let start = c.prev_span();
-                    let file = gcx.source_map.file(start.lo);
+                    let file = start.lo.file();
                     let start = file.pos_to_loc(start.lo).line;
 
                     c.lookahead(|c| {
@@ -973,7 +971,7 @@ fn match_ident() -> impl TokenMatcher<Output = Option<Ident>> {
             return Some(ident);
         }
 
-        if ident.text.as_str(|s| Keyword::try_new(s).is_some()) {
+        if Keyword::try_new(ident.text.as_str(&Session::fetch())).is_some() {
             h.hint(LeafDiag::new(
                 Level::Note,
                 format_args!("`{}` is a reserved keyword", ident.text),

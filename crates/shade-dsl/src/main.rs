@@ -2,25 +2,26 @@ use std::{fs, path::Path, sync::Arc};
 
 use shade_dsl::{
     base::{
-        GcxOwned,
-        syntax::{NaiveSegmenter, SourceFileOrigin},
+        Session,
+        syntax::{NaiveSegmenter, SourceFileOrigin, SourceMap},
     },
     parse::{ast::parse_file, token::tokenize},
 };
 
 fn main() {
-    GcxOwned::init(|gcx| {
-        let path = Path::new("samples/app.sdl");
+    let session = Session::new();
+    let _guard = session.bind();
 
-        let span = gcx.source_map.create(
-            &mut NaiveSegmenter,
-            SourceFileOrigin::Fs(path.to_path_buf()),
-            Arc::new(String::from_utf8(fs::read(path).unwrap()).unwrap()),
-        );
+    let path = Path::new("samples/app.sdl");
 
-        let tokens = tokenize(gcx, span);
-        let ast = parse_file(gcx, &tokens);
+    let span = Session::fetch().get::<SourceMap>().create(
+        &mut NaiveSegmenter,
+        SourceFileOrigin::Fs(path.to_path_buf()),
+        Arc::new(String::from_utf8(fs::read(path).unwrap()).unwrap()),
+    );
 
-        dbg!(&ast);
-    });
+    let tokens = tokenize(span);
+    let ast = parse_file(&tokens);
+
+    dbg!(&ast);
 }

@@ -4,10 +4,10 @@ use ctx2d_utils::lang::ConstFmt;
 
 use crate::{
     base::{
-        Gcx,
+        Session,
         syntax::{
             AtomSimplify, Cursor, Delimited, LookaheadResult, Matcher, Parser, Span, Spanned,
-            StuckHinter, Symbol,
+            StuckHinter, Symbol, SymbolInterner,
         },
     },
     symbol,
@@ -260,8 +260,9 @@ pub struct TokenNumLit {
 }
 
 impl TokenNumLit {
-    pub fn base(self, gcx: Gcx<'_>) -> NumLitBase {
-        let text = gcx.symbols.lookup(self.text);
+    pub fn base(self) -> NumLitBase {
+        let session = Session::fetch();
+        let text = session.get::<SymbolInterner>().lookup(self.text);
 
         if text.starts_with("0x") {
             return NumLitBase::Hexadecimal;
@@ -414,7 +415,7 @@ pub use punct;
 
 // === TokenCursor === //
 
-pub type TokenParser<'gcx, 'g> = Parser<'gcx, RawTokenCursor<'g>>;
+pub type TokenParser<'g> = Parser<RawTokenCursor<'g>>;
 pub type TokenCursor<'ch> = Cursor<RawTokenCursor<'ch>>;
 
 #[derive(Debug, Clone)]
