@@ -7,22 +7,23 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct AstAdt {
-    pub kind: AdtKind,
+    pub span: Span,
+    pub kind: AstAdtKind,
     pub fields: Vec<AstField>,
     pub members: Vec<AstMember>,
 }
 
 #[derive(Debug, Copy, Clone)]
-pub enum AdtKind {
+pub enum AstAdtKind {
     Mod(Span),
     Struct(Span),
     Enum(Span),
     Union(Span),
 }
 
-impl AdtKind {
+impl AstAdtKind {
     pub fn can_have_fields(self) -> bool {
-        !matches!(self, AdtKind::Mod(_))
+        !matches!(self, AstAdtKind::Mod(_))
     }
 }
 

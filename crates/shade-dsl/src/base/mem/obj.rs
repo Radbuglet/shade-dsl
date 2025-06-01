@@ -4,6 +4,8 @@ use ctx2d_utils::hash::FxHashSet;
 use late_struct::LateField;
 use thunderdome::{Arena, Index};
 
+use crate::base::{World, WorldDebug};
+
 // === Format Reentrancy === //
 
 #[derive(Debug, Default)]
@@ -55,6 +57,10 @@ pub type Val<T> = <T as Handle>::Component;
 
 pub trait Component: 'static + Sized + fmt::Debug + LateField<World, Value = Arena<Self>> {
     type Handle: Handle<Component = Self>;
+
+    fn spawn(self, w: &mut World) -> Self::Handle {
+        <Self::Handle>::spawn(self, w)
+    }
 }
 
 pub trait Handle: Sized + 'static + fmt::Debug + Copy + Eq + Ord {
@@ -65,6 +71,10 @@ pub trait Handle: Sized + 'static + fmt::Debug + Copy + Eq + Ord {
     fn wrap_raw(index: Index) -> Self;
 
     fn raw(self) -> Index;
+
+    fn spawn(value: Self::Component, w: &mut World) -> Self {
+        Self::wrap_raw(w.resource_mut::<Self::Component>().insert(value))
+    }
 
     fn destroy(self, w: &mut World) {
         w.resource_mut::<Self::Component>().remove(self.raw());
@@ -207,5 +217,3 @@ macro_rules! component {
 }
 
 pub use component;
-
-use crate::base::{World, WorldDebug};

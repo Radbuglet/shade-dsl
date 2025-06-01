@@ -3,7 +3,7 @@ use crate::{
     component,
 };
 
-use super::Instance;
+use super::ValueInstance;
 
 // === Types === //
 
@@ -44,9 +44,11 @@ pub struct AdtSignature {
     pub span: Span,
     pub name: Symbol,
     pub kind: AdtKind,
-    pub fields: Vec<AdtField>,
-    pub members: Vec<AdtMember>,
+    pub fields: Vec<AdtElement>,
+    pub members: Vec<AdtElement>,
 }
+
+component!(AdtSignature);
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AdtKind {
@@ -57,17 +59,8 @@ pub enum AdtKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct AdtField {
+pub struct AdtElement {
     pub span: Span,
     pub name: Symbol,
-    pub ty_init: Instance,
+    pub init: ValueInstance,
 }
-
-#[derive(Debug, Clone)]
-pub struct AdtMember {
-    pub span: Span,
-    pub name: Symbol,
-    pub expr_init: Instance,
-}
-
-component!(AdtSignature);

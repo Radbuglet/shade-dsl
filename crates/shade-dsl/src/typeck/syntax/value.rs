@@ -2,15 +2,15 @@ use std::hash;
 
 use crate::component;
 
-use super::{Instance, ObjAdtSignature, ObjTy};
+use super::{ObjAdtSignature, ObjFunc, ObjTy};
 
 // === Values === //
 
 #[derive(Debug, Clone)]
 pub enum Value {
     MetaType(ObjTy),
-    MetaFunc(Instance),
-    Func(Instance),
+    MetaFunc(ValueInstance),
+    Func(ValueInstance),
     Scalar(ValueScalar),
     Tuple(Vec<ObjValue>),
     Adt(ObjAdtSignature, AdtValue),
@@ -82,6 +82,12 @@ impl PartialEq for ValueScalar {
             _ => false,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ValueInstance {
+    pub func: ObjFunc,
+    pub generics: Vec<ObjValue>,
 }
 
 #[derive(Debug, Clone)]

@@ -14,9 +14,9 @@ use crate::{
 };
 
 use super::{
-    AdtKind, AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstFuncDef, AstFuncParam, AstMember,
-    AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, MetaTypeKind, Mutability, PunctSeq, kw,
-    puncts, ty_bp,
+    AstAdt, AstAdtKind, AstBlock, AstExpr, AstExprKind, AstField, AstFuncDef, AstFuncParam,
+    AstMember, AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, MetaTypeKind, Mutability,
+    PunctSeq, kw, puncts, ty_bp,
 };
 
 type P<'a, 'g> = &'a mut TokenParser<'g>;
@@ -27,12 +27,14 @@ type C<'a, 'g> = &'a mut TokenCursor<'g>;
 pub fn parse_file(tokens: &TokenGroup) -> AstAdt {
     let mut p = TokenParser::new(tokens);
 
-    parse_adt_contents(&mut p, AdtKind::Mod(tokens.span.shrink_to_lo()))
+    parse_adt_contents(&mut p, AstAdtKind::Mod(tokens.span.shrink_to_lo()))
 }
 
-fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
+fn parse_adt_contents(p: P, kind: AstAdtKind) -> AstAdt {
     let mut fields = Vec::new();
     let mut members = Vec::new();
+
+    let start = p.next_span();
 
     loop {
         if match_eos(p) {
@@ -106,6 +108,7 @@ fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
     }
 
     AstAdt {
+        span: start.to(p.prev_span()),
         kind,
         fields,
         members,
@@ -933,21 +936,21 @@ fn parse_pat_inner(p: P) -> AstPatKind {
 
 // === Parsing helpers === //
 
-fn parse_adt_kind(p: P) -> Option<AdtKind> {
+fn parse_adt_kind(p: P) -> Option<AstAdtKind> {
     if let Some(ident) = match_kw(kw!("mod")).expect(p) {
-        return Some(AdtKind::Mod(ident.span));
+        return Some(AstAdtKind::Mod(ident.span));
     }
 
     if let Some(ident) = match_kw(kw!("struct")).expect(p) {
-        return Some(AdtKind::Struct(ident.span));
+        return Some(AstAdtKind::Struct(ident.span));
     }
 
     if let Some(ident) = match_kw(kw!("enum")).expect(p) {
-        return Some(AdtKind::Enum(ident.span));
+        return Some(AstAdtKind::Enum(ident.span));
     }
 
     if let Some(ident) = match_kw(kw!("union")).expect(p) {
-        return Some(AdtKind::Union(ident.span));
+        return Some(AstAdtKind::Union(ident.span));
     }
 
     None

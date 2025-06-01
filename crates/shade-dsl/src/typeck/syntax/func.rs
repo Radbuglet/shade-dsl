@@ -5,35 +5,33 @@ use crate::{
 
 use super::ObjValue;
 
-// === Instance === //
-
-#[derive(Debug, Clone)]
-pub struct Instance {
-    pub func: ObjFunc,
-    pub generics: Vec<ObjValue>,
-}
-
 // === Func === //
 
 #[derive(Debug, Clone)]
 pub struct Func {
     pub span: Span,
     pub name: Symbol,
-    pub generics: Vec<ObjArgDef>,
-    pub arguments: Vec<ObjArgDef>,
+    pub generics: Vec<ObjGenericDef>,
+    pub arguments: Vec<ObjLocalDef>,
+    pub return_type: Option<UnevalInstance>,
     pub expr: ObjExpr,
 }
 
-component!(Func);
-
 #[derive(Debug, Clone)]
-pub struct ArgDef {
+pub struct GenericDef {
     pub span: Span,
     pub name: Symbol,
-    pub ty: Instance,
+    pub ty: Option<UnevalInstance>,
 }
 
-component!(ArgDef);
+#[derive(Debug, Clone)]
+pub struct LocalDef {
+    pub span: Span,
+    pub name: Symbol,
+    pub ty: UnevalInstance,
+}
+
+component!(Func, GenericDef, LocalDef);
 
 // === Expr === //
 
@@ -43,9 +41,17 @@ pub struct Expr {
     pub kind: ExprKind,
 }
 
+component!(Expr);
+
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    Arg(ObjArgDef),
+    Const(UnevalInstance),
+    Generic(ObjGenericDef),
+    Local(ObjLocalDef),
 }
 
-component!(Expr);
+#[derive(Debug, Clone)]
+pub struct UnevalInstance {
+    pub func: ObjFunc,
+    pub generics: Vec<ObjExpr>,
+}
