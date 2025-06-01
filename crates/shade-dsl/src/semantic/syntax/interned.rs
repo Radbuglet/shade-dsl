@@ -1,7 +1,7 @@
 use std::hash;
 
 use crate::base::{
-    alloc::{Intern, ListIntern},
+    mem::{Intern, ListIntern},
     syntax::Symbol,
 };
 

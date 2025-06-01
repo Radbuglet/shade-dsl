@@ -4,7 +4,7 @@ use crate::semantic::syntax::{BoundValue, Ty, TyAdtMember, TyKind, Value, ValueI
 
 use super::{
     DiagCtxt,
-    alloc::{Intern, Interner, ListIntern, ListInterner},
+    mem::{Intern, Interner, ListIntern, ListInterner},
     syntax::{SourceMap, Symbol, SymbolInterner},
 };
 

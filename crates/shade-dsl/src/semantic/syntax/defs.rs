@@ -1,4 +1,4 @@
-use crate::base::{alloc::Def, syntax::Symbol};
+use crate::base::{mem::Def, syntax::Symbol};
 
 use super::{BoundInstance, Ty, TyList};
 
