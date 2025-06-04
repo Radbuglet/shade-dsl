@@ -167,7 +167,7 @@ fn parse_ast_member_const(p: P, is_public: bool) -> OptPResult<AstMember> {
 
     Ok(Some(AstMember {
         name,
-        initializer: Box::new(initializer),
+        init: Box::new(initializer),
         is_public,
     }))
 }

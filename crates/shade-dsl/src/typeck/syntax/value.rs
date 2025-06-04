@@ -1,8 +1,10 @@
 use std::hash;
 
-use crate::component;
+use index_vec::IndexVec;
 
-use super::{ObjAdtSignature, ObjFunc, ObjTy};
+use crate::{base::syntax::Span, component};
+
+use super::{LocalConstIdx, ObjAdtSignature, ObjFunc, ObjTy};
 
 // === Values === //
 
@@ -88,6 +90,7 @@ impl PartialEq for ValueScalar {
 pub struct ValueInstance {
     pub func: ObjFunc,
     pub generics: Vec<ObjValue>,
+    pub parent_upvars: ObjUpvars,
 }
 
 #[derive(Debug, Clone)]
@@ -95,3 +98,12 @@ pub enum AdtValue {
     Composite(Vec<ObjValue>),
     Variant(u32, ObjValue),
 }
+
+#[derive(Debug, Clone)]
+pub struct Upvars {
+    pub span: Span,
+    pub parent: Option<ObjUpvars>,
+    pub values: IndexVec<LocalConstIdx, ObjValue>,
+}
+
+component!(Upvars);

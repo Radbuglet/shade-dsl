@@ -37,7 +37,7 @@ pub struct AstField {
 #[derive(Debug, Clone)]
 pub struct AstMember {
     pub name: Ident,
-    pub initializer: Box<AstExpr>,
+    pub init: Box<AstExpr>,
     pub is_public: bool,
 }
 
