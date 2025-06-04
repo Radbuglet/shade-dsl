@@ -3,8 +3,6 @@ use crate::{
     component,
 };
 
-use super::ObjValue;
-
 // === Func === //
 
 #[derive(Debug, Clone)]
@@ -48,6 +46,7 @@ pub enum ExprKind {
     Const(UnevalInstance),
     Generic(ObjGenericDef),
     Local(ObjLocalDef),
+    Placeholder,
 }
 
 #[derive(Debug, Clone)]
