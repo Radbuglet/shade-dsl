@@ -3,7 +3,7 @@ use crate::{
     component,
 };
 
-use super::ValueInstance;
+use super::FullInstance;
 
 // === Types === //
 
@@ -62,5 +62,5 @@ pub enum AdtKind {
 pub struct AdtElement {
     pub span: Span,
     pub name: Symbol,
-    pub init: ValueInstance,
+    pub init: FullInstance,
 }

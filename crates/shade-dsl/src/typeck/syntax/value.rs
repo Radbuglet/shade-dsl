@@ -2,17 +2,17 @@ use std::hash;
 
 use index_vec::IndexVec;
 
-use crate::{base::syntax::Span, component};
+use crate::component;
 
-use super::{LocalConstIdx, ObjAdtSignature, ObjFunc, ObjTy};
+use super::{ObjAdtSignature, ObjFunc, ObjTy, OwnConstIdx, OwnGenericIdx};
 
 // === Values === //
 
 #[derive(Debug, Clone)]
 pub enum Value {
     MetaType(ObjTy),
-    MetaFunc(ValueInstance),
-    Func(ValueInstance),
+    MetaFunc(FullInstance),
+    Func(FullInstance),
     Scalar(ValueScalar),
     Tuple(Vec<ObjValue>),
     Adt(ObjAdtSignature, AdtValue),
@@ -87,23 +87,38 @@ impl PartialEq for ValueScalar {
 }
 
 #[derive(Debug, Clone)]
-pub struct ValueInstance {
-    pub func: ObjFunc,
-    pub generics: Vec<ObjValue>,
-    pub parent_upvars: ObjUpvars,
-}
-
-#[derive(Debug, Clone)]
 pub enum AdtValue {
     Composite(Vec<ObjValue>),
     Variant(u32, ObjValue),
 }
 
+// === Instance === //
+
 #[derive(Debug, Clone)]
-pub struct Upvars {
-    pub span: Span,
-    pub parent: Option<ObjUpvars>,
-    pub values: IndexVec<LocalConstIdx, ObjValue>,
+pub struct PartialInstance {
+    /// The function we're trying to instantiate.
+    pub func: ObjFunc,
+
+    /// The partial list of generic arguments to the function, filled from left to right.
+    pub generics: Vec<ObjValue>,
+
+    /// The upvars captured by parent functions which have already been evaluated.
+    pub parent_results: Option<ObjFullInstance>,
 }
 
-component!(Upvars);
+#[derive(Debug, Clone)]
+pub struct FullInstance {
+    /// The function we're evaluating.
+    pub func: ObjFunc,
+
+    /// The lexical parent of this function, which may also be in the process of active evaluation.
+    pub parent: Option<ObjFullInstance>,
+
+    /// The generic parameters passed to the function.
+    pub generics: IndexVec<OwnGenericIdx, ObjValue>,
+
+    /// The constants we have evaluated thus far.
+    pub consts: IndexVec<OwnConstIdx, Option<ObjValue>>,
+}
+
+component!(FullInstance);
