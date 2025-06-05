@@ -330,14 +330,14 @@ pub struct AstStmt {
 
 #[derive(Debug, Clone)]
 pub enum AstStmtKind {
-    Expr(AstExprKind),
+    Expr(AstExpr),
     Let {
         binding: AstPat,
         ty: Option<AstExpr>,
         init: Option<Box<AstExpr>>,
     },
     Const {
-        name: Ident,
+        binding: AstPat,
         init: Box<AstExpr>,
     },
 }

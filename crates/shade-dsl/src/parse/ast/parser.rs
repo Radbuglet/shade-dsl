@@ -872,7 +872,7 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
 
         stmts.push(AstStmt {
             span: expr.span,
-            kind: AstStmtKind::Expr(expr.kind),
+            kind: AstStmtKind::Expr(expr),
         });
 
         if needs_semi && match_punct(punct!(';')).expect(p).is_none() {

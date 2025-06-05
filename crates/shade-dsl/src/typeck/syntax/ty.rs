@@ -7,7 +7,7 @@ use super::FullInstance;
 
 // === Types === //
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Ty {
     MetaTy,
     MetaFunc,
@@ -39,7 +39,7 @@ pub enum TyScalar {
 
 // === ADTs === //
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AdtSignature {
     pub span: Span,
     pub name: Symbol,
@@ -58,7 +58,7 @@ pub enum AdtKind {
     Enum,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AdtElement {
     pub span: Span,
     pub name: Symbol,

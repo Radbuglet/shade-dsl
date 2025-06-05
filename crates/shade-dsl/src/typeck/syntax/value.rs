@@ -8,7 +8,7 @@ use super::{ObjAdtSignature, ObjFunc, ObjTy, OwnConstIdx, OwnGenericIdx};
 
 // === Values === //
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Value {
     MetaType(ObjTy),
     MetaFunc(FullInstance),
@@ -86,7 +86,7 @@ impl PartialEq for ValueScalar {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum AdtValue {
     Composite(Vec<ObjValue>),
     Variant(u32, ObjValue),
@@ -94,7 +94,7 @@ pub enum AdtValue {
 
 // === Instance === //
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PartialInstance {
     /// The function we're trying to instantiate.
     pub func: ObjFunc,
@@ -106,7 +106,7 @@ pub struct PartialInstance {
     pub parent_results: Option<ObjFullInstance>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FullInstance {
     /// The function we're evaluating.
     pub func: ObjFunc,

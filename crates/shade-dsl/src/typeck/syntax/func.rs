@@ -1,7 +1,10 @@
 use index_vec::IndexVec;
 
 use crate::{
-    base::syntax::{Span, Symbol},
+    base::{
+        ErrorGuaranteed,
+        syntax::{Span, Symbol},
+    },
     component,
 };
 
@@ -15,7 +18,7 @@ index_vec::define_index_type! {
     pub struct OwnGenericIdx = u32;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Func {
     /// The function which is the lexical parent to this function.
     pub parent: Option<ObjFunc>,
@@ -73,7 +76,7 @@ pub enum AnyName {
     Local(ObjLocalDef),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ConstDef {
     pub idx: OwnConstIdx,
     pub owner: ObjFunc,
@@ -82,7 +85,7 @@ pub struct ConstDef {
     pub expr: ObjExpr,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct GenericDef {
     pub idx: OwnGenericIdx,
     pub owner: ObjFunc,
@@ -92,7 +95,7 @@ pub struct GenericDef {
     pub ty: Option<ObjConstDef>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LocalDef {
     pub owner: ObjFunc,
     pub span: Span,
@@ -104,7 +107,7 @@ component!(Func, ConstDef, GenericDef, LocalDef);
 
 // === Expr === //
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Expr {
     pub span: Span,
     pub kind: ExprKind,
@@ -112,7 +115,19 @@ pub struct Expr {
 
 component!(Expr);
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ExprKind {
     Name(AnyName),
+    Block(),
+    Error(ErrorGuaranteed),
+    Placeholder,
 }
+
+#[derive(Debug)]
+pub struct Block {
+    pub span: Span,
+    pub stmts: Vec<ObjExpr>,
+    pub last_expr: Option<ObjExpr>,
+}
+
+component!(Block);

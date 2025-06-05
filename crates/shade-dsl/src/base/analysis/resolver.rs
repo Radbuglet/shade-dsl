@@ -25,6 +25,10 @@ impl<T> NameResolver<T> {
         self.stack.push(Op::Set(sym, self.map.insert(sym, value)));
     }
 
+    pub fn lookup(&self, sym: Symbol) -> Option<&T> {
+        self.map.get(&sym)
+    }
+
     pub fn push_rib(&mut self) {
         self.stack.push(Op::Rib);
     }
