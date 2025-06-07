@@ -130,6 +130,14 @@ pub enum AstExprKind {
     /// Can only be parsed in expression parsing contexts.
     Loop(Box<AstBlock>),
 
+    /// A `match` expression (e.g. `match foo { (bar, baz) => ..., _ => ... }`).
+    ///
+    /// Can only be parsed in expression parsing contexts.
+    Match {
+        scrutinee: Box<AstExpr>,
+        arms: Vec<AstMatchArm>,
+    },
+
     /// A `return` expression (e.g. `return`, `return foo`).
     ///
     /// Can only be parsed in expression parsing contexts.
@@ -275,7 +283,8 @@ impl AstExprKind {
             AstExprKind::Block(..)
             | AstExprKind::If { .. }
             | AstExprKind::While { .. }
-            | AstExprKind::Loop(..) => false,
+            | AstExprKind::Loop(..)
+            | AstExprKind::Match { .. } => false,
             AstExprKind::Name(..)
             | AstExprKind::BoolLit(..)
             | AstExprKind::StrLit(..)
@@ -312,6 +321,12 @@ impl AstExprKind {
             | AstExprKind::Error(..) => true,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct AstMatchArm {
+    pub pat: AstPat,
+    pub expr: AstExpr,
 }
 
 #[derive(Debug, Clone)]

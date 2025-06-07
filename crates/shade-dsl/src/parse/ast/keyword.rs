@@ -74,11 +74,13 @@ define_keywords! {
     Enum = "enum",
     False = "false",
     Fn = "fn",
+    For = "for",
     Hole = "_",
     If = "if",
     In = "in",
     Let = "let",
     Loop = "loop",
+    Match = "match",
     Mod = "mod",
     Mut = "mut",
     Pub = "pub",
@@ -154,6 +156,7 @@ macro_rules! define_punct_seqs {
 
 define_punct_seqs! {
     Arrow = '-' '>',
+    WideArrow = '=' '>',
     LogicalEq = '=' '=',
     TriDots = '.' '.' '.',
 }

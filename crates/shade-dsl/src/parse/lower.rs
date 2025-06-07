@@ -85,6 +85,7 @@ fn lower_expr(func: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> O
         } => todo!(),
         AstExprKind::While { cond, block } => todo!(),
         AstExprKind::Loop(ast_block) => todo!(),
+        AstExprKind::Match { scrutinee, arms } => todo!(),
         AstExprKind::Return(ast_expr) => todo!(),
         AstExprKind::Continue => todo!(),
         AstExprKind::Break(ast_expr) => todo!(),

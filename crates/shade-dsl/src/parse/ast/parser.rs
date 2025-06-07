@@ -15,8 +15,8 @@ use crate::{
 
 use super::{
     AstAdt, AstAdtKind, AstBlock, AstExpr, AstExprKind, AstField, AstFuncDef, AstFuncParam,
-    AstMember, AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, MetaTypeKind, Mutability,
-    PunctSeq, kw, puncts, ty_bp,
+    AstMatchArm, AstMember, AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, MetaTypeKind,
+    Mutability, PunctSeq, kw, puncts, ty_bp,
 };
 
 type P<'a, 'g> = &'a mut TokenParser<'g>;
@@ -427,6 +427,33 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             break 'seed build_expr(AstExprKind::Loop(Box::new(block)), p);
         }
 
+        // Parse a `match` expression
+        if match_kw(kw!("match")).expect(p).is_some() {
+            let scrutinee = parse_expr(p);
+
+            let Some(braced) = match_group(GroupDelimiter::Brace).expect(p) else {
+                // Recovery strategy: do nothing
+                break 'seed build_expr(AstExprKind::Error(p.stuck().0), p);
+            };
+
+            let arms = parse_delimited(
+                &mut p.enter(&braced),
+                &mut (),
+                |p, _| parse_match_arm(p),
+                |p, _| match_punct(punct!(',')).expect(p).is_some(),
+                |p, _| match_eos(p),
+            )
+            .elems;
+
+            break 'seed build_expr(
+                AstExprKind::Match {
+                    scrutinee: Box::new(scrutinee),
+                    arms,
+                },
+                p,
+            );
+        }
+
         // Parse a `return` expression
         if match_kw(kw!("return")).expect(p).is_some() {
             let expr = parse_expr_pratt_opt(p, expr_bp::PRE_RETURN.right);
@@ -530,6 +557,19 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
     }
 
     Some(lhs)
+}
+
+fn parse_match_arm(p: P) -> AstMatchArm {
+    let pat = parse_pat(p);
+
+    if match_punct_seq(puncts!("=>")).expect(p).is_none() {
+        // Recovery strategy: ignore
+        p.stuck_recover_with(|_| {});
+    }
+
+    let expr = parse_expr(p);
+
+    AstMatchArm { pat, expr }
 }
 
 fn parse_ty_full(p: P) -> AstExpr {
