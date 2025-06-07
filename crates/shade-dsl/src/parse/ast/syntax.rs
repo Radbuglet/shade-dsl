@@ -1,6 +1,7 @@
 use crate::{
     base::{ErrorGuaranteed, syntax::Span},
     parse::token::{Ident, TokenCharLit, TokenNumLit, TokenStrLit},
+    typeck::syntax::AdtKind,
 };
 
 // === ASTs === //
@@ -8,23 +9,9 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct AstAdt {
     pub span: Span,
-    pub kind: AstAdtKind,
+    pub kind: AdtKind,
     pub fields: Vec<AstField>,
     pub members: Vec<AstMember>,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum AstAdtKind {
-    Mod(Span),
-    Struct(Span),
-    Enum(Span),
-    Union(Span),
-}
-
-impl AstAdtKind {
-    pub fn can_have_fields(self) -> bool {
-        !matches!(self, AstAdtKind::Mod(_))
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -346,15 +333,8 @@ pub struct AstStmt {
 #[derive(Debug, Clone)]
 pub enum AstStmtKind {
     Expr(AstExpr),
-    Let {
-        binding: AstPat,
-        ty: Option<AstExpr>,
-        init: Option<Box<AstExpr>>,
-    },
-    Const {
-        binding: AstPat,
-        init: Box<AstExpr>,
-    },
+    Let { binding: AstPat, init: Box<AstExpr> },
+    Const { name: Ident, init: Box<AstExpr> },
 }
 
 #[derive(Debug, Clone)]

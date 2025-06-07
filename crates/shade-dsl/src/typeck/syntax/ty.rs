@@ -58,6 +58,12 @@ pub enum AdtKind {
     Enum,
 }
 
+impl AdtKind {
+    pub fn can_have_fields(self) -> bool {
+        !matches!(self, AdtKind::Mod)
+    }
+}
+
 #[derive(Debug)]
 pub struct AdtElement {
     pub span: Span,

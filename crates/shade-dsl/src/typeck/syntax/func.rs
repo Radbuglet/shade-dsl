@@ -6,6 +6,7 @@ use crate::{
         syntax::{Span, Symbol},
     },
     component,
+    parse::ast::Mutability,
 };
 
 // === Func === //
@@ -91,8 +92,7 @@ pub struct GenericDef {
     pub owner: ObjFunc,
     pub span: Span,
     pub name: Symbol,
-    pub synthetic: bool,
-    pub ty: Option<ObjConstDef>,
+    pub ty: ObjConstDef,
 }
 
 #[derive(Debug)]
@@ -100,7 +100,7 @@ pub struct LocalDef {
     pub owner: ObjFunc,
     pub span: Span,
     pub name: Symbol,
-    pub ty: Option<ObjConstDef>,
+    pub muta: Mutability,
 }
 
 component!(Func, ConstDef, GenericDef, LocalDef);
@@ -118,7 +118,9 @@ component!(Expr);
 #[derive(Debug)]
 pub enum ExprKind {
     Name(AnyName),
-    Block(),
+    Block(ObjBlock),
+    Destructure(ObjPat, ObjExpr),
+    Match(Box<ExprMatch>),
     Error(ErrorGuaranteed),
     Placeholder,
 }
@@ -131,3 +133,25 @@ pub struct Block {
 }
 
 component!(Block);
+
+#[derive(Debug)]
+pub struct ExprMatch {
+    pub scrutinee: ObjExpr,
+    pub arms: Vec<(ObjPat, ObjExpr)>,
+}
+
+#[derive(Debug)]
+pub struct Pat {
+    pub span: Span,
+    pub kind: PatKind,
+}
+
+#[derive(Debug)]
+pub enum PatKind {
+    Hole,
+    Name(ObjLocalDef),
+    Tuple(Vec<ObjPat>),
+    Error(ErrorGuaranteed),
+}
+
+component!(Pat);

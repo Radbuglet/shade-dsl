@@ -11,12 +11,13 @@ use crate::{
         },
     },
     punct, symbol,
+    typeck::syntax::AdtKind,
 };
 
 use super::{
-    AstAdt, AstAdtKind, AstBlock, AstExpr, AstExprKind, AstField, AstFuncDef, AstFuncParam,
-    AstMatchArm, AstMember, AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, MetaTypeKind,
-    Mutability, PunctSeq, kw, puncts, ty_bp,
+    AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstFuncDef, AstFuncParam, AstMatchArm,
+    AstMember, AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, MetaTypeKind, Mutability,
+    PunctSeq, kw, puncts, ty_bp,
 };
 
 type P<'a, 'g> = &'a mut TokenParser<'g>;
@@ -27,10 +28,10 @@ type C<'a, 'g> = &'a mut TokenCursor<'g>;
 pub fn parse_file(tokens: &TokenGroup) -> AstAdt {
     let mut p = TokenParser::new(tokens);
 
-    parse_adt_contents(&mut p, AstAdtKind::Mod(tokens.span.shrink_to_lo()))
+    parse_adt_contents(&mut p, AdtKind::Mod)
 }
 
-fn parse_adt_contents(p: P, kind: AstAdtKind) -> AstAdt {
+fn parse_adt_contents(p: P, kind: AdtKind) -> AstAdt {
     let mut fields = Vec::new();
     let mut members = Vec::new();
 
@@ -881,8 +882,13 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
         // Match let statements
         if let Some(let_kw) = match_kw(kw!("let")).expect(p) {
             let binding = parse_pat(p);
-            let ty = match_punct(punct!(':')).expect(p).map(|_| parse_ty(p));
-            let init = match_punct(punct!('=')).expect(p).map(|_| parse_expr(p));
+
+            if match_punct(punct!('=')).expect(p).is_none() {
+                // Recovery strategy: ignore
+                let _ = p.stuck_recover();
+            }
+
+            let init = parse_expr(p);
 
             if match_punct(punct!(';')).expect(p).is_none() {
                 // Recovery strategy: ignore
@@ -893,8 +899,7 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
                 span: let_kw.span.to(p.prev_span()),
                 kind: AstStmtKind::Let {
                     binding,
-                    ty,
-                    init: init.map(Box::new),
+                    init: Box::new(init),
                 },
             });
 
@@ -976,21 +981,21 @@ fn parse_pat_inner(p: P) -> AstPatKind {
 
 // === Parsing helpers === //
 
-fn parse_adt_kind(p: P) -> Option<AstAdtKind> {
-    if let Some(ident) = match_kw(kw!("mod")).expect(p) {
-        return Some(AstAdtKind::Mod(ident.span));
+fn parse_adt_kind(p: P) -> Option<AdtKind> {
+    if match_kw(kw!("mod")).expect(p).is_some() {
+        return Some(AdtKind::Mod);
     }
 
-    if let Some(ident) = match_kw(kw!("struct")).expect(p) {
-        return Some(AstAdtKind::Struct(ident.span));
+    if match_kw(kw!("struct")).expect(p).is_some() {
+        return Some(AdtKind::Struct);
     }
 
-    if let Some(ident) = match_kw(kw!("enum")).expect(p) {
-        return Some(AstAdtKind::Enum(ident.span));
+    if match_kw(kw!("enum")).expect(p).is_some() {
+        return Some(AdtKind::Enum);
     }
 
-    if let Some(ident) = match_kw(kw!("union")).expect(p) {
-        return Some(AstAdtKind::Union(ident.span));
+    if match_kw(kw!("union")).expect(p).is_some() {
+        return Some(AdtKind::Union);
     }
 
     None

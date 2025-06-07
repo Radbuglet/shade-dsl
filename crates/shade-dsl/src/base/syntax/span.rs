@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    num::NonZeroU32,
+    num::{NonZero, NonZeroU32},
     ops::{self, Add, AddAssign, Sub, SubAssign},
     path::PathBuf,
     sync::{Arc, RwLock},
@@ -30,6 +30,8 @@ impl fmt::Display for FilePos {
 }
 
 impl FilePos {
+    pub const DUMMY: Self = Self(NonZero::new(u32::MAX).unwrap());
+
     pub const fn new(v: usize) -> Self {
         assert!(v < u32::MAX as usize); // (exclusive upper bound intentional)
 
@@ -188,6 +190,11 @@ impl fmt::Display for Span {
 }
 
 impl Span {
+    pub const DUMMY: Self = Self {
+        lo: FilePos::DUMMY,
+        hi: FilePos::DUMMY,
+    };
+
     pub fn new(a: FilePos, b: FilePos) -> Self {
         let mut locs = [a, b];
         locs.sort();
