@@ -1,6 +1,6 @@
 use crate::{
     base::syntax::{Span, Symbol},
-    component,
+    component, symbol,
 };
 
 use super::FullInstance;
@@ -61,6 +61,15 @@ pub enum AdtKind {
 impl AdtKind {
     pub fn can_have_fields(self) -> bool {
         !matches!(self, AdtKind::Mod)
+    }
+
+    pub fn what(self) -> Symbol {
+        match self {
+            AdtKind::Mod => symbol!("module"),
+            AdtKind::Struct => symbol!("structure"),
+            AdtKind::Union => symbol!("union"),
+            AdtKind::Enum => symbol!("enum"),
+        }
     }
 }
 

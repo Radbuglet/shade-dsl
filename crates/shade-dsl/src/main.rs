@@ -2,14 +2,15 @@ use std::{fs, path::Path, sync::Arc};
 
 use shade_dsl::{
     base::{
-        Session,
+        Session, World,
         syntax::{NaiveSegmenter, SourceFileOrigin, SourceMap},
     },
-    parse::{ast::parse_file, token::tokenize},
+    parse::{ast::parse_file, lower::lower_file, token::tokenize},
 };
 
 fn main() {
     let session = Session::new();
+    let mut world = World::new();
     let _guard = session.bind();
 
     let path = Path::new("samples/app.sdl");
@@ -23,5 +24,5 @@ fn main() {
     let tokens = tokenize(span);
     let ast = parse_file(&tokens);
 
-    dbg!(&ast);
+    dbg!(lower_file(&ast, &mut world));
 }

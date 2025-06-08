@@ -8,15 +8,31 @@ use crate::{
         mem::{Component, Handle},
         syntax::{Span, Symbol},
     },
+    symbol,
     typeck::syntax::{
-        AnyName, Block, ConstDef, Expr, ExprKind, Func, LocalDef, ObjBlock, ObjExpr, ObjFunc,
-        ObjGenericDef, ObjLocalDef, ObjPat, OwnGenericIdx, Pat, PatKind,
+        AdtKind, AnyName, Block, ConstDef, Expr, ExprAdt, ExprAdtMember, ExprKind, Func, LocalDef,
+        ObjBlock, ObjExpr, ObjExprAdt, ObjFunc, ObjPat, OwnGenericIdx, Pat, PatKind,
     },
 };
 
-use super::ast::{AstBlock, AstExpr, AstExprKind, AstPat, AstPatKind, AstStmtKind};
+use super::ast::{AstAdt, AstBlock, AstExpr, AstExprKind, AstPat, AstPatKind, AstStmtKind};
 
 pub type Resolver = NameResolver<AnyName>;
+
+pub fn lower_file(adt: &AstAdt, w: W) -> ObjExprAdt {
+    assert_eq!(adt.kind, AdtKind::Mod);
+    assert!(adt.fields.is_empty());
+
+    let mut resolver = NameResolver::default();
+
+    lower_adt(
+        /* owner */ None,
+        /* adt_ast */ adt,
+        /* adt_name */ symbol!("file"), // TODO
+        &mut resolver,
+        w,
+    )
+}
 
 // TODO: Stash this.
 fn placeholder_expr(w: W) -> ObjExpr {
@@ -27,46 +43,7 @@ fn placeholder_expr(w: W) -> ObjExpr {
     .spawn(w)
 }
 
-struct LowerFuncGeneric<'a> {
-    parent: Option<ObjFunc>,
-    span: Span,
-    name: Symbol,
-    generics: IndexVec<OwnGenericIdx, ObjGenericDef>,
-    arguments: Vec<ObjLocalDef>,
-    root_expr: &'a AstExpr,
-}
-
-fn lower_func_generic(
-    LowerFuncGeneric {
-        parent,
-        span,
-        name,
-        generics,
-        arguments,
-        root_expr,
-    }: LowerFuncGeneric<'_>,
-    resolver: &mut Resolver,
-    w: W,
-) -> ObjFunc {
-    let func = Func {
-        parent,
-        span,
-        name,
-        generics,
-        consts: IndexVec::new(),
-        arguments,
-        return_type: None,
-        expr: placeholder_expr(w),
-    }
-    .spawn(w);
-
-    let expr = lower_expr(func, root_expr, resolver, w);
-    func.m(w).expr = expr;
-
-    func
-}
-
-fn lower_expr(func: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> ObjExpr {
+fn lower_expr(owner: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> ObjExpr {
     let kind = match &expr.kind {
         AstExprKind::Name(ident) => 'make_name: {
             let Some(&name) = resolver.lookup(ident.text) else {
@@ -76,12 +53,12 @@ fn lower_expr(func: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> O
             };
 
             match name {
-                AnyName::Const(_) | AnyName::Generic(_) => {
+                AnyName::FuncLit(_) | AnyName::Const(_) | AnyName::Generic(_) => {
                     // (these can always be referred to)
                 }
                 AnyName::Local(def) => {
                     // These can only be referred to if they're within the same function.
-                    if def.r(w).owner != func {
+                    if def.r(w).owner != owner {
                         break 'make_name ExprKind::Error(
                             Diag::span_err(
                                 ident.span,
@@ -101,7 +78,7 @@ fn lower_expr(func: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> O
         AstExprKind::CharLit(token_char_lit) => todo!(),
         AstExprKind::NumLit(token_num_lit) => todo!(),
         AstExprKind::Paren(ast_expr) => todo!(),
-        AstExprKind::Block(block) => ExprKind::Block(lower_block(func, block, resolver, w)),
+        AstExprKind::Block(block) => ExprKind::Block(lower_block(owner, block, resolver, w)),
         AstExprKind::AdtDef(ast_adt) => todo!(),
         AstExprKind::TypeExpr(ast_expr) => todo!(),
         AstExprKind::Tuple(vec) => todo!(),
@@ -147,7 +124,7 @@ fn lower_expr(func: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> O
     .spawn(w)
 }
 
-fn lower_block(func: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) -> ObjBlock {
+fn lower_block(owner: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) -> ObjBlock {
     resolver.push_rib();
 
     let mut stmts = Vec::new();
@@ -182,8 +159,8 @@ fn lower_block(func: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) -
         }
 
         let new_def = ConstDef {
-            idx: func.r(w).consts.last_idx() + const_defs.len(),
-            owner: func,
+            idx: owner.r(w).consts.last_idx() + const_defs.len(),
+            owner,
             span: name.span,
             name: name.text,
             expr: placeholder_expr(w),
@@ -200,11 +177,11 @@ fn lower_block(func: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) -
     for stmt in &block.stmts {
         match &stmt.kind {
             AstStmtKind::Expr(expr) => {
-                stmts.push(lower_expr(func, expr, resolver, w));
+                stmts.push(lower_expr(owner, expr, resolver, w));
             }
             AstStmtKind::Let { binding, init } => {
-                let init = lower_expr(func, init, resolver, w);
-                let pat = lower_pat_defining_locals(func, binding, &const_names, resolver, w);
+                let init = lower_expr(owner, init, resolver, w);
+                let pat = lower_pat_defining_locals(owner, binding, &const_names, resolver, w);
 
                 stmts.push(
                     Expr {
@@ -215,7 +192,7 @@ fn lower_block(func: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) -
                 );
             }
             AstStmtKind::Const { init, name: _ } => {
-                const_defs.next().unwrap().m(w).expr = lower_expr(func, init, resolver, w);
+                const_defs.next().unwrap().m(w).expr = lower_expr(owner, init, resolver, w);
             }
         }
     }
@@ -231,7 +208,7 @@ fn lower_block(func: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) -
 }
 
 fn lower_pat_defining_locals(
-    func: ObjFunc,
+    owner: ObjFunc,
     pat: &AstPat,
     block_const_names: &FxHashMap<Symbol, Span>,
     resolver: &mut Resolver,
@@ -251,7 +228,7 @@ fn lower_pat_defining_locals(
                 )
             } else {
                 let def = LocalDef {
-                    owner: func,
+                    owner,
                     span: ident.span,
                     name: ident.text,
                     muta: *muta,
@@ -266,11 +243,11 @@ fn lower_pat_defining_locals(
         AstPatKind::Tuple(elems) => PatKind::Tuple(
             elems
                 .iter()
-                .map(|pat| lower_pat_defining_locals(func, pat, block_const_names, resolver, w))
+                .map(|pat| lower_pat_defining_locals(owner, pat, block_const_names, resolver, w))
                 .collect(),
         ),
         AstPatKind::Paren(pat) => {
-            return lower_pat_defining_locals(func, pat, block_const_names, resolver, w);
+            return lower_pat_defining_locals(owner, pat, block_const_names, resolver, w);
         }
         AstPatKind::Error(err) => PatKind::Error(*err),
     };
@@ -280,4 +257,86 @@ fn lower_pat_defining_locals(
         kind,
     }
     .spawn(w)
+}
+
+fn lower_adt(
+    owner: Option<ObjFunc>,
+    adt_ast: &AstAdt,
+    adt_name: Symbol,
+    resolver: &mut Resolver,
+    w: W,
+) -> ObjExprAdt {
+    resolver.push_rib();
+
+    let adt = ExprAdt {
+        name: adt_name,
+        kind: adt_ast.kind,
+        fields: Vec::new(),
+        members: Vec::new(),
+    }
+    .spawn(w);
+
+    // Define all hoisted names
+    let mut member_names = FxHashMap::default();
+    let mut member_defs = Vec::new();
+
+    for member in &adt_ast.members {
+        // Only allow a given const identifier to be used once.
+        match member_names.entry(member.name.text) {
+            hash_map::Entry::Occupied(entry) => {
+                Diag::span_err(
+                    member.name.span,
+                    format!(
+                        "more than one member in this {} has the name `{}`",
+                        adt_ast.kind.what(),
+                        member.name.text,
+                    ),
+                )
+                .primary(*entry.get(), "name first used here")
+                .secondary(
+                    adt_ast.span.shrink_to_lo(),
+                    format!("{} starts here", adt_ast.kind.what()),
+                )
+                .emit();
+            }
+            hash_map::Entry::Vacant(entry) => {
+                entry.insert(member.name.span);
+            }
+        }
+
+        let member_func = Func {
+            parent: owner,
+            span: member.init.span,
+            name: member.name.text,
+            generics: IndexVec::new(),
+            consts: IndexVec::new(),
+            arguments: Vec::new(),
+            return_type: None,
+            body: placeholder_expr(w),
+        }
+        .spawn(w);
+
+        resolver.define(member.name.text, AnyName::FuncLit(member_func));
+        member_defs.push(member_func);
+
+        adt.m(w).members.push(ExprAdtMember {
+            span: member.name.span,
+            name: member.name.text,
+            init: member_func,
+        });
+    }
+
+    // Lower all constant initializers
+    for (member, member_func) in adt_ast.members.iter().zip(member_defs) {
+        member_func.m(w).body = lower_expr(member_func, &member.init, resolver, w);
+    }
+
+    // Lower all field types
+    for field in &adt_ast.fields {
+        // TODO
+    }
+
+    resolver.pop_rib();
+
+    adt
 }

@@ -9,6 +9,8 @@ use crate::{
     parse::ast::Mutability,
 };
 
+use super::AdtKind;
+
 // === Func === //
 
 index_vec::define_index_type! {
@@ -61,19 +63,38 @@ pub struct Func {
     ///
     /// These expressions are free to reference generics defined by this function as well as other
     /// constant expressions. It is up to the interpreter to detect reference cycles.
+    ///
+    /// Constants are all evaluated before the main `body` of the function can be evaluated.
+    /// Additionally, some of the constants referenced in parent functions may also be evaluated.
+    /// Constants are are not, however, all evaluated before constructing a child function's
+    /// `FullInstance` since we may depend on a nested function to compute the result of one of our
+    /// constants.
     pub consts: IndexVec<OwnConstIdx, ObjConstDef>,
 
+    /// The locals to which each argument is bound.
     pub arguments: Vec<ObjLocalDef>,
 
+    /// The return type of the function. This is `None` if the type-checker is expected to infer it,
+    /// which is the case when constructing `Func`s for ADT member initializers.
     pub return_type: Option<ObjConstDef>,
 
-    pub expr: ObjExpr,
+    /// The main body of the function. See documentation in the `consts` field for information about
+    /// the evaluation order.
+    pub body: ObjExpr,
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AnyName {
+    /// A non-generic function defined in the current function or any of its ancestors.
+    FuncLit(ObjFunc),
+
+    /// A constant defined in the current function or any of its ancestors.
     Const(ObjConstDef),
+
+    /// A generic defined in the current function or any of its ancestors.
     Generic(ObjGenericDef),
+
+    /// A local defined in the current function.
     Local(ObjLocalDef),
 }
 
@@ -113,17 +134,18 @@ pub struct Expr {
     pub kind: ExprKind,
 }
 
-component!(Expr);
-
 #[derive(Debug)]
 pub enum ExprKind {
     Name(AnyName),
     Block(ObjBlock),
     Destructure(ObjPat, ObjExpr),
     Match(Box<ExprMatch>),
+    Adt(ObjExprAdt),
     Error(ErrorGuaranteed),
     Placeholder,
 }
+
+component!(Expr);
 
 #[derive(Debug)]
 pub struct Block {
@@ -139,6 +161,32 @@ pub struct ExprMatch {
     pub scrutinee: ObjExpr,
     pub arms: Vec<(ObjPat, ObjExpr)>,
 }
+
+#[derive(Debug)]
+pub struct ExprAdt {
+    pub name: Symbol,
+    pub kind: AdtKind,
+    pub fields: Vec<ExprAdtField>,
+    pub members: Vec<ExprAdtMember>,
+}
+
+component!(ExprAdt);
+
+#[derive(Debug)]
+pub struct ExprAdtField {
+    pub span: Span,
+    pub name: Symbol,
+    pub ty: ObjExpr,
+}
+
+#[derive(Debug)]
+pub struct ExprAdtMember {
+    pub span: Span,
+    pub name: Symbol,
+    pub init: ObjFunc,
+}
+
+// === Pat === //
 
 #[derive(Debug)]
 pub struct Pat {

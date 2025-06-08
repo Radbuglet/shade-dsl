@@ -11,7 +11,7 @@ use super::{ObjAdtSignature, ObjFunc, ObjTy, OwnConstIdx, OwnGenericIdx};
 #[derive(Debug)]
 pub enum Value {
     MetaType(ObjTy),
-    MetaFunc(FullInstance),
+    MetaFunc(PartialInstance),
     Func(FullInstance),
     Scalar(ValueScalar),
     Tuple(Vec<ObjValue>),
