@@ -39,7 +39,25 @@ fn placeholder_expr(w: W) -> ObjExpr {
     .spawn(w)
 }
 
-fn lower_expr(owner: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> ObjExpr {
+#[derive(Debug, Copy, Clone)]
+enum ExprConstness {
+    Runtime,
+    Const,
+}
+
+impl ExprConstness {
+    pub fn is_const(self) -> bool {
+        matches!(self, ExprConstness::Const)
+    }
+}
+
+fn lower_expr(
+    owner: ObjFunc,
+    expr: &AstExpr,
+    constness: ExprConstness,
+    resolver: &mut Resolver,
+    w: W,
+) -> ObjExpr {
     let kind = match &expr.kind {
         AstExprKind::Name(ident) => 'make_name: {
             let Some(&name) = resolver.lookup(ident.text) else {
@@ -64,6 +82,14 @@ fn lower_expr(owner: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> 
                             .emit(),
                         );
                     }
+
+                    if constness.is_const() {
+                        break 'make_name ExprKind::Error(
+                            Diag::span_err(ident.span, "constants cannot refer to locals")
+                                .primary(def.r(w).span, "target local defined here")
+                                .emit(),
+                        );
+                    }
                 }
             }
 
@@ -74,7 +100,9 @@ fn lower_expr(owner: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> 
         AstExprKind::CharLit(token_char_lit) => todo!(),
         AstExprKind::NumLit(token_num_lit) => todo!(),
         AstExprKind::Paren(ast_expr) => todo!(),
-        AstExprKind::Block(block) => ExprKind::Block(lower_block(owner, block, resolver, w)),
+        AstExprKind::Block(block) => {
+            ExprKind::Block(lower_block(owner, block, constness, resolver, w))
+        }
         AstExprKind::AdtDef(adt_ast) => ExprKind::Adt(lower_adt(Some(owner), adt_ast, resolver, w)),
         AstExprKind::TypeExpr(ast_expr) => todo!(),
         AstExprKind::Tuple(vec) => todo!(),
@@ -198,21 +226,23 @@ fn lower_func(owner: Option<ObjFunc>, ast: &AstFuncDef, resolver: &mut Resolver,
     for (idx, ast) in ast.generics.iter().enumerate() {
         let idx = OwnGenericIdx::from_usize(idx);
 
-        func.r(w).generics[idx].m(w).ty = lower_expr(func, &ast.ty, resolver, w);
+        func.r(w).generics[idx].m(w).ty =
+            lower_expr(func, &ast.ty, ExprConstness::Const, resolver, w);
     }
 
     if let Some(params) = &ast.params {
         for (idx, ast) in params.iter().enumerate() {
-            func.m(w).params.as_mut().unwrap()[idx].ty = lower_expr(func, &ast.ty, resolver, w);
+            func.m(w).params.as_mut().unwrap()[idx].ty =
+                lower_expr(func, &ast.ty, ExprConstness::Const, resolver, w);
         }
     }
 
     if let Some(ret_ty) = &ast.ret_ty {
-        func.m(w).return_type = Some(lower_expr(func, ret_ty, resolver, w));
+        func.m(w).return_type = Some(lower_expr(func, ret_ty, ExprConstness::Const, resolver, w));
     }
 
     // Resolve the body
-    let body = lower_block(func, &ast.body, resolver, w);
+    let body = lower_block(func, &ast.body, ExprConstness::Runtime, resolver, w);
 
     func.m(w).body = Expr {
         span: body.r(w).span,
@@ -225,7 +255,13 @@ fn lower_func(owner: Option<ObjFunc>, ast: &AstFuncDef, resolver: &mut Resolver,
     func
 }
 
-fn lower_block(owner: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) -> ObjBlock {
+fn lower_block(
+    owner: ObjFunc,
+    block: &AstBlock,
+    constness: ExprConstness,
+    resolver: &mut Resolver,
+    w: W,
+) -> ObjBlock {
     resolver.push_rib();
 
     let mut stmts = Vec::new();
@@ -278,10 +314,10 @@ fn lower_block(owner: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) 
     for stmt in &block.stmts {
         match &stmt.kind {
             AstStmtKind::Expr(expr) => {
-                stmts.push(lower_expr(owner, expr, resolver, w));
+                stmts.push(lower_expr(owner, expr, constness, resolver, w));
             }
             AstStmtKind::Let { binding, init } => {
-                let init = lower_expr(owner, init, resolver, w);
+                let init = lower_expr(owner, init, constness, resolver, w);
                 let pat = lower_pat_defining_locals(
                     owner,
                     binding,
@@ -299,7 +335,8 @@ fn lower_block(owner: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) 
                 );
             }
             AstStmtKind::Const { init, name: _ } => {
-                const_defs.next().unwrap().m(w).expr = lower_expr(owner, init, resolver, w);
+                const_defs.next().unwrap().m(w).expr =
+                    lower_expr(owner, init, ExprConstness::Const, resolver, w);
             }
         }
     }
@@ -307,7 +344,7 @@ fn lower_block(owner: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) 
     let last_expr = block
         .last_expr
         .as_ref()
-        .map(|expr| lower_expr(owner, expr, resolver, w));
+        .map(|expr| lower_expr(owner, expr, constness, resolver, w));
 
     resolver.pop_rib();
 
@@ -461,7 +498,13 @@ fn lower_adt(
 
     // Lower all constant initializers
     for (member, member_func) in adt_ast.members.iter().zip(member_defs) {
-        member_func.m(w).body = lower_expr(member_func, &member.init, resolver, w);
+        member_func.m(w).body = lower_expr(
+            member_func,
+            &member.init,
+            ExprConstness::Runtime,
+            resolver,
+            w,
+        );
     }
 
     // Lower all field types
