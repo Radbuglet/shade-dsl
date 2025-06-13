@@ -4,7 +4,7 @@ members = ["crates/ctx2d", "crates/ctx2d-utils", "crates/shade-dsl"]
 
 [workspace.dependencies.late-struct]
 git = "https://github.com/Radbuglet/arid.git"
-rev = "4639d022f47a93c80de544809a910fab5afde245"
+rev = "ade49f8756ac02148676c794752294a17d36cd59"
 
 # [workspace.dependencies.late-struct]
 # path = "../arid/crates/late-struct"

@@ -45,42 +45,31 @@ pub struct Func {
     /// ```
     pub span: Span,
 
-    /// A debug-friendly prefix for this function. This name is extended with information about the
-    /// generics used to instantiate the function when determining the debug name for a function
-    /// value.
-    pub name: Symbol,
-
     /// The generic parameters the function takes in.
     pub generics: IndexVec<OwnGenericIdx, ObjGenericDef>,
 
-    /// The constant expressions defined by this function.
-    ///
-    /// There are three main ways a constant is introduced into a function:
-    ///
-    /// - Explicitly through a `const FOO = <here>;` statement.
-    /// - Implicitly through a `const { <here> }` block.
-    /// - Very implicitly through a type expression (e.g. `let foo: <here>;`).
-    ///
-    /// These expressions are free to reference generics defined by this function as well as other
+    /// Named constants defined by the function through `const FOO = <here>;` statements. These
+    /// expressions are free to reference generics defined by this function as well as other
     /// constant expressions. It is up to the interpreter to detect reference cycles.
-    ///
-    /// Constants are all evaluated before the main `body` of the function can be evaluated.
-    /// Additionally, some of the constants referenced in parent functions may also be evaluated.
-    /// Constants are are not, however, all evaluated before constructing a child function's
-    /// `FullInstance` since we may depend on a nested function to compute the result of one of our
-    /// constants.
     pub consts: IndexVec<OwnConstIdx, ObjConstDef>,
 
-    /// The locals to which each argument is bound.
-    pub arguments: Vec<ObjLocalDef>,
+    /// The locals to which each argument is bound. This is `None` if the function should be
+    /// evaluated as soon as all its generic are specified.
+    pub params: Option<Vec<FuncParamDef>>,
 
     /// The return type of the function. This is `None` if the type-checker is expected to infer it,
     /// which is the case when constructing `Func`s for ADT member initializers.
-    pub return_type: Option<ObjConstDef>,
+    pub return_type: Option<ObjExpr>,
 
-    /// The main body of the function. See documentation in the `consts` field for information about
-    /// the evaluation order.
+    /// The main body of the function.
     pub body: ObjExpr,
+}
+
+#[derive(Debug, Clone)]
+pub struct FuncParamDef {
+    pub span: Span,
+    pub binding: ObjPat,
+    pub ty: ObjExpr,
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -88,7 +77,7 @@ pub enum AnyName {
     /// A non-generic function defined in the current function or any of its ancestors.
     FuncLit(ObjFunc),
 
-    /// A constant defined in the current function or any of its ancestors.
+    /// A named constant defined in the current function or any of its ancestors.
     Const(ObjConstDef),
 
     /// A generic defined in the current function or any of its ancestors.
@@ -100,20 +89,38 @@ pub enum AnyName {
 
 #[derive(Debug)]
 pub struct ConstDef {
+    /// The index of the value in the evaluated constants array.
     pub idx: OwnConstIdx,
+
+    /// The function owning the constant.
     pub owner: ObjFunc,
+
+    /// The span of the entire constant binding statement.
     pub span: Span,
+
+    /// The name of the constant.
     pub name: Symbol,
+
+    /// The expression to evaluate to get the constant's value.
     pub expr: ObjExpr,
 }
 
 #[derive(Debug)]
 pub struct GenericDef {
+    /// The index of the generic parameter in the arguments list.
     pub idx: OwnGenericIdx,
+
+    /// The function owning the generic parameter.
     pub owner: ObjFunc,
+
+    /// The span of the name binding the generic.
     pub span: Span,
+
+    /// The name of the generic.
     pub name: Symbol,
-    pub ty: ObjConstDef,
+
+    /// The expected type of the generic value being provided.
+    pub ty: ObjExpr,
 }
 
 #[derive(Debug)]
@@ -141,6 +148,7 @@ pub enum ExprKind {
     Destructure(ObjPat, ObjExpr),
     Match(Box<ExprMatch>),
     Adt(ObjExprAdt),
+    Func(ObjFunc),
     Error(ErrorGuaranteed),
     Placeholder,
 }
@@ -164,7 +172,6 @@ pub struct ExprMatch {
 
 #[derive(Debug)]
 pub struct ExprAdt {
-    pub name: Symbol,
     pub kind: AdtKind,
     pub fields: Vec<ExprAdtField>,
     pub members: Vec<ExprAdtMember>,

@@ -3,6 +3,7 @@ use std::{fs, path::Path, sync::Arc};
 use shade_dsl::{
     base::{
         Session, World,
+        mem::Handle,
         syntax::{NaiveSegmenter, SourceFileOrigin, SourceMap},
     },
     parse::{ast::parse_file, lower::lower_file, token::tokenize},
@@ -24,5 +25,5 @@ fn main() {
     let tokens = tokenize(span);
     let ast = parse_file(&tokens);
 
-    dbg!(lower_file(&ast, &mut world));
+    dbg!(lower_file(&ast, &mut world).debug(&world));
 }

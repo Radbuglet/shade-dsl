@@ -15,9 +15,9 @@ use crate::{
 };
 
 use super::{
-    AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstFuncDef, AstFuncParam, AstMatchArm,
-    AstMember, AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, MetaTypeKind, Mutability,
-    PunctSeq, kw, puncts, ty_bp,
+    AstAdt, AstBlock, AstExpr, AstExprKind, AstField, AstFuncDef, AstFuncGeneric, AstFuncParam,
+    AstMatchArm, AstMember, AstPat, AstPatKind, AstStmt, AstStmtKind, Keyword, MetaTypeKind,
+    Mutability, PunctSeq, kw, puncts, ty_bp,
 };
 
 type P<'a, 'g> = &'a mut TokenParser<'g>;
@@ -240,7 +240,7 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
                 parse_delimited(
                     p,
                     &mut (),
-                    |p, _| parse_func_param(p),
+                    |p, _| parse_func_generic(p),
                     |p, _| match_punct(punct!(',')).expect(p).is_some(),
                     |p, _| match_punct(punct!('>')).expect(p).is_some(),
                 )
@@ -851,6 +851,28 @@ fn parse_func_param(p: P) -> AstFuncParam {
     AstFuncParam {
         span: start.to(p.prev_span()),
         binding,
+        ty,
+    }
+}
+
+fn parse_func_generic(p: P) -> AstFuncGeneric {
+    let start = p.next_span();
+
+    let name = match_ident().expect(p).ok_or_else(|| {
+        // Recovery strategy: ignore
+        p.stuck().0
+    });
+
+    if match_punct(punct!(':')).expect(p).is_none() {
+        // Recovery strategy: ignore
+        p.stuck_recover_with(|_| {});
+    }
+
+    let ty = parse_ty(p);
+
+    AstFuncGeneric {
+        span: start.to(p.prev_span()),
+        name,
         ty,
     }
 }

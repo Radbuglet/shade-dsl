@@ -355,10 +355,17 @@ pub enum AstPatKind {
 #[derive(Debug, Clone)]
 pub struct AstFuncDef {
     pub sig_span: Span,
-    pub generics: Vec<AstFuncParam>,
+    pub generics: Vec<AstFuncGeneric>,
     pub params: Option<Vec<AstFuncParam>>,
     pub ret_ty: Option<Box<AstExpr>>,
     pub body: Box<AstBlock>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AstFuncGeneric {
+    pub span: Span,
+    pub name: Result<Ident, ErrorGuaranteed>,
+    pub ty: AstExpr,
 }
 
 #[derive(Debug, Clone)]
