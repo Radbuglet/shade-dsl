@@ -21,6 +21,19 @@ index_vec::define_index_type! {
     pub struct OwnGenericIdx = u32;
 }
 
+/// A function is a "parameterizable unit of invocation"—that is, it is the smallest element the
+/// interpreter can invoke individually while passing values to it.
+///
+/// To show this design goal in action...
+///
+/// - Members of ADT definitions are modeled as functions because evaluating an ADT member may
+///   require evaluating values from other ADTs and so members should be evaluated late.
+/// - Function literals are modeled as functions because they may require arguments from their
+///   caller.
+/// - Meanwhile, constants inside a function are expressions, not functions, because they're a)
+///   always evaluated before a function's actual body can be resolved and thus not individually
+///   invocable and b) parameterized exclusively by their parent function.
+///
 #[derive(Debug)]
 pub struct Func {
     /// The function which is the lexical parent to this function.

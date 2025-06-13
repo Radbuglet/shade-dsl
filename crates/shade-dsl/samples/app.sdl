@@ -1,7 +1,13 @@
-const identity = fn<T: type>(v: T) -> T {
+const u32 = mod {};
+
+const identity = fn<T: u32>(v: T) -> T {
     v
 };
 
 const add = fn(lhs: u32, rhs: u32) -> u32 {
     identity(lhs) + identity(rhs)
+};
+
+const should_reject = fn(a: u32, b: a) -> a {
+    b
 };

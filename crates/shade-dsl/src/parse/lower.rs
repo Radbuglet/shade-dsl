@@ -110,7 +110,7 @@ fn lower_expr(owner: ObjFunc, expr: &AstExpr, resolver: &mut Resolver, w: W) -> 
         AstExprKind::TypeFn(vec, ast_expr) => todo!(),
         AstExprKind::TypeMeta(meta_type_kind) => todo!(),
         AstExprKind::TypeSelf => todo!(),
-        AstExprKind::Error(error_guaranteed) => todo!(),
+        AstExprKind::Error(err) => ExprKind::Error(*err),
     };
 
     Expr {
@@ -165,6 +165,8 @@ fn lower_func(owner: Option<ObjFunc>, ast: &AstFuncDef, resolver: &mut Resolver,
         }
         .spawn(w);
 
+        resolver.define(name.text, AnyName::Generic(def));
+
         func.m(w).generics.push(def);
     }
 
@@ -203,6 +205,10 @@ fn lower_func(owner: Option<ObjFunc>, ast: &AstFuncDef, resolver: &mut Resolver,
         for (idx, ast) in params.iter().enumerate() {
             func.m(w).params.as_mut().unwrap()[idx].ty = lower_expr(func, &ast.ty, resolver, w);
         }
+    }
+
+    if let Some(ret_ty) = &ast.ret_ty {
+        func.m(w).return_type = Some(lower_expr(func, ret_ty, resolver, w));
     }
 
     // Resolve the body
@@ -298,12 +304,17 @@ fn lower_block(owner: ObjFunc, block: &AstBlock, resolver: &mut Resolver, w: W) 
         }
     }
 
+    let last_expr = block
+        .last_expr
+        .as_ref()
+        .map(|expr| lower_expr(owner, expr, resolver, w));
+
     resolver.pop_rib();
 
     Block {
         span: block.span,
         stmts,
-        last_expr: None,
+        last_expr,
     }
     .spawn(w)
 }
@@ -336,18 +347,21 @@ fn lower_pat_defining_locals(
                         );
                     }
                 }
-                PatLowerMode::InDefinition(block_names) => {
-                    if let Some(&other) = block_names.get(&ident.text) {
+                PatLowerMode::InDefinition(block_names) => match block_names.entry(ident.text) {
+                    hash_map::Entry::Occupied(entry) => {
                         break 'resolve_name PatKind::Error(
                             Diag::span_err(
                                 ident.span,
                                 "parameter names cannot shadow other names in the function definition",
                             )
-                            .primary(other, "previous name defined here")
+                            .primary(*entry.get(), "previous name defined here")
                             .emit(),
                         );
                     }
-                }
+                    hash_map::Entry::Vacant(entry) => {
+                        entry.insert(ident.span);
+                    }
+                },
             }
 
             let def = LocalDef {
