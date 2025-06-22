@@ -431,7 +431,8 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "late-struct"
 version = "0.1.0"
-source = "git+https://github.com/Radbuglet/arid.git?rev=ade49f8756ac02148676c794752294a17d36cd59#ade49f8756ac02148676c794752294a17d36cd59"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "894e46f4ae22fe842d9c56e0ab119f0719721a98ccbb41d8faa38350778a4202"
 dependencies = [
  "cfg-if",
  "inventory",
