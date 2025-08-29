@@ -46,25 +46,10 @@ pub enum AstExprKind {
     /// Can be parsed in both type and expression parsing contexts.
     Name(Ident),
 
-    /// A boolean literal (e.g. `true` or `false`).
-    ///
-    /// Can be parsed in both type and expression parsing contexts.
-    BoolLit(bool),
-
-    /// A string literal (e.g. `"whee"`).
-    ///
-    /// Can be parsed in both type and expression parsing contexts.
-    StrLit(TokenStrLit),
-
-    /// A character literal (e.g. `'a'`).
-    ///
-    /// Can be parsed in both type and expression parsing contexts.
-    CharLit(TokenCharLit),
-
-    /// A numeric literal (e.g. `123`, `0xBADF00D`, or `4.34E-4`).
-    ///
-    /// Can be parsed in both type and expression parsing contexts.
-    NumLit(TokenNumLit),
+    /// A literal expression.
+    /// 
+    /// 
+    Lit(LiteralKind),
 
     /// A parenthesized expression (e.g. `(foo)`).
     ///
@@ -93,6 +78,11 @@ pub enum AstExprKind {
     ///
     /// Can only be parsed in expression parsing contexts.
     Tuple(Vec<AstExpr>),
+
+    /// An array constructor (e.g. `[foo, bar]` or `[baz]`).
+    ///
+    /// Can only be parsed in expression parsing contexts.
+    Array(Vec<AstExpr>),
 
     /// An `if` expression (e.g. `if foo { bar }`, `if cond { abc } else { def }`, or
     /// `if cond { hi } else if cond { hello }`).
@@ -157,42 +147,17 @@ pub enum AstExprKind {
 
     // === Prefix === //
 
-    /// A unary negation operation (e.g. `-foo`).
+    /// A unary operation (e.g. `-foo`).
     ///
     /// Can only be parsed in expression parsing contexts.
-    UnaryNeg(Box<AstExpr>),
-
-    /// A unary not operation (e.g. `!foo`).
-    ///
-    /// Can only be parsed in expression parsing contexts.
-    UnaryNot(Box<AstExpr>),
+    Unary(UnaryOpKind, Box<AstExpr>),
 
     // === Infix === //
 
-    /// An addition expression (e.g. `foo + bar`).
+    /// A binary operator expression (e.g. `foo + bar`).
     ///
     /// Can only be parsed in expression parsing contexts.
-    Add(Box<AstExpr>, Box<AstExpr>),
-
-    /// A subtraction expression (e.g. `foo - bar`).
-    ///
-    /// Can only be parsed in expression parsing contexts.
-    Sub(Box<AstExpr>, Box<AstExpr>),
-
-    /// A multiplication expression (e.g. `foo * bar`).
-    ///
-    /// Can only be parsed in expression parsing contexts.
-    Mul(Box<AstExpr>, Box<AstExpr>),
-
-    /// A division expression (e.g. `foo / bar`).
-    ///
-    /// Can only be parsed in expression parsing contexts.
-    Div(Box<AstExpr>, Box<AstExpr>),
-
-    /// A modulo expression (e.g. `foo % bar`).
-    ///
-    /// Can only be parsed in expression parsing contexts.
-    Mod(Box<AstExpr>, Box<AstExpr>),
+    Bin(BinOpKind, Box<AstExpr>, Box<AstExpr>),
 
     /// An assignment expression (e.g. `foo = bar`).
     ///
@@ -273,27 +238,20 @@ impl AstExprKind {
             | AstExprKind::Loop(..)
             | AstExprKind::Match { .. } => false,
             AstExprKind::Name(..)
-            | AstExprKind::BoolLit(..)
-            | AstExprKind::StrLit(..)
-            | AstExprKind::CharLit(..)
-            | AstExprKind::NumLit(..)
+            | AstExprKind::Lit(..)
             | AstExprKind::Paren(..)
             | AstExprKind::AdtDef(..)
             | AstExprKind::TypeExpr(..)
             | AstExprKind::Tuple(..)
+            | AstExprKind::Array(..)
             | AstExprKind::Return(..)
             | AstExprKind::Continue
             | AstExprKind::Break(..)
             | AstExprKind::FuncDef(..)
             | AstExprKind::SymDef(..)
             | AstExprKind::Use(..)
-            | AstExprKind::UnaryNeg(..)
-            | AstExprKind::UnaryNot(..)
-            | AstExprKind::Add(..)
-            | AstExprKind::Sub(..)
-            | AstExprKind::Mul(..)
-            | AstExprKind::Div(..)
-            | AstExprKind::Mod(..)
+            | AstExprKind::Unary(..)
+            | AstExprKind::Bin(..)
             | AstExprKind::Assign(..)
             | AstExprKind::Index(..)
             | AstExprKind::Instantiate(..)
@@ -308,6 +266,47 @@ impl AstExprKind {
             | AstExprKind::Error(..) => true,
         }
     }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum BinOpKind {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LogicalAnd,
+    LogicalOr,
+    Eq,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum UnaryOpKind {
+    Neg,
+    Not,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum LiteralKind {
+    /// A boolean literal (e.g. `true` or `false`).
+    BoolLit(bool),
+
+    /// A string literal (e.g. `"whee"`).
+    StrLit(TokenStrLit),
+
+    /// A character literal (e.g. `'a'`).
+    ///
+    /// Can be parsed in both type and expression parsing contexts.
+    CharLit(TokenCharLit),
+
+    /// A numeric literal (e.g. `123`, `0xBADF00D`, or `4.34E-4`).
+    ///
+    /// Can be parsed in both type and expression parsing contexts.
+    NumLit(TokenNumLit),
 }
 
 #[derive(Debug, Clone)]
@@ -405,6 +404,13 @@ pub mod expr_bp {
     pub const INFIX_MUL: InfixBp = InfixBp::new_left(3);
     pub const INFIX_DIV: InfixBp = InfixBp::new_left(3);
     pub const INFIX_MOD: InfixBp = InfixBp::new_left(3);
+    pub const INFIX_POW: InfixBp = InfixBp::new_left(3);
+    pub const INFIX_EQ: InfixBp = InfixBp::new_left(3); // FIXME
+    pub const INFIX_BIT_AND: InfixBp = InfixBp::new_left(3); // FIXME
+    pub const INFIX_BIT_OR: InfixBp = InfixBp::new_left(3); // FIXME
+    pub const INFIX_BIT_XOR: InfixBp = InfixBp::new_left(3); // FIXME
+    pub const INFIX_LOGICAL_AND: InfixBp = InfixBp::new_left(3); // FIXME
+    pub const INFIX_LOGICAL_OR: InfixBp = InfixBp::new_left(3); // FIXME
     pub const INFIX_ASSIGN: InfixBp = InfixBp::new_right(1);
 
     pub const POST_BRACKET: PostfixBp = PostfixBp::new(11);

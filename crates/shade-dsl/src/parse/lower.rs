@@ -51,6 +51,19 @@ impl ExprConstness {
     }
 }
 
+fn lower_expr_vec(
+    owner: FuncHandle,
+    exprs: &[AstExpr],
+    constness: ExprConstness,
+    resolver: &mut Resolver,
+    w: W,
+) -> Vec<Strong<ExprHandle>> {
+    exprs
+        .iter()
+        .map(|expr| lower_expr(owner, expr, constness, resolver, w))
+        .collect()
+}
+
 fn lower_expr(
     owner: FuncHandle,
     expr: &AstExpr,
@@ -95,17 +108,15 @@ fn lower_expr(
 
             ExprKind::Name(name)
         }
-        AstExprKind::BoolLit(_) => todo!(),
-        AstExprKind::StrLit(token_str_lit) => todo!(),
-        AstExprKind::CharLit(token_char_lit) => todo!(),
-        AstExprKind::NumLit(token_num_lit) => todo!(),
-        AstExprKind::Paren(ast_expr) => todo!(),
+        AstExprKind::Lit(lit) => ExprKind::Lit(*lit),
+        AstExprKind::Paren(expr) => return lower_expr(owner, expr, constness, resolver, w),
         AstExprKind::Block(block) => {
             ExprKind::Block(lower_block(owner, block, constness, resolver, w))
         }
         AstExprKind::AdtDef(adt_ast) => ExprKind::Adt(lower_adt(Some(owner), adt_ast, resolver, w)),
         AstExprKind::TypeExpr(ast_expr) => todo!(),
         AstExprKind::Tuple(vec) => todo!(),
+        AstExprKind::Array(ast_exprs) => todo!(),
         AstExprKind::If {
             cond,
             truthy,
@@ -120,16 +131,18 @@ fn lower_expr(
         AstExprKind::FuncDef(def) => ExprKind::Func(lower_func(Some(owner), def, resolver, w)),
         AstExprKind::SymDef(ast_expr) => todo!(),
         AstExprKind::Use(token_str_lit) => todo!(),
-        AstExprKind::UnaryNeg(ast_expr) => todo!(),
-        AstExprKind::UnaryNot(ast_expr) => todo!(),
-        AstExprKind::Add(ast_expr, ast_expr1) => todo!(),
-        AstExprKind::Sub(ast_expr, ast_expr1) => todo!(),
-        AstExprKind::Mul(ast_expr, ast_expr1) => todo!(),
-        AstExprKind::Div(ast_expr, ast_expr1) => todo!(),
-        AstExprKind::Mod(ast_expr, ast_expr1) => todo!(),
+        AstExprKind::Unary(kind, ast_expr) => todo!(),
+        AstExprKind::Bin(kind, lhs, rhs) => ExprKind::BinOp(
+            *kind,
+            lower_expr(owner, lhs, constness, resolver, w),
+            lower_expr(owner, rhs, constness, resolver, w),
+        ),
         AstExprKind::Assign(ast_expr, ast_expr1) => todo!(),
         AstExprKind::Index(ast_expr, ast_expr1) => todo!(),
-        AstExprKind::Call(ast_expr, vec) => todo!(),
+        AstExprKind::Call(callee, args) => ExprKind::Call(
+            lower_expr(owner, callee, constness, resolver, w),
+            lower_expr_vec(owner, args, constness, resolver, w),
+        ),
         AstExprKind::Instantiate(ast_expr, vec) => todo!(),
         AstExprKind::NamedIndex(ast_expr, ident) => todo!(),
         AstExprKind::TypeTuple(vec) => todo!(),

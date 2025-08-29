@@ -6,7 +6,7 @@ use crate::{
         ErrorGuaranteed,
         syntax::{Span, Symbol},
     },
-    parse::ast::Mutability,
+    parse::ast::{BinOpKind, LiteralKind, Mutability},
 };
 
 use super::AdtKind;
@@ -158,6 +158,9 @@ pub struct Expr {
 pub enum ExprKind {
     Name(AnyName),
     Block(Strong<BlockHandle>),
+    Lit(LiteralKind),
+    BinOp(BinOpKind, Strong<ExprHandle>, Strong<ExprHandle>),
+    Call(Strong<ExprHandle>, Vec<Strong<ExprHandle>>),
     Destructure(Strong<PatHandle>, Strong<ExprHandle>),
     Match(Box<ExprMatch>),
     Adt(Strong<ExprAdtHandle>),

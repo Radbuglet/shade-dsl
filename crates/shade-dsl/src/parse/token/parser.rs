@@ -344,11 +344,9 @@ fn parse_string_lit(
         }
 
         // Match escape
-        if !is_raw {
-            if let Some(ch) = parse_char_escape(p) {
-                accum.push(ch);
-                continue;
-            }
+        if !is_raw && let Some(ch) = parse_char_escape(p) {
+            accum.push(ch);
+            continue;
         }
 
         // Match regular character

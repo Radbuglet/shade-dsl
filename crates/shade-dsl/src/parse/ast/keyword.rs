@@ -159,6 +159,9 @@ define_punct_seqs! {
     WideArrow = '=' '>',
     LogicalEq = '=' '=',
     TriDots = '.' '.' '.',
+    Pow = '^' '^',
+    LogicalAnd = '&' '&',
+    LogicalOr = '|' '|',
 }
 
 #[macro_export]

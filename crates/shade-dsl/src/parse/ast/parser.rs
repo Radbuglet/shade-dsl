@@ -4,7 +4,7 @@ use crate::{
         syntax::{Bp, InfixBp, Matcher, OptPResult, OptPResultExt, Span},
     },
     parse::{
-        ast::expr_bp,
+        ast::{BinOpKind, LiteralKind, UnaryOpKind, expr_bp},
         token::{
             GroupDelimiter, Ident, Punct, TokenCharLit, TokenCursor, TokenGroup, TokenMatcher,
             TokenNumLit, TokenParser, TokenPunct, TokenStrLit, token_matcher,
@@ -222,6 +222,14 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
                     Ok(expr) => AstExprKind::Paren(Box::new(expr)),
                     Err(exprs) => AstExprKind::Tuple(exprs),
                 },
+                p,
+            );
+        }
+
+        // Parse an array.
+        if let Some(array) = match_group(GroupDelimiter::Bracket).expect(p) {
+            break 'seed build_expr(
+                AstExprKind::Array(parse_comma_group(&mut p.enter(&array), parse_expr).elems),
                 p,
             );
         }
@@ -480,14 +488,14 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
         if match_punct(punct!('-')).expect(p).is_some() {
             let lhs = parse_expr_pratt(p, expr_bp::PRE_NEG.right);
 
-            break 'seed build_expr(AstExprKind::UnaryNeg(Box::new(lhs)), p);
+            break 'seed build_expr(AstExprKind::Unary(UnaryOpKind::Neg, Box::new(lhs)), p);
         }
 
         // Parse unary not.
         if match_punct(punct!('!')).expect(p).is_some() {
             let lhs = parse_expr_pratt(p, expr_bp::PRE_NOT.right);
 
-            break 'seed build_expr(AstExprKind::UnaryNot(Box::new(lhs)), p);
+            break 'seed build_expr(AstExprKind::Unary(UnaryOpKind::Not, Box::new(lhs)), p);
         }
 
         if is_optional {
@@ -529,25 +537,60 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
         }
 
         // Match punctuation-demarcated infix operations
-        type PunctInfixOp = (
-            Punct,
-            InfixBp,
-            fn(Box<AstExpr>, Box<AstExpr>) -> AstExprKind,
-        );
+        type PunctSeqInfixOp = (PunctSeq, InfixBp, BinOpKind);
 
-        const PUNCT_INFIX_OPS: [PunctInfixOp; 5] = [
-            (punct!('+'), expr_bp::INFIX_ADD, AstExprKind::Add),
-            (punct!('-'), expr_bp::INFIX_SUB, AstExprKind::Sub),
-            (punct!('*'), expr_bp::INFIX_MUL, AstExprKind::Mul),
-            (punct!('/'), expr_bp::INFIX_DIV, AstExprKind::Div),
-            (punct!('%'), expr_bp::INFIX_MOD, AstExprKind::Mod),
+        const PUNCT_SEQ_INFIX_OPS: [PunctSeqInfixOp; 4] = [
+            (puncts!("^^"), expr_bp::INFIX_POW, BinOpKind::Pow),
+            (
+                puncts!("&&"),
+                expr_bp::INFIX_LOGICAL_AND,
+                BinOpKind::LogicalAnd,
+            ),
+            (
+                puncts!("||"),
+                expr_bp::INFIX_LOGICAL_OR,
+                BinOpKind::LogicalOr,
+            ),
+            (puncts!("=="), expr_bp::INFIX_EQ, BinOpKind::Eq),
         ];
 
-        for (punct, op_bp, op_ctor) in PUNCT_INFIX_OPS {
+        for (punct_seq, op_bp, kind) in PUNCT_SEQ_INFIX_OPS {
+            if let Some(span) = match_punct_seq(punct_seq).maybe_expect(p, op_bp.left >= min_bp) {
+                lhs = AstExpr {
+                    span,
+                    kind: AstExprKind::Bin(
+                        kind,
+                        Box::new(lhs),
+                        Box::new(parse_expr_pratt(p, op_bp.right)),
+                    ),
+                };
+
+                continue 'chaining;
+            }
+        }
+
+        type PunctInfixOp = (Punct, InfixBp, BinOpKind);
+
+        const PUNCT_INFIX_OPS: [PunctInfixOp; 8] = [
+            (punct!('+'), expr_bp::INFIX_ADD, BinOpKind::Add),
+            (punct!('-'), expr_bp::INFIX_SUB, BinOpKind::Sub),
+            (punct!('*'), expr_bp::INFIX_MUL, BinOpKind::Mul),
+            (punct!('/'), expr_bp::INFIX_DIV, BinOpKind::Div),
+            (punct!('%'), expr_bp::INFIX_MOD, BinOpKind::Mod),
+            (punct!('&'), expr_bp::INFIX_BIT_AND, BinOpKind::BitAnd),
+            (punct!('|'), expr_bp::INFIX_BIT_OR, BinOpKind::BitOr),
+            (punct!('^'), expr_bp::INFIX_BIT_XOR, BinOpKind::BitXor),
+        ];
+
+        for (punct, op_bp, kind) in PUNCT_INFIX_OPS {
             if let Some(op_punct) = match_punct(punct).maybe_expect(p, op_bp.left >= min_bp) {
                 lhs = AstExpr {
                     span: op_punct.span,
-                    kind: op_ctor(Box::new(lhs), Box::new(parse_expr_pratt(p, op_bp.right))),
+                    kind: AstExprKind::Bin(
+                        kind,
+                        Box::new(lhs),
+                        Box::new(parse_expr_pratt(p, op_bp.right)),
+                    ),
                 };
 
                 continue 'chaining;
@@ -722,26 +765,26 @@ fn parse_common_expr_seeds(p: P) -> Option<AstExprKind> {
 
     // Parse a boolean literal.
     if match_kw(kw!("true")).expect(p).is_some() {
-        return Some(AstExprKind::BoolLit(true));
+        return Some(AstExprKind::Lit(LiteralKind::BoolLit(true)));
     }
 
     if match_kw(kw!("false")).expect(p).is_some() {
-        return Some(AstExprKind::BoolLit(false));
+        return Some(AstExprKind::Lit(LiteralKind::BoolLit(false)));
     }
 
     // Parse a string literal.
     if let Some(lit) = match_str_lit().expect(p) {
-        return Some(AstExprKind::StrLit(lit));
+        return Some(AstExprKind::Lit(LiteralKind::StrLit(lit)));
     }
 
     // Parse a character literal.
     if let Some(lit) = match_char_lit().expect(p) {
-        return Some(AstExprKind::CharLit(lit));
+        return Some(AstExprKind::Lit(LiteralKind::CharLit(lit)));
     }
 
     // Parse a numeric literal.
     if let Some(lit) = match_num_lit().expect(p) {
-        return Some(AstExprKind::NumLit(lit));
+        return Some(AstExprKind::Lit(LiteralKind::NumLit(lit)));
     }
 
     // Parse ADTs.
