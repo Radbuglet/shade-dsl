@@ -1,24 +1,23 @@
 use std::hash;
 
+use arid::object;
 use index_vec::IndexVec;
 
-use crate::component;
-
-use super::{ObjAdtSignature, ObjFunc, ObjTy, OwnConstIdx, OwnGenericIdx};
+use super::{AdtSignatureHandle, FuncHandle, OwnConstIdx, OwnGenericIdx, TyHandle};
 
 // === Values === //
 
 #[derive(Debug)]
 pub enum Value {
-    MetaType(ObjTy),
+    MetaType(TyHandle),
     MetaFunc(PartialInstance),
     Func(FullInstance),
     Scalar(ValueScalar),
-    Tuple(Vec<ObjValue>),
-    Adt(ObjAdtSignature, AdtValue),
+    Tuple(Vec<ValueHandle>),
+    Adt(AdtSignatureHandle, AdtValue),
 }
 
-component!(Value);
+object!(pub Value);
 
 #[derive(Debug, Copy, Clone)]
 pub enum ValueScalar {
@@ -88,8 +87,8 @@ impl PartialEq for ValueScalar {
 
 #[derive(Debug)]
 pub enum AdtValue {
-    Composite(Vec<ObjValue>),
-    Variant(u32, ObjValue),
+    Composite(Vec<ValueHandle>),
+    Variant(u32, ValueHandle),
 }
 
 // === Instance === //
@@ -97,28 +96,28 @@ pub enum AdtValue {
 #[derive(Debug)]
 pub struct PartialInstance {
     /// The function we're trying to instantiate.
-    pub func: ObjFunc,
+    pub func: FuncHandle,
 
     /// The partial list of generic arguments to the function, filled from left to right.
-    pub generics: Vec<ObjValue>,
+    pub generics: Vec<ValueHandle>,
 
     /// The upvars captured by parent functions which have already been evaluated.
-    pub parent_results: Option<ObjFullInstance>,
+    pub parent_results: Option<FullInstanceHandle>,
 }
 
 #[derive(Debug)]
 pub struct FullInstance {
     /// The function we're evaluating.
-    pub func: ObjFunc,
+    pub func: FuncHandle,
 
     /// The lexical parent of this function, which may also be in the process of active evaluation.
-    pub parent: Option<ObjFullInstance>,
+    pub parent: Option<FullInstanceHandle>,
 
     /// The generic parameters passed to the function.
-    pub generics: IndexVec<OwnGenericIdx, ObjValue>,
+    pub generics: IndexVec<OwnGenericIdx, ValueHandle>,
 
     /// The constants we have evaluated thus far.
-    pub consts: IndexVec<OwnConstIdx, Option<ObjValue>>,
+    pub consts: IndexVec<OwnConstIdx, Option<ValueHandle>>,
 }
 
-component!(FullInstance);
+object!(pub FullInstance);

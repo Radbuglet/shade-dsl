@@ -1,3 +1,4 @@
+use arid::{Strong, object};
 use index_vec::IndexVec;
 
 use crate::{
@@ -5,7 +6,6 @@ use crate::{
         ErrorGuaranteed,
         syntax::{Span, Symbol},
     },
-    component,
     parse::ast::Mutability,
 };
 
@@ -37,7 +37,7 @@ index_vec::define_index_type! {
 #[derive(Debug)]
 pub struct Func {
     /// The function which is the lexical parent to this function.
-    pub parent: Option<ObjFunc>,
+    pub parent: Option<FuncHandle>,
 
     /// The span of the function's entire definition.
     ///
@@ -59,12 +59,12 @@ pub struct Func {
     pub span: Span,
 
     /// The generic parameters the function takes in.
-    pub generics: IndexVec<OwnGenericIdx, ObjGenericDef>,
+    pub generics: IndexVec<OwnGenericIdx, Strong<GenericDefHandle>>,
 
     /// Named constants defined by the function through `const FOO = <here>;` statements. These
     /// expressions are free to reference generics defined by this function as well as other
     /// constant expressions. It is up to the interpreter to detect reference cycles.
-    pub consts: IndexVec<OwnConstIdx, ObjConstDef>,
+    pub consts: IndexVec<OwnConstIdx, Strong<ConstDefHandle>>,
 
     /// The locals to which each argument is bound. This is `None` if the function should be
     /// evaluated as soon as all its generic are specified.
@@ -72,32 +72,32 @@ pub struct Func {
 
     /// The return type of the function. This is `None` if the type-checker is expected to infer it,
     /// which is the case when constructing `Func`s for ADT member initializers.
-    pub return_type: Option<ObjExpr>,
+    pub return_type: Option<Strong<ExprHandle>>,
 
     /// The main body of the function.
-    pub body: ObjExpr,
+    pub body: Strong<ExprHandle>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FuncParamDef {
     pub span: Span,
-    pub binding: ObjPat,
-    pub ty: ObjExpr,
+    pub binding: Strong<PatHandle>,
+    pub ty: Strong<ExprHandle>,
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AnyName {
     /// A non-generic function defined in the current function or any of its ancestors.
-    FuncLit(ObjFunc),
+    FuncLit(FuncHandle),
 
     /// A named constant defined in the current function or any of its ancestors.
-    Const(ObjConstDef),
+    Const(ConstDefHandle),
 
     /// A generic defined in the current function or any of its ancestors.
-    Generic(ObjGenericDef),
+    Generic(GenericDefHandle),
 
     /// A local defined in the current function.
-    Local(ObjLocalDef),
+    Local(LocalDefHandle),
 }
 
 #[derive(Debug)]
@@ -106,7 +106,7 @@ pub struct ConstDef {
     pub idx: OwnConstIdx,
 
     /// The function owning the constant.
-    pub owner: ObjFunc,
+    pub owner: FuncHandle,
 
     /// The span of the entire constant binding statement.
     pub span: Span,
@@ -115,7 +115,7 @@ pub struct ConstDef {
     pub name: Symbol,
 
     /// The expression to evaluate to get the constant's value.
-    pub expr: ObjExpr,
+    pub expr: Strong<ExprHandle>,
 }
 
 #[derive(Debug)]
@@ -124,7 +124,7 @@ pub struct GenericDef {
     pub idx: OwnGenericIdx,
 
     /// The function owning the generic parameter.
-    pub owner: ObjFunc,
+    pub owner: FuncHandle,
 
     /// The span of the name binding the generic.
     pub span: Span,
@@ -133,18 +133,18 @@ pub struct GenericDef {
     pub name: Symbol,
 
     /// The expected type of the generic value being provided.
-    pub ty: ObjExpr,
+    pub ty: Strong<ExprHandle>,
 }
 
 #[derive(Debug)]
 pub struct LocalDef {
-    pub owner: ObjFunc,
+    pub owner: FuncHandle,
     pub span: Span,
     pub name: Symbol,
     pub muta: Mutability,
 }
 
-component!(Func, ConstDef, GenericDef, LocalDef);
+object!(pub Func, pub ConstDef, pub GenericDef, pub LocalDef);
 
 // === Expr === //
 
@@ -157,30 +157,30 @@ pub struct Expr {
 #[derive(Debug)]
 pub enum ExprKind {
     Name(AnyName),
-    Block(ObjBlock),
-    Destructure(ObjPat, ObjExpr),
+    Block(Strong<BlockHandle>),
+    Destructure(Strong<PatHandle>, Strong<ExprHandle>),
     Match(Box<ExprMatch>),
-    Adt(ObjExprAdt),
-    Func(ObjFunc),
+    Adt(Strong<ExprAdtHandle>),
+    Func(Strong<FuncHandle>),
     Error(ErrorGuaranteed),
     Placeholder,
 }
 
-component!(Expr);
+object!(pub Expr);
 
 #[derive(Debug)]
 pub struct Block {
     pub span: Span,
-    pub stmts: Vec<ObjExpr>,
-    pub last_expr: Option<ObjExpr>,
+    pub stmts: Vec<Strong<ExprHandle>>,
+    pub last_expr: Option<Strong<ExprHandle>>,
 }
 
-component!(Block);
+object!(pub Block);
 
 #[derive(Debug)]
 pub struct ExprMatch {
-    pub scrutinee: ObjExpr,
-    pub arms: Vec<(ObjPat, ObjExpr)>,
+    pub scrutinee: Strong<ExprHandle>,
+    pub arms: Vec<(Strong<PatHandle>, Strong<ExprHandle>)>,
 }
 
 #[derive(Debug)]
@@ -190,20 +190,20 @@ pub struct ExprAdt {
     pub members: Vec<ExprAdtMember>,
 }
 
-component!(ExprAdt);
+object!(pub ExprAdt);
 
 #[derive(Debug)]
 pub struct ExprAdtField {
     pub span: Span,
     pub name: Symbol,
-    pub ty: ObjExpr,
+    pub ty: ExprHandle,
 }
 
 #[derive(Debug)]
 pub struct ExprAdtMember {
     pub span: Span,
     pub name: Symbol,
-    pub init: ObjFunc,
+    pub init: Strong<FuncHandle>,
 }
 
 // === Pat === //
@@ -217,9 +217,9 @@ pub struct Pat {
 #[derive(Debug)]
 pub enum PatKind {
     Hole,
-    Name(ObjLocalDef),
-    Tuple(Vec<ObjPat>),
+    Name(Strong<LocalDefHandle>),
+    Tuple(Vec<Strong<PatHandle>>),
     Error(ErrorGuaranteed),
 }
 
-component!(Pat);
+object!(pub Pat);

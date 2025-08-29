@@ -1,9 +1,9 @@
 use std::{fs, path::Path, sync::Arc};
 
+use arid::{Handle as _, World};
 use shade_dsl::{
     base::{
-        Session, World,
-        mem::Handle,
+        Session,
         syntax::{NaiveSegmenter, SourceFileOrigin, SourceMap},
     },
     parse::{ast::parse_file, lower::lower_file, token::tokenize},

@@ -1,17 +1,17 @@
+use arid::{Handle as _, Object as _, Strong, W};
 use ctx2d_utils::hash::{FxHashMap, hash_map};
 use index_vec::IndexVec;
 
 use crate::{
     base::{
-        Diag, W,
+        Diag,
         analysis::NameResolver,
-        mem::{Component, Handle},
         syntax::{Span, Symbol},
     },
     typeck::syntax::{
-        AdtKind, AnyName, Block, ConstDef, Expr, ExprAdt, ExprAdtMember, ExprKind, Func,
-        FuncParamDef, GenericDef, LocalDef, ObjBlock, ObjExpr, ObjExprAdt, ObjFunc, ObjPat,
-        OwnGenericIdx, Pat, PatKind,
+        AdtKind, AnyName, Block, BlockHandle, ConstDef, Expr, ExprAdt, ExprAdtHandle,
+        ExprAdtMember, ExprHandle, ExprKind, Func, FuncHandle, FuncParamDef, GenericDef, LocalDef,
+        OwnGenericIdx, Pat, PatHandle, PatKind,
     },
 };
 
@@ -21,7 +21,7 @@ use super::ast::{
 
 pub type Resolver = NameResolver<AnyName>;
 
-pub fn lower_file(adt: &AstAdt, w: W) -> ObjExprAdt {
+pub fn lower_file(adt: &AstAdt, w: W) -> Strong<ExprAdtHandle> {
     assert_eq!(adt.kind, AdtKind::Mod);
     assert!(adt.fields.is_empty());
 
@@ -31,7 +31,7 @@ pub fn lower_file(adt: &AstAdt, w: W) -> ObjExprAdt {
 }
 
 // TODO: Stash this.
-fn placeholder_expr(w: W) -> ObjExpr {
+fn placeholder_expr(w: W) -> Strong<ExprHandle> {
     Expr {
         span: Span::DUMMY,
         kind: ExprKind::Placeholder,
@@ -52,12 +52,12 @@ impl ExprConstness {
 }
 
 fn lower_expr(
-    owner: ObjFunc,
+    owner: FuncHandle,
     expr: &AstExpr,
     constness: ExprConstness,
     resolver: &mut Resolver,
     w: W,
-) -> ObjExpr {
+) -> Strong<ExprHandle> {
     let kind = match &expr.kind {
         AstExprKind::Name(ident) => 'make_name: {
             let Some(&name) = resolver.lookup(ident.text) else {
@@ -148,7 +148,12 @@ fn lower_expr(
     .spawn(w)
 }
 
-fn lower_func(owner: Option<ObjFunc>, ast: &AstFuncDef, resolver: &mut Resolver, w: W) -> ObjFunc {
+fn lower_func(
+    owner: Option<FuncHandle>,
+    ast: &AstFuncDef,
+    resolver: &mut Resolver,
+    w: W,
+) -> Strong<FuncHandle> {
     let func = Func {
         parent: owner,
         span: ast.sig_span,
@@ -186,14 +191,14 @@ fn lower_func(owner: Option<ObjFunc>, ast: &AstFuncDef, resolver: &mut Resolver,
 
         let def = GenericDef {
             idx: func.r(w).generics.next_idx(),
-            owner: func,
+            owner: *func,
             span: name.span,
             name: name.text,
             ty: placeholder_expr(w),
         }
         .spawn(w);
 
-        resolver.define(name.text, AnyName::Generic(def));
+        resolver.define(name.text, AnyName::Generic(def.as_weak()));
 
         func.m(w).generics.push(def);
     }
@@ -203,7 +208,7 @@ fn lower_func(owner: Option<ObjFunc>, ast: &AstFuncDef, resolver: &mut Resolver,
 
         for param in params {
             let binding = lower_pat_defining_locals(
-                func,
+                func.as_weak(),
                 &param.binding,
                 &mut PatLowerMode::InDefinition(&mut used_names),
                 resolver,
@@ -227,22 +232,34 @@ fn lower_func(owner: Option<ObjFunc>, ast: &AstFuncDef, resolver: &mut Resolver,
         let idx = OwnGenericIdx::from_usize(idx);
 
         func.r(w).generics[idx].m(w).ty =
-            lower_expr(func, &ast.ty, ExprConstness::Const, resolver, w);
+            lower_expr(func.as_weak(), &ast.ty, ExprConstness::Const, resolver, w);
     }
 
     if let Some(params) = &ast.params {
         for (idx, ast) in params.iter().enumerate() {
             func.m(w).params.as_mut().unwrap()[idx].ty =
-                lower_expr(func, &ast.ty, ExprConstness::Const, resolver, w);
+                lower_expr(func.as_weak(), &ast.ty, ExprConstness::Const, resolver, w);
         }
     }
 
     if let Some(ret_ty) = &ast.ret_ty {
-        func.m(w).return_type = Some(lower_expr(func, ret_ty, ExprConstness::Const, resolver, w));
+        func.m(w).return_type = Some(lower_expr(
+            func.as_weak(),
+            ret_ty,
+            ExprConstness::Const,
+            resolver,
+            w,
+        ));
     }
 
     // Resolve the body
-    let body = lower_block(func, &ast.body, ExprConstness::Runtime, resolver, w);
+    let body = lower_block(
+        func.as_weak(),
+        &ast.body,
+        ExprConstness::Runtime,
+        resolver,
+        w,
+    );
 
     func.m(w).body = Expr {
         span: body.r(w).span,
@@ -256,12 +273,12 @@ fn lower_func(owner: Option<ObjFunc>, ast: &AstFuncDef, resolver: &mut Resolver,
 }
 
 fn lower_block(
-    owner: ObjFunc,
+    owner: FuncHandle,
     block: &AstBlock,
     constness: ExprConstness,
     resolver: &mut Resolver,
     w: W,
-) -> ObjBlock {
+) -> Strong<BlockHandle> {
     resolver.push_rib();
 
     let mut stmts = Vec::new();
@@ -304,7 +321,7 @@ fn lower_block(
         }
         .spawn(w);
 
-        resolver.define(name.text, AnyName::Const(new_def));
+        resolver.define(name.text, AnyName::Const(new_def.as_weak()));
         const_defs.push(new_def);
     }
 
@@ -362,12 +379,12 @@ enum PatLowerMode<'a> {
 }
 
 fn lower_pat_defining_locals(
-    owner: ObjFunc,
+    owner: FuncHandle,
     pat: &AstPat,
     block_names: &mut PatLowerMode<'_>,
     resolver: &mut Resolver,
     w: W,
-) -> ObjPat {
+) -> Strong<PatHandle> {
     let kind = match &pat.kind {
         AstPatKind::Hole => PatKind::Hole,
         AstPatKind::Name(muta, ident) => 'resolve_name: {
@@ -409,7 +426,7 @@ fn lower_pat_defining_locals(
             }
             .spawn(w);
 
-            resolver.define(ident.text, AnyName::Local(def));
+            resolver.define(ident.text, AnyName::Local(def.as_weak()));
 
             PatKind::Name(def)
         }
@@ -433,11 +450,11 @@ fn lower_pat_defining_locals(
 }
 
 fn lower_adt(
-    owner: Option<ObjFunc>,
+    owner: Option<FuncHandle>,
     adt_ast: &AstAdt,
     resolver: &mut Resolver,
     w: W,
-) -> ObjExprAdt {
+) -> Strong<ExprAdtHandle> {
     resolver.push_rib();
 
     let adt = ExprAdt {
@@ -486,8 +503,8 @@ fn lower_adt(
         }
         .spawn(w);
 
-        resolver.define(member.name.text, AnyName::FuncLit(member_func));
-        member_defs.push(member_func);
+        resolver.define(member.name.text, AnyName::FuncLit(member_func.as_weak()));
+        member_defs.push(member_func.as_weak());
 
         adt.m(w).members.push(ExprAdtMember {
             span: member.name.span,

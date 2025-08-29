@@ -1,6 +1,8 @@
+use arid::object;
+
 use crate::{
     base::syntax::{Span, Symbol},
-    component, symbol,
+    symbol,
 };
 
 use super::FullInstance;
@@ -11,12 +13,12 @@ use super::FullInstance;
 pub enum Ty {
     MetaTy,
     MetaFunc,
-    Fn(Vec<ObjTy>, ObjTy),
+    Fn(Vec<TyHandle>, TyHandle),
     Scalar(TyScalar),
-    Adt(ObjAdtSignature),
+    Adt(AdtSignatureHandle),
 }
 
-component!(Ty);
+object!(pub Ty);
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum TyScalar {
@@ -48,7 +50,7 @@ pub struct AdtSignature {
     pub members: Vec<AdtElement>,
 }
 
-component!(AdtSignature);
+object!(pub AdtSignature);
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AdtKind {
