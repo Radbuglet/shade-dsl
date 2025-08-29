@@ -1,3 +1,14 @@
-const std = use("std.sdl");
+const Whee = struct {
+    foo: u32;
+    bar: u32;
+};
 
-const whee = [1, 2, 3] & 1 | 2 || 3 && 4 ^ 5 ^^ 6;
+const whee = fn() -> Whee {
+    let foo = 3;
+    let bar = true;
+
+    new Whee {
+        foo,
+        bar,
+    }
+};

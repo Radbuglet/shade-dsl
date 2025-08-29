@@ -83,6 +83,7 @@ define_keywords! {
     Match = "match",
     Mod = "mod",
     Mut = "mut",
+    New = "new",
     Pub = "pub",
     Return = "return",
     SelfUpper = "Self",

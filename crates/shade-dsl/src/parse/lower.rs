@@ -114,6 +114,7 @@ fn lower_expr(
             ExprKind::Block(lower_block(owner, block, constness, resolver, w))
         }
         AstExprKind::AdtDef(adt_ast) => ExprKind::Adt(lower_adt(Some(owner), adt_ast, resolver, w)),
+        AstExprKind::New(ast_expr, items) => todo!(),
         AstExprKind::TypeExpr(ast_expr) => todo!(),
         AstExprKind::Tuple(vec) => todo!(),
         AstExprKind::Array(ast_exprs) => todo!(),

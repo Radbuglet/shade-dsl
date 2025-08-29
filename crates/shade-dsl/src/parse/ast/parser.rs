@@ -339,6 +339,34 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             break 'seed build_expr(AstExprKind::TypeExpr(Box::new(ty)), p);
         }
 
+        // Parse an `new` expression
+        if match_kw(kw!("new")).expect(p).is_some() {
+            // Parse the structure kind
+            let kind = parse_expr(p);
+
+            // Parse the initializers.
+            let Some(braced) = match_group(GroupDelimiter::Brace).expect(p) else {
+                // Recovery strategy: do nothing
+                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+            };
+
+            let initializers = parse_comma_group(&mut p.enter(&braced), |p| {
+                let name = match_ident().expect(p)?;
+
+                if match_punct(punct!(':')).expect(p).is_none() {
+                    return Some((name, None));
+                }
+
+                Some((name, Some(Box::new(parse_expr(p)))))
+            })
+            .elems
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+            break 'seed build_expr(AstExprKind::New(Box::new(kind), initializers), p);
+        }
+
         // Parse an `if` expression
         if match_kw(kw!("if")).expect(p).is_some() {
             fn parse_after_if(if_span: Span, p: P) -> AstExpr {

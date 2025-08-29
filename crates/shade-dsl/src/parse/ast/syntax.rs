@@ -47,8 +47,8 @@ pub enum AstExprKind {
     Name(Ident),
 
     /// A literal expression.
-    /// 
-    /// 
+    ///
+    /// Can be parsed in both type and expression parsing contexts.
     Lit(LiteralKind),
 
     /// A parenthesized expression (e.g. `(foo)`).
@@ -83,6 +83,11 @@ pub enum AstExprKind {
     ///
     /// Can only be parsed in expression parsing contexts.
     Array(Vec<AstExpr>),
+
+    /// A struct instance constructor (e.g. `new Point { x, y }`).
+    ///
+    /// Can only be parsed in expression parsing contexts.
+    New(Box<AstExpr>, Vec<(Ident, Option<Box<AstExpr>>)>),
 
     /// An `if` expression (e.g. `if foo { bar }`, `if cond { abc } else { def }`, or
     /// `if cond { hi } else if cond { hello }`).
@@ -242,6 +247,7 @@ impl AstExprKind {
             | AstExprKind::Paren(..)
             | AstExprKind::AdtDef(..)
             | AstExprKind::TypeExpr(..)
+            | AstExprKind::New(..)
             | AstExprKind::Tuple(..)
             | AstExprKind::Array(..)
             | AstExprKind::Return(..)
@@ -299,13 +305,9 @@ pub enum LiteralKind {
     StrLit(TokenStrLit),
 
     /// A character literal (e.g. `'a'`).
-    ///
-    /// Can be parsed in both type and expression parsing contexts.
     CharLit(TokenCharLit),
 
     /// A numeric literal (e.g. `123`, `0xBADF00D`, or `4.34E-4`).
-    ///
-    /// Can be parsed in both type and expression parsing contexts.
     NumLit(TokenNumLit),
 }
 

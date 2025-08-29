@@ -1,5 +1,4 @@
 pub mod analysis;
-pub mod mem;
 pub mod syntax;
 
 mod diag;
