@@ -6,10 +6,8 @@ use crate::{
         ErrorGuaranteed,
         syntax::{Span, Symbol},
     },
-    parse::ast::{BinOpKind, LiteralKind, Mutability},
+    parse::ast::{AdtKind, BinOpKind, LiteralKind, Mutability},
 };
-
-use super::AdtKind;
 
 // === Func === //
 
@@ -188,6 +186,7 @@ pub struct ExprMatch {
 
 #[derive(Debug)]
 pub struct ExprAdt {
+    pub owner: Option<FuncHandle>,
     pub kind: AdtKind,
     pub fields: Vec<ExprAdtField>,
     pub members: Vec<ExprAdtMember>,
@@ -197,13 +196,15 @@ object!(pub ExprAdt);
 
 #[derive(Debug)]
 pub struct ExprAdtField {
+    pub is_public: bool,
     pub span: Span,
     pub name: Symbol,
-    pub ty: ExprHandle,
+    pub ty: Strong<FuncHandle>,
 }
 
 #[derive(Debug)]
 pub struct ExprAdtMember {
+    pub is_public: bool,
     pub span: Span,
     pub name: Symbol,
     pub init: Strong<FuncHandle>,

@@ -1,20 +1,21 @@
 use std::hash;
 
-use arid::object;
+use arid::{Strong, object};
 use index_vec::IndexVec;
 
-use super::{AdtSignatureHandle, FuncHandle, OwnConstIdx, OwnGenericIdx, TyHandle};
+use crate::typeck::syntax::ExprAdtHandle;
+
+use super::{FuncHandle, OwnConstIdx, OwnGenericIdx};
 
 // === Values === //
 
 #[derive(Debug)]
 pub enum Value {
     MetaType(TyHandle),
-    MetaFunc(PartialInstance),
-    Func(FullInstance),
+    MetaFunc(SemiFuncInstance),
     Scalar(ValueScalar),
     Tuple(Vec<ValueHandle>),
-    Adt(AdtSignatureHandle, AdtValue),
+    Adt(AdtInstance, AdtValue),
 }
 
 object!(pub Value);
@@ -91,10 +92,49 @@ pub enum AdtValue {
     Variant(u32, ValueHandle),
 }
 
+#[derive(Debug)]
+pub enum Ty {
+    MetaTy,
+    MetaFunc,
+    Fn(Vec<TyHandle>, TyHandle),
+    Scalar(TyScalar),
+    Adt(AdtInstance),
+}
+
+object!(pub Ty);
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum TyScalar {
+    Bool,
+    U8,
+    I8,
+    U16,
+    I16,
+    U32,
+    I32,
+    U64,
+    I64,
+    U128,
+    I128,
+    F32,
+    F64,
+    USize,
+    ISize,
+}
+
 // === Instance === //
 
 #[derive(Debug)]
-pub struct PartialInstance {
+pub struct AdtInstance {
+    /// The structure being instantiated.
+    pub adt: Strong<ExprAdtHandle>,
+
+    /// The results computed by the struct's owner.
+    pub owner_results: Strong<FuncInstanceHandle>,
+}
+
+#[derive(Debug)]
+pub struct SemiFuncInstance {
     /// The function we're trying to instantiate.
     pub func: FuncHandle,
 
@@ -102,22 +142,25 @@ pub struct PartialInstance {
     pub generics: Vec<ValueHandle>,
 
     /// The upvars captured by parent functions which have already been evaluated.
-    pub parent_results: Option<FullInstanceHandle>,
+    pub parent_results: Option<Strong<FuncInstanceHandle>>,
 }
 
 #[derive(Debug)]
-pub struct FullInstance {
+pub struct FuncInstance {
     /// The function we're evaluating.
     pub func: FuncHandle,
 
     /// The lexical parent of this function, which may also be in the process of active evaluation.
-    pub parent: Option<FullInstanceHandle>,
+    pub parent: Option<Strong<FuncInstanceHandle>>,
 
     /// The generic parameters passed to the function.
-    pub generics: IndexVec<OwnGenericIdx, ValueHandle>,
+    pub generics: IndexVec<OwnGenericIdx, Strong<ValueHandle>>,
 
     /// The constants we have evaluated thus far.
-    pub consts: IndexVec<OwnConstIdx, Option<ValueHandle>>,
+    pub consts: IndexVec<OwnConstIdx, Option<Strong<ValueHandle>>>,
+
+    /// The result of the function after it has been evaluated.
+    pub result: Option<Strong<ValueHandle>>,
 }
 
-object!(pub FullInstance);
+object!(pub FuncInstance);

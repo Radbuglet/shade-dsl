@@ -1,14 +1,19 @@
-const Whee = struct {
-    foo: u32;
-    bar: u32;
+pub const bool = lang("bool");
+
+pub const Option = fn<ty: type>() -> type {
+    enum {
+        Some: ty;
+        None: ();
+
+        pub const unwrap = fn(self: Self) -> ty {
+            match self {
+                new Some(v) => v,
+                new None => panic("attempted to unwrap None"),
+            }
+        };
+    }
 };
 
-const whee = fn() -> Whee {
-    let foo = 3;
-    let bar = true;
+pub const main = fn() {
 
-    new Whee {
-        foo,
-        bar,
-    }
 };

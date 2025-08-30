@@ -1,7 +1,10 @@
 use crate::{
-    base::{ErrorGuaranteed, syntax::Span},
+    base::{
+        ErrorGuaranteed,
+        syntax::{Span, Symbol},
+    },
     parse::token::{Ident, TokenCharLit, TokenNumLit, TokenStrLit},
-    typeck::syntax::AdtKind,
+    symbol,
 };
 
 // === ASTs === //
@@ -309,6 +312,29 @@ pub enum LiteralKind {
 
     /// A numeric literal (e.g. `123`, `0xBADF00D`, or `4.34E-4`).
     NumLit(TokenNumLit),
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum AdtKind {
+    Mod,
+    Struct,
+    Union,
+    Enum,
+}
+
+impl AdtKind {
+    pub fn can_have_fields(self) -> bool {
+        !matches!(self, AdtKind::Mod)
+    }
+
+    pub fn what(self) -> Symbol {
+        match self {
+            AdtKind::Mod => symbol!("module"),
+            AdtKind::Struct => symbol!("structure"),
+            AdtKind::Union => symbol!("union"),
+            AdtKind::Enum => symbol!("enum"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

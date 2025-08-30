@@ -8,8 +8,9 @@ use crate::{
         analysis::NameResolver,
         syntax::{Span, Symbol},
     },
+    parse::ast::AdtKind,
     typeck::syntax::{
-        AdtKind, AnyName, Block, BlockHandle, ConstDef, Expr, ExprAdt, ExprAdtHandle,
+        AnyName, Block, BlockHandle, ConstDef, Expr, ExprAdt, ExprAdtField, ExprAdtHandle,
         ExprAdtMember, ExprHandle, ExprKind, Func, FuncHandle, FuncParamDef, GenericDef, LocalDef,
         OwnGenericIdx, Pat, PatHandle, PatKind,
     },
@@ -109,13 +110,14 @@ fn lower_expr(
             ExprKind::Name(name)
         }
         AstExprKind::Lit(lit) => ExprKind::Lit(*lit),
-        AstExprKind::Paren(expr) => return lower_expr(owner, expr, constness, resolver, w),
+        AstExprKind::Paren(expr) | AstExprKind::TypeExpr(expr) => {
+            return lower_expr(owner, expr, constness, resolver, w);
+        }
         AstExprKind::Block(block) => {
             ExprKind::Block(lower_block(owner, block, constness, resolver, w))
         }
         AstExprKind::AdtDef(adt_ast) => ExprKind::Adt(lower_adt(Some(owner), adt_ast, resolver, w)),
         AstExprKind::New(ast_expr, items) => todo!(),
-        AstExprKind::TypeExpr(ast_expr) => todo!(),
         AstExprKind::Tuple(vec) => todo!(),
         AstExprKind::Array(ast_exprs) => todo!(),
         AstExprKind::If {
@@ -472,6 +474,7 @@ fn lower_adt(
     resolver.push_rib();
 
     let adt = ExprAdt {
+        owner: None,
         kind: adt_ast.kind,
         fields: Vec::new(),
         members: Vec::new(),
@@ -521,6 +524,7 @@ fn lower_adt(
         member_defs.push(member_func.as_weak());
 
         adt.m(w).members.push(ExprAdtMember {
+            is_public: member.is_public,
             span: member.name.span,
             name: member.name.text,
             init: member_func,
@@ -540,7 +544,25 @@ fn lower_adt(
 
     // Lower all field types
     for field in &adt_ast.fields {
-        // TODO
+        let ty = Func {
+            parent: owner,
+            span: field.ty.span,
+            generics: IndexVec::new(),
+            consts: IndexVec::new(),
+            params: None,
+            return_type: None,
+            body: placeholder_expr(w),
+        }
+        .spawn(w);
+
+        ty.m(w).body = lower_expr(ty.as_weak(), &field.ty, ExprConstness::Runtime, resolver, w);
+
+        adt.m(w).fields.push(ExprAdtField {
+            is_public: field.is_public,
+            span: field.name.span,
+            name: field.name.text,
+            ty,
+        });
     }
 
     resolver.pop_rib();

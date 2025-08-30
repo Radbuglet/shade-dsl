@@ -4,14 +4,13 @@ use crate::{
         syntax::{Bp, InfixBp, Matcher, OptPResult, OptPResultExt, Span},
     },
     parse::{
-        ast::{BinOpKind, LiteralKind, UnaryOpKind, expr_bp},
+        ast::{AdtKind, BinOpKind, LiteralKind, UnaryOpKind, expr_bp},
         token::{
             GroupDelimiter, Ident, Punct, TokenCharLit, TokenCursor, TokenGroup, TokenMatcher,
             TokenNumLit, TokenParser, TokenPunct, TokenStrLit, token_matcher,
         },
     },
     punct, symbol,
-    typeck::syntax::AdtKind,
 };
 
 use super::{
