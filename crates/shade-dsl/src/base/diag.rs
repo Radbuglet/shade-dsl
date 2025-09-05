@@ -139,6 +139,10 @@ impl HardDiag {
     pub fn span_err(span: Span, message: impl fmt::Display) -> Self {
         LeafDiag::span_err(span, message).promote().cast()
     }
+
+    pub fn anon_err(message: impl fmt::Display) -> Self {
+        LeafDiag::new(Level::Error, message).promote().cast()
+    }
 }
 
 impl SoftDiag {

@@ -1,2 +1,2 @@
-pub mod checker;
+pub mod analysis;
 pub mod syntax;

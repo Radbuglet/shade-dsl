@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use arid::{Strong, object};
 use index_vec::IndexVec;
 
@@ -172,7 +174,7 @@ object!(pub Expr);
 #[derive(Debug)]
 pub struct Block {
     pub span: Span,
-    pub stmts: Vec<Strong<ExprHandle>>,
+    pub stmts: Rc<Vec<Strong<ExprHandle>>>,
     pub last_expr: Option<Strong<ExprHandle>>,
 }
 
