@@ -1,5 +1,4 @@
-use arid::{Handle as _, Object as _, Strong, W};
-use ctx2d_utils::hash::{FxHashMap, hash_map};
+use arid::{Handle as _, Object as _, Strong, W, Wr};
 use index_vec::IndexVec;
 
 use crate::{
@@ -10,9 +9,9 @@ use crate::{
     },
     parse::ast::AdtKind,
     typeck::syntax::{
-        AnyName, Block, BlockHandle, ConstDef, Expr, ExprAdt, ExprAdtField, ExprAdtHandle,
-        ExprAdtMember, ExprHandle, ExprKind, Func, FuncHandle, FuncParamDef, GenericDef, LocalDef,
-        OwnGenericIdx, Pat, PatHandle, PatKind,
+        AnyName, Block, BlockHandle, ConstDef, ConstDefHandle, Expr, ExprAdt, ExprAdtField,
+        ExprAdtHandle, ExprAdtMember, ExprHandle, ExprKind, Func, FuncHandle, FuncParamDef,
+        GenericDef, LocalDef, OwnGenericIdx, Pat, PatHandle, PatKind,
     },
 };
 
@@ -20,7 +19,48 @@ use super::ast::{
     AstAdt, AstBlock, AstExpr, AstExprKind, AstFuncDef, AstPat, AstPatKind, AstStmtKind,
 };
 
+// === Resolver === //
+
 pub type Resolver = NameResolver<AnyName>;
+
+fn define_name(resolver: &mut Resolver, name: AnyName, w: Wr) {
+    fn name_of(name: AnyName, w: Wr) -> Symbol {
+        match name {
+            AnyName::Const(v) => v.r(w).name,
+            AnyName::Generic(v) => v.r(w).name,
+            AnyName::Local(v) => v.r(w).name,
+            AnyName::Member { name, .. } => name,
+        }
+    }
+
+    fn span_of(name: AnyName, w: Wr) -> Span {
+        match name {
+            AnyName::Const(v) => v.r(w).span,
+            AnyName::Generic(v) => v.r(w).span,
+            AnyName::Local(v) => v.r(w).span,
+            AnyName::Member { init, .. } => init.r(w).span,
+        }
+    }
+
+    resolver.define(name_of(name, w), name, |shadowed| {
+        Diag::span_err(
+            span_of(name, w),
+            format!(
+                "name conflicts with {} defined within the same scope",
+                match shadowed {
+                    AnyName::Const(_) => "constant",
+                    AnyName::Generic(_) => "generic",
+                    AnyName::Local(_) => "local",
+                    AnyName::Member { .. } => "member",
+                },
+            ),
+        )
+        .secondary(span_of(*shadowed, w), "previous name defined here")
+        .emit()
+    });
+}
+
+// === Lowering === //
 
 pub fn lower_file(adt: &AstAdt, w: W) -> Strong<ExprAdtHandle> {
     assert_eq!(adt.kind, AdtKind::Mod);
@@ -47,7 +87,7 @@ enum ExprConstness {
 }
 
 impl ExprConstness {
-    pub fn is_const(self) -> bool {
+    fn is_const(self) -> bool {
         matches!(self, ExprConstness::Const)
     }
 }
@@ -81,7 +121,7 @@ fn lower_expr(
             };
 
             match name {
-                AnyName::FuncLit(_) | AnyName::Const(_) | AnyName::Generic(_) => {
+                AnyName::Member { .. } | AnyName::Const(_) | AnyName::Generic(_) => {
                     // (these can always be referred to)
                 }
                 AnyName::Local(def) => {
@@ -114,7 +154,9 @@ fn lower_expr(
             return lower_expr(owner, expr, constness, resolver, w);
         }
         AstExprKind::Block(block) => {
-            ExprKind::Block(lower_block(owner, block, constness, resolver, w))
+            ExprKind::Block(lower_block(
+                owner, block, constness, /* consts_already_lowered*/ true, resolver, w,
+            ))
         }
         AstExprKind::AdtDef(adt_ast) => ExprKind::Adt(lower_adt(Some(owner), adt_ast, resolver, w)),
         AstExprKind::New(ast_expr, items) => todo!(),
@@ -183,27 +225,11 @@ fn lower_func(
 
     resolver.push_rib();
 
-    // Define all the parameter names
-    let mut used_names = FxHashMap::<Symbol, Span>::default();
-
+    // Define all the parameter and top-level const names
     for generic in &ast.generics {
         let Ok(name) = generic.name else {
             continue;
         };
-
-        match used_names.entry(name.text) {
-            hash_map::Entry::Occupied(entry) => {
-                Diag::span_err(
-                    name.span,
-                    "name conflicts with another generic defined within the same function",
-                )
-                .secondary(*entry.get(), "previous name defined here")
-                .emit();
-            }
-            hash_map::Entry::Vacant(entry) => {
-                entry.insert(name.span);
-            }
-        }
 
         let def = GenericDef {
             idx: func.r(w).generics.next_idx(),
@@ -214,22 +240,18 @@ fn lower_func(
         }
         .spawn(w);
 
-        resolver.define(name.text, AnyName::Generic(def.as_weak()));
+        define_name(resolver, AnyName::Generic(def.as_weak()), w);
 
         func.m(w).generics.push(def);
     }
+
+    let const_defs = define_block_consts(func.as_weak(), &ast.body, resolver, w);
 
     if let Some(params) = &ast.params {
         let mut param_locals = Vec::new();
 
         for param in params {
-            let binding = lower_pat_defining_locals(
-                func.as_weak(),
-                &param.binding,
-                &mut PatLowerMode::InDefinition(&mut used_names),
-                resolver,
-                w,
-            );
+            let binding = lower_pat_defining_locals(func.as_weak(), &param.binding, resolver, w);
 
             param_locals.push(FuncParamDef {
                 span: param.span,
@@ -258,6 +280,8 @@ fn lower_func(
         }
     }
 
+    lower_block_consts(func.as_weak(), &ast.body, resolver, const_defs, w);
+
     if let Some(ret_ty) = &ast.ret_ty {
         func.m(w).return_type = Some(lower_expr(
             func.as_weak(),
@@ -273,6 +297,7 @@ fn lower_func(
         func.as_weak(),
         &ast.body,
         ExprConstness::Runtime,
+        true,
         resolver,
         w,
     );
@@ -288,19 +313,13 @@ fn lower_func(
     func
 }
 
-fn lower_block(
+#[must_use]
+fn define_block_consts(
     owner: FuncHandle,
     block: &AstBlock,
-    constness: ExprConstness,
     resolver: &mut Resolver,
     w: W,
-) -> Strong<BlockHandle> {
-    resolver.push_rib();
-
-    let mut stmts = Vec::new();
-
-    // Define all hoisted names
-    let mut const_names = FxHashMap::default();
+) -> Vec<ConstDefHandle> {
     let mut const_defs = Vec::new();
 
     for stmt in &block.stmts {
@@ -309,27 +328,8 @@ fn lower_block(
             continue;
         };
 
-        // Only allow a given const identifier to be used once.
-        match const_names.entry(name.text) {
-            hash_map::Entry::Occupied(entry) => {
-                Diag::span_err(
-                    name.span,
-                    format!(
-                        "more than one constant in this block has the name `{}`",
-                        name.text
-                    ),
-                )
-                .primary(*entry.get(), "name first used here")
-                .secondary(block.span.shrink_to_lo(), "block starts here")
-                .emit();
-            }
-            hash_map::Entry::Vacant(entry) => {
-                entry.insert(name.span);
-            }
-        }
-
         let new_def = ConstDef {
-            idx: owner.r(w).consts.last_idx() + const_defs.len(),
+            idx: owner.r(w).consts.next_idx(),
             owner,
             span: name.span,
             name: name.text,
@@ -337,13 +337,48 @@ fn lower_block(
         }
         .spawn(w);
 
-        resolver.define(name.text, AnyName::Const(new_def.as_weak()));
-        const_defs.push(new_def);
+        define_name(resolver, AnyName::Const(new_def.as_weak()), w);
+        const_defs.push(new_def.as_weak());
+        owner.m(w).consts.push(new_def);
     }
 
+    const_defs
+}
+
+fn lower_block_consts(
+    owner: FuncHandle,
+    block: &AstBlock,
+    resolver: &mut Resolver,
+    const_defs: Vec<ConstDefHandle>,
+    w: W,
+) {
     let mut const_defs = const_defs.into_iter();
 
-    // Resolve all nested expressions
+    for stmt in &block.stmts {
+        if let AstStmtKind::Const { init, name: _ } = &stmt.kind {
+            const_defs.next().unwrap().m(w).expr =
+                lower_expr(owner, init, ExprConstness::Const, resolver, w);
+        }
+    }
+}
+
+fn lower_block(
+    owner: FuncHandle,
+    block: &AstBlock,
+    constness: ExprConstness,
+    consts_already_lowered: bool,
+    resolver: &mut Resolver,
+    w: W,
+) -> Strong<BlockHandle> {
+    resolver.push_rib();
+
+    let mut stmts = Vec::new();
+
+    if !consts_already_lowered {
+        let const_names = define_block_consts(owner, block, resolver, w);
+        lower_block_consts(owner, block, resolver, const_names, w);
+    }
+
     for stmt in &block.stmts {
         match &stmt.kind {
             AstStmtKind::Expr(expr) => {
@@ -351,13 +386,7 @@ fn lower_block(
             }
             AstStmtKind::Let { binding, init } => {
                 let init = lower_expr(owner, init, constness, resolver, w);
-                let pat = lower_pat_defining_locals(
-                    owner,
-                    binding,
-                    &mut PatLowerMode::InBlock(&const_names),
-                    resolver,
-                    w,
-                );
+                let pat = lower_pat_defining_locals(owner, binding, resolver, w);
 
                 stmts.push(
                     Expr {
@@ -367,10 +396,7 @@ fn lower_block(
                     .spawn(w),
                 );
             }
-            AstStmtKind::Const { init, name: _ } => {
-                const_defs.next().unwrap().m(w).expr =
-                    lower_expr(owner, init, ExprConstness::Const, resolver, w);
-            }
+            _ => {}
         }
     }
 
@@ -389,51 +415,15 @@ fn lower_block(
     .spawn(w)
 }
 
-enum PatLowerMode<'a> {
-    InBlock(&'a FxHashMap<Symbol, Span>),
-    InDefinition(&'a mut FxHashMap<Symbol, Span>),
-}
-
 fn lower_pat_defining_locals(
     owner: FuncHandle,
     pat: &AstPat,
-    block_names: &mut PatLowerMode<'_>,
     resolver: &mut Resolver,
     w: W,
 ) -> Strong<PatHandle> {
     let kind = match &pat.kind {
         AstPatKind::Hole => PatKind::Hole,
-        AstPatKind::Name(muta, ident) => 'resolve_name: {
-            match block_names {
-                PatLowerMode::InBlock(block_names) => {
-                    if let Some(&other) = block_names.get(&ident.text) {
-                        break 'resolve_name PatKind::Error(
-                            Diag::span_err(
-                                ident.span,
-                                "locals cannot share the names of constants within the same block",
-                            )
-                            .primary(other, "constant defined here")
-                            .emit(),
-                        );
-                    }
-                }
-                PatLowerMode::InDefinition(block_names) => match block_names.entry(ident.text) {
-                    hash_map::Entry::Occupied(entry) => {
-                        break 'resolve_name PatKind::Error(
-                            Diag::span_err(
-                                ident.span,
-                                "parameter names cannot shadow other names in the function definition",
-                            )
-                            .primary(*entry.get(), "previous name defined here")
-                            .emit(),
-                        );
-                    }
-                    hash_map::Entry::Vacant(entry) => {
-                        entry.insert(ident.span);
-                    }
-                },
-            }
-
+        AstPatKind::Name(muta, ident) => {
             let def = LocalDef {
                 owner,
                 span: ident.span,
@@ -442,18 +432,18 @@ fn lower_pat_defining_locals(
             }
             .spawn(w);
 
-            resolver.define(ident.text, AnyName::Local(def.as_weak()));
+            define_name(resolver, AnyName::Local(def.as_weak()), w);
 
             PatKind::Name(def)
         }
         AstPatKind::Tuple(elems) => PatKind::Tuple(
             elems
                 .iter()
-                .map(|pat| lower_pat_defining_locals(owner, pat, block_names, resolver, w))
+                .map(|pat| lower_pat_defining_locals(owner, pat, resolver, w))
                 .collect(),
         ),
         AstPatKind::Paren(pat) => {
-            return lower_pat_defining_locals(owner, pat, block_names, resolver, w);
+            return lower_pat_defining_locals(owner, pat, resolver, w);
         }
         AstPatKind::Error(err) => PatKind::Error(*err),
     };
@@ -482,33 +472,9 @@ fn lower_adt(
     .spawn(w);
 
     // Define all hoisted names
-    let mut member_names = FxHashMap::default();
     let mut member_defs = Vec::new();
 
     for member in &adt_ast.members {
-        // Only allow a given const identifier to be used once.
-        match member_names.entry(member.name.text) {
-            hash_map::Entry::Occupied(entry) => {
-                Diag::span_err(
-                    member.name.span,
-                    format!(
-                        "more than one member in this {} has the name `{}`",
-                        adt_ast.kind.what(),
-                        member.name.text,
-                    ),
-                )
-                .primary(*entry.get(), "name first used here")
-                .secondary(
-                    adt_ast.span.shrink_to_lo(),
-                    format!("{} starts here", adt_ast.kind.what()),
-                )
-                .emit();
-            }
-            hash_map::Entry::Vacant(entry) => {
-                entry.insert(member.name.span);
-            }
-        }
-
         let member_func = Func {
             parent: owner,
             span: member.init.span,
@@ -520,7 +486,14 @@ fn lower_adt(
         }
         .spawn(w);
 
-        resolver.define(member.name.text, AnyName::FuncLit(member_func.as_weak()));
+        define_name(
+            resolver,
+            AnyName::Member {
+                name: member.name.text,
+                init: member_func.as_weak(),
+            },
+            w,
+        );
         member_defs.push(member_func.as_weak());
 
         adt.m(w).members.push(ExprAdtMember {

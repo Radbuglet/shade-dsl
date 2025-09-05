@@ -1,5 +1,5 @@
-mod dp;
-pub use dp::*;
+mod memo;
+pub use memo::*;
 
 mod resolver;
 pub use resolver::*;

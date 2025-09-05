@@ -971,7 +971,7 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
             continue;
         }
 
-        // Match let statements
+        // Match `let` statements
         if let Some(let_kw) = match_kw(kw!("let")).expect(p) {
             let binding = parse_pat(p);
 
@@ -991,6 +991,37 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
                 span: let_kw.span.to(p.prev_span()),
                 kind: AstStmtKind::Let {
                     binding,
+                    init: Box::new(init),
+                },
+            });
+
+            continue;
+        }
+
+        // Match `const` statements
+        if let Some(const_kw) = match_kw(kw!("const")).expect(p) {
+            let Some(name) = match_ident().expect(p) else {
+                // Recovery strategy: ignore
+                let _ = p.stuck_recover();
+                continue;
+            };
+
+            if match_punct(punct!('=')).expect(p).is_none() {
+                // Recovery strategy: ignore
+                let _ = p.stuck_recover();
+            }
+
+            let init = parse_expr(p);
+
+            if match_punct(punct!(';')).expect(p).is_none() {
+                // Recovery strategy: ignore
+                let _ = p.stuck_recover();
+            }
+
+            stmts.push(AstStmt {
+                span: const_kw.span.to(p.prev_span()),
+                kind: AstStmtKind::Const {
+                    name,
                     init: Box::new(init),
                 },
             });

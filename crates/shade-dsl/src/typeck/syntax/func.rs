@@ -85,8 +85,8 @@ pub struct FuncParamDef {
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AnyName {
-    /// A non-generic function defined in the current function or any of its ancestors.
-    FuncLit(FuncHandle),
+    /// A member initialization function for an ADT in the function's ancestry.
+    Member { name: Symbol, init: FuncHandle },
 
     /// A named constant defined in the current function or any of its ancestors.
     Const(ConstDefHandle),

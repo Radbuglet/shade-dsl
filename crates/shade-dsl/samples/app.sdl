@@ -1,19 +1,7 @@
-pub const bool = lang("bool");
+pub const main = fn<T: V, V: T>(foo: whee, bar: waz) {
+    const whee = mod {};
 
-pub const Option = fn<ty: type>() -> type {
-    enum {
-        Some: ty;
-        None: ();
-
-        pub const unwrap = fn(self: Self) -> ty {
-            match self {
-                new Some(v) => v,
-                new None => panic("attempted to unwrap None"),
-            }
-        };
+    {
+        const waz = whee;
     }
-};
-
-pub const main = fn() {
-
 };

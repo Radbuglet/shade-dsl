@@ -158,9 +158,6 @@ pub struct FuncInstance {
 
     /// The constants we have evaluated thus far.
     pub consts: IndexVec<OwnConstIdx, Option<Strong<ValueHandle>>>,
-
-    /// The result of the function after it has been evaluated.
-    pub result: Option<Strong<ValueHandle>>,
 }
 
 object!(pub FuncInstance);

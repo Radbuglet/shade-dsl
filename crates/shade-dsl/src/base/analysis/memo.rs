@@ -4,11 +4,11 @@ use ctx2d_utils::hash::{FxHashMap, hash_map};
 use derive_where::derive_where;
 
 #[derive_where(Clone, Default)]
-pub struct Dp<K, V> {
+pub struct Memo<K, V> {
     entries: Rc<RefCell<FxHashMap<K, Option<V>>>>,
 }
 
-impl<K, V> Dp<K, V>
+impl<K, V> Memo<K, V>
 where
     K: Clone + hash::Hash + Eq,
     V: Clone,
