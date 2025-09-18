@@ -7,7 +7,6 @@ use std::{
 
 use ctx2d_utils::mem::MappedArc;
 use derive_where::derive_where;
-use late_struct::late_field;
 
 use crate::base::syntax::{FilePos, SourceFileOrigin, SourceMap, SourceMapFile, Span};
 
@@ -48,8 +47,6 @@ pub struct DiagCtxt {
     error_guaranteed: AtomicBool,
 }
 
-late_field!(DiagCtxt[Session] => DiagCtxt);
-
 impl DiagCtxt {
     pub fn new() -> Self {
         Self::default()
@@ -61,7 +58,7 @@ impl DiagCtxt {
         }
 
         emit_pretty(
-            Session::fetch().get::<SourceMap>(),
+            &Session::fetch().source_map,
             &mut termcolor::StandardStream::stdout(termcolor::ColorChoice::Auto),
             diag.cast_ref(),
         );
@@ -131,7 +128,7 @@ impl<E: EmissionGuarantee> Diag<E> {
     }
 
     pub fn emit(self) -> E {
-        Session::fetch().get::<DiagCtxt>().emit(self)
+        Session::fetch().diag.emit(self)
     }
 }
 

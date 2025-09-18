@@ -3,7 +3,7 @@ use unicode_xid::UnicodeXID;
 use crate::{
     base::{
         Diag, LeafDiag, Session,
-        syntax::{CharCursor, CharParser, Parser, RawCharCursor, SourceMap, Span, Symbol},
+        syntax::{CharCursor, CharParser, Parser, RawCharCursor, Span, Symbol},
     },
     parse::token::{NumLitBase, TokenNumLit, punct},
     symbol,
@@ -18,7 +18,7 @@ type P<'a, 'ch> = &'a mut CharParser<'ch>;
 type C<'a, 'ch> = &'a mut CharCursor<'ch>;
 
 pub fn tokenize(span: Span) -> TokenGroup {
-    let text = Session::fetch().get::<SourceMap>().file(span.lo).text(span);
+    let text = Session::fetch().source_map.file(span.lo).text(span);
     let mut parser = Parser::new(RawCharCursor::new(span, &text));
 
     parser.context(symbol!("tokenizing the file"), |p| {

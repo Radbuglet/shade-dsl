@@ -7,7 +7,7 @@ use crate::{
         Session,
         syntax::{
             AtomSimplify, Cursor, Delimited, LookaheadResult, Matcher, Parser, Span, Spanned,
-            StuckHinter, Symbol, SymbolInterner,
+            StuckHinter, Symbol,
         },
     },
     symbol,
@@ -262,7 +262,7 @@ pub struct TokenNumLit {
 impl TokenNumLit {
     pub fn base(self) -> NumLitBase {
         let session = Session::fetch();
-        let text = session.get::<SymbolInterner>().lookup(self.text);
+        let text = self.text.as_str(&session);
 
         if text.starts_with("0x") {
             return NumLitBase::Hexadecimal;

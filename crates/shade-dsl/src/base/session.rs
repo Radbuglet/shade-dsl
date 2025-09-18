@@ -1,37 +1,47 @@
-use std::{cell::RefCell, sync::Arc};
+use std::{cell::RefCell, ops::Deref, sync::Arc};
 
-use late_struct::{LateField, LateInstance, late_struct};
-
-#[derive(Debug, Clone, Default)]
-pub struct Session(Arc<LateInstance<Self>>);
+use crate::base::{
+    DiagCtxt,
+    ir::IrArena,
+    syntax::{SourceMap, SymbolInterner},
+};
 
 thread_local! {
-    static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
+    static SESSION_TLS: RefCell<Option<Session>> = const { RefCell::new(None) };
 }
 
-late_struct!(Session);
+#[derive(Debug, Clone, Default)]
+pub struct Session(Arc<SessionInner>);
+
+#[derive(Debug, Default)]
+pub struct SessionInner {
+    pub symbols: SymbolInterner,
+    pub diag: DiagCtxt,
+    pub source_map: SourceMap,
+    pub ir_arena: IrArena,
+}
 
 impl Session {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn get<T: LateField<Session>>(&self) -> &T::Value {
-        self.0.get::<T>()
-    }
-
     #[must_use]
-    pub fn bind(self) -> impl Drop {
-        let old = SESSION.replace(Some(self));
+    pub fn bind(self) -> impl Sized {
+        let old = SESSION_TLS.replace(Some(self));
 
         scopeguard::guard(old, move |old| {
-            SESSION.set(old);
+            SESSION_TLS.set(old);
         })
     }
 
     pub fn fetch() -> Session {
-        SESSION
+        SESSION_TLS
             .with_borrow(|v| v.clone())
             .expect("no session was ever bound")
+    }
+}
+
+impl Deref for Session {
+    type Target = SessionInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

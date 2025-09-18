@@ -7,6 +7,7 @@ use crate::base::{Diag, ErrorGuaranteed};
 
 #[derive_where(Clone, Default)]
 pub struct Memo<K, V> {
+    #[expect(clippy::type_complexity)]
     entries: Rc<RefCell<FxHashMap<K, Option<Result<V, ErrorGuaranteed>>>>>,
 }
 

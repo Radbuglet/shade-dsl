@@ -7,7 +7,6 @@ use std::{
 };
 
 use ctx2d_utils::mem::MappedArc;
-use late_struct::late_field;
 
 use crate::base::Session;
 
@@ -89,7 +88,7 @@ impl FilePos {
     }
 
     pub fn file(self) -> Arc<SourceMapFile> {
-        Session::fetch().get::<SourceMap>().file(self)
+        Session::fetch().source_map.file(self)
     }
 }
 
@@ -278,8 +277,6 @@ struct SourceMapInner {
     files: Vec<Arc<SourceMapFile>>,
     len: FilePos,
 }
-
-late_field!(SourceMap[Session] => SourceMap);
 
 impl fmt::Debug for SourceMap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

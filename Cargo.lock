@@ -18,20 +18,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arid"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8b21f8967dfe2d8e0bc25ae24df42d976ae7cf17ba1873304462babdf9902"
-dependencies = [
- "bytemuck",
- "derive-where",
- "late-struct",
- "paste",
- "rustc-hash 2.1.1",
- "scopeguard",
-]
-
-[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -401,15 +387,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "inventory"
-version = "0.3.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab08d7cd2c5897f2c949e5383ea7c7db03fb19130ffcfbf7eda795137ae3cb83"
-dependencies = [
- "rustversion",
-]
-
-[[package]]
 name = "jni-sys"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -443,18 +420,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
-name = "late-struct"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "894e46f4ae22fe842d9c56e0ab119f0719721a98ccbb41d8faa38350778a4202"
-dependencies = [
- "cfg-if",
- "inventory",
- "linkme",
- "scopeguard",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.172"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -468,26 +433,6 @@ checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
  "windows-targets 0.53.1",
-]
-
-[[package]]
-name = "linkme"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1b1703c00b2a6a70738920544aa51652532cacddfec2e162d2e29eae01e665c"
-dependencies = [
- "linkme-impl",
-]
-
-[[package]]
-name = "linkme-impl"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04d55ca5d5a14363da83bf3c33874b8feaa34653e760d5216d7ef9829c88001a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -740,14 +685,12 @@ dependencies = [
 name = "shade-dsl"
 version = "0.1.0"
 dependencies = [
- "arid",
  "bumpalo",
  "cbit",
  "codespan-reporting",
  "ctx2d-utils",
  "derive-where",
  "index_vec",
- "late-struct",
  "paste",
  "scopeguard",
  "termcolor",

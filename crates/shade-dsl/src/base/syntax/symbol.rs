@@ -2,7 +2,6 @@ use std::{fmt, num::NonZeroU32, sync::RwLock};
 
 use bumpalo::Bump;
 use ctx2d_utils::hash::{FxHashMap, fx_hash_one, hash_map};
-use late_struct::late_field;
 
 use crate::base::Session;
 
@@ -25,11 +24,11 @@ impl fmt::Display for Symbol {
 
 impl Symbol {
     pub fn new(value: &str) -> Self {
-        Session::fetch().get::<SymbolInterner>().intern(value)
+        Session::fetch().symbols.intern(value)
     }
 
     pub fn as_str(self, s: &Session) -> &str {
-        s.get::<SymbolInterner>().lookup(self)
+        s.symbols.lookup(self)
     }
 }
 
@@ -37,8 +36,6 @@ impl Symbol {
 
 #[derive(Default)]
 pub struct SymbolInterner(RwLock<SymbolInternInner>);
-
-late_field!(SymbolInterner[Session] => SymbolInterner);
 
 #[derive(Default)]
 struct SymbolInternInner {
@@ -118,6 +115,7 @@ impl SymbolInterner {
 
 // === `symbol` macro === //
 
+// FIXME: This is incorrect for multi-session.
 #[doc(hidden)]
 pub mod symbol_internals {
     use std::{
