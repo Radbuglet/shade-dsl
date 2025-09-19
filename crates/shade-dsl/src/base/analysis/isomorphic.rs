@@ -64,6 +64,12 @@ pub enum LabelledSuccessor<N, P> {
     Placeholder(P),
 }
 
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+pub enum SccNode<NInt, NExt> {
+    Internal(NInt),
+    External(NExt),
+}
+
 // === Tarjan === //
 
 // Adapted from: https://en.wikipedia.org/w/index.php?title=Tarjan%27s_strongly_connected_components_algorithm&oldid=1270884973#The_algorithm_in_pseudocode
@@ -185,23 +191,17 @@ pub fn tarjan<G: LabelledDiGraph, B>(
 pub struct IsoSccPortrait<NInt, NExt, P> {
     /// The internal nodes forming this sub-graph. The order of these nodes is deterministic w.r.t
     /// a given key and sub-graph structure.
-    internal_nodes: Vec<NInt>,
+    pub internal_nodes: Vec<NInt>,
 
     /// Edges from internal source node indices to destination nodes.
-    edges: Vec<(u32, EdgeDest<NExt, P>)>,
+    pub edges: Vec<(u32, IsoSccPortraitEdge<NExt, P>)>,
 }
 
 #[derive(Debug, Hash, Eq, PartialEq)]
-enum EdgeDest<NExt, P> {
+pub enum IsoSccPortraitEdge<NExt, P> {
     Internal(u32),
     External(NExt),
     Placeholder(P),
-}
-
-#[derive(Debug, Hash, Eq, PartialEq, Clone)]
-pub enum SccNode<NInt, NExt> {
-    Internal(NInt),
-    External(NExt),
 }
 
 impl<NInt, NExt, P> IsoSccPortrait<NInt, NExt, P>
@@ -238,13 +238,13 @@ where
                 let successor = match successor {
                     LabelledSuccessor::Node(node) => node,
                     LabelledSuccessor::Placeholder(placeholder) => {
-                        edges.push((curr_idx, EdgeDest::Placeholder(placeholder)));
+                        edges.push((curr_idx, IsoSccPortraitEdge::Placeholder(placeholder)));
                         continue;
                     }
                 };
 
                 if let Some(&successor_idx) = internal_node_map.get(&successor) {
-                    edges.push((curr_idx, EdgeDest::Internal(successor_idx)));
+                    edges.push((curr_idx, IsoSccPortraitEdge::Internal(successor_idx)));
                     continue;
                 }
 
@@ -256,7 +256,7 @@ where
                         stack.push((successor, successor_idx));
                     }
                     SccNode::External(external) => {
-                        edges.push((curr_idx, EdgeDest::External(external)));
+                        edges.push((curr_idx, IsoSccPortraitEdge::External(external)));
                     }
                 }
             });
@@ -313,6 +313,13 @@ where
         }
 
         self.edges.hash(hasher);
+    }
+
+    pub fn map<OInt>(self, f: impl FnMut(NInt) -> OInt) -> IsoSccPortrait<OInt, NExt, P> {
+        IsoSccPortrait {
+            internal_nodes: self.internal_nodes.into_iter().map(f).collect(),
+            edges: self.edges,
+        }
     }
 }
 
@@ -372,11 +379,11 @@ mod tests {
     }
 
     impl<G: SimpleGraph> SimpleInterner<G> {
-        pub fn intern(&mut self, graph: &G, node: &G::Node) -> G::Node {
+        pub fn intern(&mut self, graph: &G, start: &G::Node) -> G::Node {
             let mut external_canonicals = FxHashMap::<G::Node, G::Node>::default();
 
-            cbit::cbit!(for scc in tarjan(graph, [node.clone()]) {
-                let keys = portrait_keys(graph, scc, |v| {
+            cbit::cbit!(for scc in tarjan(graph, [start.clone()]) {
+                let keys = portrait_keys(graph, scc, |node| {
                     let mut hasher = FxHasher::default();
                     graph.data_hash(node, &mut hasher);
                     hasher.finish()
@@ -449,7 +456,7 @@ mod tests {
                 }
             });
 
-            external_canonicals.remove(node).unwrap()
+            external_canonicals.remove(start).unwrap()
         }
     }
 

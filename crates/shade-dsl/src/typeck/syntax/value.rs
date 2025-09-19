@@ -12,14 +12,11 @@ use super::OwnGenericIdx;
 // === Handles === //
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct ValueIntern(pub(super) thunderdome::Index);
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct ValuePtr(pub(super) thunderdome::Index);
 
 // === Values === //
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Value {
     /// A value representing a type.
     MetaType(Obj<Ty>),
@@ -43,10 +40,12 @@ pub enum Value {
     Tuple(Vec<ValuePtr>),
 
     /// A value representing a statically-allocated array of values.
-    Array(Box<[ValuePtr]>),
+    Array(Vec<ValuePtr>),
 
     /// A value representing a user-defined ADT.
     Adt(AdtInstance, AdtValue),
+
+    Placeholder,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -118,7 +117,7 @@ impl PartialEq for ValueScalar {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AdtValue {
     Composite(Vec<ValuePtr>),
     Variant(u32, ValuePtr),
@@ -178,17 +177,17 @@ pub struct FuncInstance {
     pub parent: Option<Obj<FuncInstance>>,
 
     /// The generic parameters passed to the function.
-    pub generics: IndexVec<OwnGenericIdx, ValueIntern>,
+    pub generics: IndexVec<OwnGenericIdx, ValuePtr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SemiFuncInstance {
     /// The function we're trying to instantiate.
     pub func: Obj<Func>,
 
     /// The upvars captured by parent functions which have already been evaluated.
-    pub parent: Option<FuncInstance>,
+    pub parent: Option<Obj<FuncInstance>>,
 
     /// The partial list of generic arguments to the function, filled from left to right.
-    pub generics: Vec<ValueIntern>,
+    pub generics: Vec<ValuePtr>,
 }
