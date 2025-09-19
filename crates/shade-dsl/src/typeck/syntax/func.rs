@@ -3,7 +3,7 @@ use index_vec::IndexVec;
 use crate::{
     base::{
         ErrorGuaranteed,
-        ir::{IrRef, LateInit},
+        arena::{LateInit, Obj},
         syntax::{Span, Symbol},
     },
     parse::ast::{AdtKind, BinOpKind, LiteralKind, Mutability},
@@ -20,7 +20,7 @@ index_vec::define_index_type! {
 #[derive(Debug)]
 pub struct Func {
     /// The function which is the lexical parent to this function.
-    pub parent: Option<IrRef<Func>>,
+    pub parent: Option<Obj<Func>>,
 
     /// A friendly name for the function.
     pub name: Symbol,
@@ -50,50 +50,50 @@ pub struct Func {
 #[derive(Debug)]
 pub struct FuncInner {
     /// The generic parameters the function takes in.
-    pub generics: IndexVec<OwnGenericIdx, IrRef<GenericDef>>,
+    pub generics: IndexVec<OwnGenericIdx, Obj<Generic>>,
 
     /// Child constants. These are stored here to ensure that all defined constants are evaluated,
     /// regardless of whether they're used in the body.
-    pub consts: Vec<IrRef<Func>>,
+    pub consts: Vec<Obj<Func>>,
 
     /// The locals to which each argument is bound. This is `None` if the function should be
     /// evaluated as soon as all its generic are specified.
-    pub params: Option<Vec<FuncParamDef>>,
+    pub params: Option<Vec<FuncParam>>,
 
     /// The return type of the function. This is `None` if the type-checker is expected to infer it,
     /// which is the case when constructing `Func`s for ADT member initializers.
-    pub return_type: Option<IrRef<Expr>>,
+    pub return_type: Option<Obj<Expr>>,
 
     /// The main body of the function.
-    pub body: IrRef<Expr>,
+    pub body: Obj<Expr>,
 }
 
 #[derive(Debug, Clone)]
-pub struct FuncParamDef {
+pub struct FuncParam {
     pub span: Span,
-    pub binding: IrRef<Pat>,
-    pub ty: LateInit<IrRef<Expr>>,
+    pub binding: Obj<Pat>,
+    pub ty: LateInit<Obj<Expr>>,
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum AnyName {
     /// A constant to evaluate. These functions take in no generics or arguments.
-    Const(IrRef<Func>),
+    Const(Obj<Func>),
 
     /// A generic defined in the current function or any of its ancestors.
-    Generic(IrRef<GenericDef>),
+    Generic(Obj<Generic>),
 
     /// A local defined in the current function.
-    Local(IrRef<LocalDef>),
+    Local(Obj<Local>),
 }
 
 #[derive(Debug)]
-pub struct GenericDef {
+pub struct Generic {
     /// The index of the generic parameter in the arguments list.
     pub idx: OwnGenericIdx,
 
     /// The function owning the generic parameter.
-    pub owner: IrRef<Func>,
+    pub owner: Obj<Func>,
 
     /// The span of the name binding the generic.
     pub span: Span,
@@ -102,12 +102,12 @@ pub struct GenericDef {
     pub name: Symbol,
 
     /// The expected type of the generic value being provided.
-    pub ty: LateInit<IrRef<Expr>>,
+    pub ty: LateInit<Obj<Expr>>,
 }
 
 #[derive(Debug)]
-pub struct LocalDef {
-    pub owner: IrRef<Func>,
+pub struct Local {
+    pub owner: Obj<Func>,
     pub span: Span,
     pub name: Symbol,
     pub muta: Mutability,
@@ -124,14 +124,14 @@ pub struct Expr {
 #[derive(Debug)]
 pub enum ExprKind {
     Name(AnyName),
-    Block(IrRef<Block>),
+    Block(Obj<Block>),
     Lit(LiteralKind),
-    BinOp(BinOpKind, IrRef<Expr>, IrRef<Expr>),
-    Call(IrRef<Expr>, Vec<IrRef<Expr>>),
-    Destructure(IrRef<Pat>, IrRef<Expr>),
+    BinOp(BinOpKind, Obj<Expr>, Obj<Expr>),
+    Call(Obj<Expr>, Vec<Obj<Expr>>),
+    Destructure(Obj<Pat>, Obj<Expr>),
     Match(Box<ExprMatch>),
-    Adt(IrRef<ExprAdt>),
-    Func(IrRef<Func>),
+    Adt(Obj<ExprAdt>),
+    Func(Obj<Func>),
     Error(ErrorGuaranteed),
     Placeholder,
 }
@@ -139,18 +139,19 @@ pub enum ExprKind {
 #[derive(Debug)]
 pub struct Block {
     pub span: Span,
-    pub stmts: Vec<IrRef<Expr>>,
-    pub last_expr: Option<IrRef<Expr>>,
+    pub stmts: Vec<Obj<Expr>>,
+    pub last_expr: Option<Obj<Expr>>,
 }
 
 #[derive(Debug)]
 pub struct ExprMatch {
-    pub scrutinee: IrRef<Expr>,
-    pub arms: Vec<(IrRef<Pat>, IrRef<Expr>)>,
+    pub scrutinee: Obj<Expr>,
+    pub arms: Vec<(Obj<Pat>, Obj<Expr>)>,
 }
 
 #[derive(Debug)]
 pub struct ExprAdt {
+    pub owner: Obj<Func>,
     pub kind: AdtKind,
     pub fields: Vec<ExprAdtField>,
     pub members: Vec<ExprAdtMember>,
@@ -161,7 +162,7 @@ pub struct ExprAdtField {
     pub is_public: bool,
     pub span: Span,
     pub name: Symbol,
-    pub ty: IrRef<Func>,
+    pub ty: Obj<Func>,
 }
 
 #[derive(Debug)]
@@ -169,7 +170,7 @@ pub struct ExprAdtMember {
     pub is_public: bool,
     pub span: Span,
     pub name: Symbol,
-    pub init: IrRef<Func>,
+    pub init: Obj<Func>,
 }
 
 // === Pat === //
@@ -183,7 +184,7 @@ pub struct Pat {
 #[derive(Debug)]
 pub enum PatKind {
     Hole,
-    Name(IrRef<LocalDef>),
-    Tuple(Vec<IrRef<Pat>>),
+    Name(Obj<Local>),
+    Tuple(Vec<Obj<Pat>>),
     Error(ErrorGuaranteed),
 }

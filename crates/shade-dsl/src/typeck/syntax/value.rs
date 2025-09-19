@@ -1,28 +1,58 @@
 use std::hash;
 
-use arid::{Strong, object};
 use index_vec::IndexVec;
 
-use crate::typeck::syntax::ExprAdtHandle;
+use crate::{
+    base::arena::Obj,
+    typeck::syntax::{ExprAdt, Func},
+};
 
-use super::{FuncHandle, OwnConstIdx, OwnGenericIdx};
+use super::OwnGenericIdx;
+
+// === Handles === //
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct ValueIntern(thunderdome::Index);
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct ValuePtr(thunderdome::Index);
 
 // === Values === //
 
 #[derive(Debug)]
 pub enum Value {
-    MetaType(TyHandle),
-    MetaFunc(SemiFuncInstance),
+    /// A value representing a type.
+    MetaType(Obj<Ty>),
+
+    /// A value representing an uninstantiated function.
+    MetaFunc(Obj<SemiFuncInstance>),
+
+    /// A value representing a dynamically-allocated array of values.
+    MetaList(Vec<ValuePtr>),
+
+    /// A pointer to another value.
+    Pointer(ValuePtr),
+
+    /// A value representing an instantiated function.
+    Func(Obj<FuncInstance>),
+
+    /// A value representing a scalar.
     Scalar(ValueScalar),
-    Tuple(Vec<ValueHandle>),
+
+    /// A value representing a tuple.
+    Tuple(Vec<ValuePtr>),
+
+    /// A value representing a statically-allocated array of values.
+    Array(Box<[ValuePtr]>),
+
+    /// A value representing a user-defined ADT.
     Adt(AdtInstance, AdtValue),
 }
-
-object!(pub Value);
 
 #[derive(Debug, Copy, Clone)]
 pub enum ValueScalar {
     Bool(bool),
+    Char(char),
     U8(u8),
     I8(i8),
     U16(u16),
@@ -43,6 +73,7 @@ impl hash::Hash for ValueScalar {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         match self {
             ValueScalar::Bool(v) => v.hash(state),
+            ValueScalar::Char(v) => v.hash(state),
             ValueScalar::U8(v) => v.hash(state),
             ValueScalar::I8(v) => v.hash(state),
             ValueScalar::U16(v) => v.hash(state),
@@ -67,6 +98,7 @@ impl PartialEq for ValueScalar {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Bool(lhs), Self::Bool(rhs)) => lhs == rhs,
+            (Self::Char(lhs), Self::Char(rhs)) => lhs == rhs,
             (Self::U8(lhs), Self::U8(rhs)) => lhs == rhs,
             (Self::I8(lhs), Self::I8(rhs)) => lhs == rhs,
             (Self::U16(lhs), Self::U16(rhs)) => lhs == rhs,
@@ -88,23 +120,27 @@ impl PartialEq for ValueScalar {
 
 #[derive(Debug)]
 pub enum AdtValue {
-    Composite(Vec<ValueHandle>),
-    Variant(u32, ValueHandle),
+    Composite(Vec<ValuePtr>),
+    Variant(u32, ValuePtr),
 }
+
+// === Ty === //
 
 #[derive(Debug)]
 pub enum Ty {
     MetaTy,
     MetaFunc,
-    Fn(Vec<TyHandle>, TyHandle),
-    Scalar(TyScalar),
-    Adt(AdtInstance),
+    MetaList(Obj<Ty>),
+    Pointer(Obj<Ty>),
+    Func(Vec<Obj<Ty>>, Obj<Ty>),
+    Scalar(ScalarKind),
+    Tuple(Vec<Ty>),
+    Array(Obj<Ty>, usize),
+    Adt(Obj<AdtInstance>),
 }
 
-object!(pub Ty);
-
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub enum TyScalar {
+pub enum ScalarKind {
     Bool,
     U8,
     I8,
@@ -126,38 +162,33 @@ pub enum TyScalar {
 
 #[derive(Debug)]
 pub struct AdtInstance {
+    /// The function which created the ADT.
+    pub owner: Obj<FuncInstance>,
+
     /// The structure being instantiated.
-    pub adt: Strong<ExprAdtHandle>,
-
-    /// The results computed by the struct's owner.
-    pub owner_results: Strong<FuncInstanceHandle>,
-}
-
-#[derive(Debug)]
-pub struct SemiFuncInstance {
-    /// The function we're trying to instantiate.
-    pub func: FuncHandle,
-
-    /// The partial list of generic arguments to the function, filled from left to right.
-    pub generics: Vec<ValueHandle>,
-
-    /// The upvars captured by parent functions which have already been evaluated.
-    pub parent_results: Option<Strong<FuncInstanceHandle>>,
+    pub adt: Obj<ExprAdt>,
 }
 
 #[derive(Debug)]
 pub struct FuncInstance {
     /// The function we're evaluating.
-    pub func: FuncHandle,
+    pub func: Obj<Func>,
 
     /// The lexical parent of this function, which may also be in the process of active evaluation.
-    pub parent: Option<Strong<FuncInstanceHandle>>,
+    pub parent: Option<Obj<FuncInstance>>,
 
     /// The generic parameters passed to the function.
-    pub generics: IndexVec<OwnGenericIdx, Strong<ValueHandle>>,
-
-    /// The constants we have evaluated thus far.
-    pub consts: IndexVec<OwnConstIdx, Option<Strong<ValueHandle>>>,
+    pub generics: IndexVec<OwnGenericIdx, ValueIntern>,
 }
 
-object!(pub FuncInstance);
+#[derive(Debug)]
+pub struct SemiFuncInstance {
+    /// The function we're trying to instantiate.
+    pub func: Obj<Func>,
+
+    /// The upvars captured by parent functions which have already been evaluated.
+    pub parent: Option<FuncInstance>,
+
+    /// The partial list of generic arguments to the function, filled from left to right.
+    pub generics: Vec<ValueIntern>,
+}

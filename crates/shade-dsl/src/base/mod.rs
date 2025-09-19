@@ -1,5 +1,5 @@
 pub mod analysis;
-pub mod ir;
+pub mod arena;
 pub mod syntax;
 
 mod diag;

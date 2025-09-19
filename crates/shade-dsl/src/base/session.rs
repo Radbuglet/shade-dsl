@@ -2,7 +2,7 @@ use std::{cell::RefCell, ops::Deref, sync::Arc};
 
 use crate::base::{
     DiagCtxt,
-    ir::IrArena,
+    arena::Arena,
     syntax::{SourceMap, SymbolInterner},
 };
 
@@ -18,7 +18,7 @@ pub struct SessionInner {
     pub symbols: SymbolInterner,
     pub diag: DiagCtxt,
     pub source_map: SourceMap,
-    pub ir_arena: IrArena,
+    pub ir_arena: Arena,
 }
 
 impl Session {

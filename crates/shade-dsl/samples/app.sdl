@@ -1,7 +1,7 @@
-pub const main = fn<T: V, V: T>(foo: whee) {
-    const whee = mod {};
+const Whee = struct {
+    foo: Woo;
+};
 
-    {
-        const waz = whee;
-    }
+const Woo = struct {
+    foo: Whee;
 };

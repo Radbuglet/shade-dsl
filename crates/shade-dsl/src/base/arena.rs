@@ -19,31 +19,31 @@ use derive_where::derive_where;
 
 use crate::base::Session;
 
-// === IrArena === //
+// === Arena === //
 
-pub struct IrArena {
+pub struct Arena {
     generation: NonZeroU64,
-    inner: Mutex<IrArenaInner>,
+    inner: Mutex<ArenaInner>,
 }
 
-struct IrArenaInner {
+struct ArenaInner {
     bump: bumpalo::Bump,
     singles: Vec<NonNull<dyn Any + Send + Sync>>,
 }
 
-impl fmt::Debug for IrArena {
+impl fmt::Debug for Arena {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("IrArena").finish_non_exhaustive()
+        f.debug_struct("Arena").finish_non_exhaustive()
     }
 }
 
-impl Default for IrArena {
+impl Default for Arena {
     fn default() -> Self {
         static ID_GEN: AtomicU64 = AtomicU64::new(1);
 
         Self {
             generation: NonZeroU64::new(ID_GEN.fetch_add(1, Relaxed)).unwrap(),
-            inner: Mutex::new(IrArenaInner {
+            inner: Mutex::new(ArenaInner {
                 bump: Bump::new(),
                 singles: Vec::new(),
             }),
@@ -51,7 +51,7 @@ impl Default for IrArena {
     }
 }
 
-impl Drop for IrArena {
+impl Drop for Arena {
     fn drop(&mut self) {
         let inner = self.inner.get_mut().unwrap();
 
@@ -62,16 +62,16 @@ impl Drop for IrArena {
 }
 
 #[derive_where(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct IrRef<T: 'static + Send + Sync> {
+pub struct Obj<T: 'static + Send + Sync> {
     generation: NonZeroU64,
     ptr: NonNull<T>,
 }
 
-unsafe impl<T: 'static + Send + Sync> Send for IrRef<T> {}
+unsafe impl<T: 'static + Send + Sync> Send for Obj<T> {}
 
-unsafe impl<T: 'static + Send + Sync> Sync for IrRef<T> {}
+unsafe impl<T: 'static + Send + Sync> Sync for Obj<T> {}
 
-impl<T> fmt::Debug for IrRef<T>
+impl<T> fmt::Debug for Obj<T>
 where
     T: 'static + Send + Sync + fmt::Debug,
 {
@@ -98,7 +98,7 @@ where
     }
 }
 
-impl<T: 'static + Send + Sync> IrRef<T> {
+impl<T: 'static + Send + Sync> Obj<T> {
     pub fn new(value: T, s: &Session) -> Self {
         let mut inner = s.ir_arena.inner.lock().unwrap();
 

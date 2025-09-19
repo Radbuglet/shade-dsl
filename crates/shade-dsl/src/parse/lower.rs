@@ -6,14 +6,14 @@ use crate::{
     base::{
         Diag, Session,
         analysis::NameResolver,
-        ir::{IrRef, LateInit},
+        arena::{LateInit, Obj},
         syntax::{Span, Symbol},
     },
     parse::ast::AdtKind,
     symbol,
     typeck::syntax::{
         AnyName, Block, Expr, ExprAdt, ExprAdtField, ExprAdtMember, ExprKind, Func, FuncInner,
-        FuncParamDef, GenericDef, LocalDef, OwnGenericIdx, Pat, PatKind,
+        FuncParam, Generic, Local, OwnGenericIdx, Pat, PatKind,
     },
 };
 
@@ -21,7 +21,7 @@ use super::ast::{
     AstAdt, AstBlock, AstExpr, AstExprKind, AstFuncDef, AstPat, AstPatKind, AstStmtKind,
 };
 
-pub fn lower_file(adt: &AstAdt) -> IrRef<ExprAdt> {
+pub fn lower_file(adt: &AstAdt) -> Obj<Func> {
     assert_eq!(adt.kind, AdtKind::Mod);
     assert!(adt.fields.is_empty());
 
@@ -29,7 +29,7 @@ pub fn lower_file(adt: &AstAdt) -> IrRef<ExprAdt> {
         session: &Session::fetch(),
         resolver: &mut NameResolver::new(),
     }
-    .lower_adt(None, adt)
+    .lower_file(adt)
 }
 
 #[derive(Debug)]
@@ -39,6 +39,39 @@ struct LowerCtxt<'a> {
 }
 
 impl<'a> LowerCtxt<'a> {
+    fn lower_file(&mut self, adt: &AstAdt) -> Obj<Func> {
+        let owner = Obj::new(
+            Func {
+                parent: None,
+                name: symbol!("file"),
+                span: Span::DUMMY,
+                inner: LateInit::uninit(),
+            },
+            self.session,
+        );
+
+        let adt = self.lower_adt(owner, adt);
+
+        LateInit::init(
+            &owner.r(self.session).inner,
+            FuncInner {
+                generics: IndexVec::new(),
+                consts: Vec::new(),
+                params: None,
+                return_type: None,
+                body: Obj::new(
+                    Expr {
+                        span: Span::DUMMY,
+                        kind: ExprKind::Adt(adt),
+                    },
+                    self.session,
+                ),
+            },
+        );
+
+        owner
+    }
+
     fn define_name(&mut self, name: AnyName) {
         fn name_of(name: AnyName, s: &Session) -> Symbol {
             match name {
@@ -79,10 +112,10 @@ impl<'a> LowerCtxt<'a> {
 
     fn lower_expr_vec(
         &mut self,
-        owner: IrRef<Func>,
-        owner_consts: &mut Vec<IrRef<Func>>,
+        owner: Obj<Func>,
+        owner_consts: &mut Vec<Obj<Func>>,
         exprs: &[AstExpr],
-    ) -> Vec<IrRef<Expr>> {
+    ) -> Vec<Obj<Expr>> {
         exprs
             .iter()
             .map(|expr| self.lower_expr(owner, owner_consts, expr))
@@ -91,10 +124,10 @@ impl<'a> LowerCtxt<'a> {
 
     fn lower_expr(
         &mut self,
-        owner: IrRef<Func>,
-        owner_consts: &mut Vec<IrRef<Func>>,
+        owner: Obj<Func>,
+        owner_consts: &mut Vec<Obj<Func>>,
         expr: &AstExpr,
-    ) -> IrRef<Expr> {
+    ) -> Obj<Expr> {
         let kind = match &expr.kind {
             AstExprKind::Name(ident) => 'make_name: {
                 let Some(&name) = self.resolver.lookup(ident.text) else {
@@ -136,7 +169,7 @@ impl<'a> LowerCtxt<'a> {
                     /* consts_already_lowered */ false,
                 ))
             }
-            AstExprKind::AdtDef(adt_ast) => ExprKind::Adt(self.lower_adt(Some(owner), adt_ast)),
+            AstExprKind::AdtDef(adt_ast) => ExprKind::Adt(self.lower_adt(owner, adt_ast)),
             AstExprKind::New(ast_expr, items) => todo!(),
             AstExprKind::Tuple(vec) => todo!(),
             AstExprKind::Array(ast_exprs) => todo!(),
@@ -177,7 +210,7 @@ impl<'a> LowerCtxt<'a> {
             AstExprKind::Error(err) => ExprKind::Error(*err),
         };
 
-        IrRef::new(
+        Obj::new(
             Expr {
                 span: expr.span,
                 kind,
@@ -186,8 +219,8 @@ impl<'a> LowerCtxt<'a> {
         )
     }
 
-    fn lower_func(&mut self, owner: Option<IrRef<Func>>, ast: &AstFuncDef) -> IrRef<Func> {
-        let func = IrRef::new(
+    fn lower_func(&mut self, owner: Option<Obj<Func>>, ast: &AstFuncDef) -> Obj<Func> {
+        let func = Obj::new(
             Func {
                 parent: owner,
                 name: symbol!("<???>"), // TODO
@@ -207,8 +240,8 @@ impl<'a> LowerCtxt<'a> {
                 continue;
             };
 
-            let def = IrRef::new(
-                GenericDef {
+            let def = Obj::new(
+                Generic {
                     idx: func_generics.next_idx(),
                     owner: func,
                     span: name.span,
@@ -232,7 +265,7 @@ impl<'a> LowerCtxt<'a> {
             for param in params {
                 let binding = self.lower_pat_defining_locals(func, &param.binding);
 
-                param_locals.push(FuncParamDef {
+                param_locals.push(FuncParam {
                     span: param.span,
                     binding,
                     ty: LateInit::uninit(),
@@ -275,7 +308,7 @@ impl<'a> LowerCtxt<'a> {
             &ast.body,
             /* consts_already_lowered */ true,
         );
-        let func_body = IrRef::new(
+        let func_body = Obj::new(
             Expr {
                 span: func_body.r(self.session).span,
                 kind: ExprKind::Block(func_body),
@@ -302,8 +335,8 @@ impl<'a> LowerCtxt<'a> {
     #[must_use]
     fn define_block_consts(
         &mut self,
-        owner: IrRef<Func>,
-        owner_consts: &mut Vec<IrRef<Func>>,
+        owner: Obj<Func>,
+        owner_consts: &mut Vec<Obj<Func>>,
         block: &AstBlock,
     ) -> Range<usize> {
         let first = owner_consts.len();
@@ -314,7 +347,7 @@ impl<'a> LowerCtxt<'a> {
                 continue;
             };
 
-            let new_def = IrRef::new(
+            let new_def = Obj::new(
                 Func {
                     parent: Some(owner),
                     name: name.text,
@@ -333,7 +366,7 @@ impl<'a> LowerCtxt<'a> {
 
     fn lower_block_consts(
         &mut self,
-        owner_consts: &[IrRef<Func>],
+        owner_consts: &[Obj<Func>],
         block: &AstBlock,
         mut const_lower_range: Range<usize>,
     ) {
@@ -360,11 +393,11 @@ impl<'a> LowerCtxt<'a> {
 
     fn lower_block(
         &mut self,
-        owner: IrRef<Func>,
-        owner_consts: &mut Vec<IrRef<Func>>,
+        owner: Obj<Func>,
+        owner_consts: &mut Vec<Obj<Func>>,
         block: &AstBlock,
         consts_already_lowered: bool,
-    ) -> IrRef<Block> {
+    ) -> Obj<Block> {
         self.resolver.push_rib();
 
         let mut stmts = Vec::new();
@@ -383,7 +416,7 @@ impl<'a> LowerCtxt<'a> {
                     let init = self.lower_expr(owner, owner_consts, init);
                     let pat = self.lower_pat_defining_locals(owner, binding);
 
-                    stmts.push(IrRef::new(
+                    stmts.push(Obj::new(
                         Expr {
                             span: stmt.span,
                             kind: ExprKind::Destructure(pat, init),
@@ -402,7 +435,7 @@ impl<'a> LowerCtxt<'a> {
 
         self.resolver.pop_rib();
 
-        IrRef::new(
+        Obj::new(
             Block {
                 span: block.span,
                 stmts,
@@ -412,12 +445,12 @@ impl<'a> LowerCtxt<'a> {
         )
     }
 
-    fn lower_pat_defining_locals(&mut self, owner: IrRef<Func>, pat: &AstPat) -> IrRef<Pat> {
+    fn lower_pat_defining_locals(&mut self, owner: Obj<Func>, pat: &AstPat) -> Obj<Pat> {
         let kind = match &pat.kind {
             AstPatKind::Hole => PatKind::Hole,
             AstPatKind::Name(muta, ident) => {
-                let def = IrRef::new(
-                    LocalDef {
+                let def = Obj::new(
+                    Local {
                         owner,
                         span: ident.span,
                         name: ident.text,
@@ -442,7 +475,7 @@ impl<'a> LowerCtxt<'a> {
             AstPatKind::Error(err) => PatKind::Error(*err),
         };
 
-        IrRef::new(
+        Obj::new(
             Pat {
                 span: pat.span,
                 kind,
@@ -451,10 +484,11 @@ impl<'a> LowerCtxt<'a> {
         )
     }
 
-    fn lower_adt(&mut self, owner: Option<IrRef<Func>>, adt_ast: &AstAdt) -> IrRef<ExprAdt> {
+    fn lower_adt(&mut self, owner: Obj<Func>, adt_ast: &AstAdt) -> Obj<ExprAdt> {
         self.resolver.push_rib();
 
         let mut adt = ExprAdt {
+            owner,
             kind: adt_ast.kind,
             fields: Vec::new(),
             members: Vec::new(),
@@ -464,9 +498,9 @@ impl<'a> LowerCtxt<'a> {
         let mut member_defs = Vec::new();
 
         for member in &adt_ast.members {
-            let member_func = IrRef::new(
+            let member_func = Obj::new(
                 Func {
-                    parent: owner,
+                    parent: Some(owner),
                     name: member.name.text,
                     span: member.init.span,
                     inner: LateInit::uninit(),
@@ -504,9 +538,9 @@ impl<'a> LowerCtxt<'a> {
 
         // Lower all field types
         for field in &adt_ast.fields {
-            let ty = IrRef::new(
+            let ty = Obj::new(
                 Func {
-                    parent: owner,
+                    parent: Some(owner),
                     name: field.name.text,
                     span: field.ty.span,
                     inner: LateInit::uninit(),
@@ -538,6 +572,6 @@ impl<'a> LowerCtxt<'a> {
 
         self.resolver.pop_rib();
 
-        IrRef::new(adt, self.session)
+        Obj::new(adt, self.session)
     }
 }
