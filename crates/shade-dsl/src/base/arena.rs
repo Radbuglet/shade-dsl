@@ -2,7 +2,7 @@ use std::{
     any::{Any, TypeId},
     cell::{RefCell, UnsafeCell},
     fmt,
-    hash::BuildHasherDefault,
+    hash::{self, BuildHasher as _, BuildHasherDefault},
     mem::MaybeUninit,
     num::NonZeroU64,
     ops::Deref,
@@ -14,7 +14,7 @@ use std::{
 };
 
 use bumpalo::Bump;
-use ctx2d_utils::hash::FxHashSet;
+use ctx2d_utils::hash::{FxBuildHasher, FxHashMap, FxHashSet, hash_map};
 use derive_where::derive_where;
 
 use crate::base::Session;
@@ -114,6 +114,42 @@ impl<T: 'static + Send + Sync> Obj<T> {
     pub fn r(self, s: &Session) -> &T {
         assert_eq!(s.gp_arena.generation, self.generation);
         unsafe { self.ptr.as_ref() }
+    }
+}
+
+// === ObjInterner === //
+
+#[derive_where(Default)]
+pub struct ObjInterner<T: 'static + Send + Sync> {
+    interns: FxHashMap<(Obj<T>, u64), ()>,
+}
+
+impl<T: 'static + Send + Sync> fmt::Debug for ObjInterner<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ObjInterner").finish_non_exhaustive()
+    }
+}
+
+impl<T> ObjInterner<T>
+where
+    T: 'static + Send + Sync + hash::Hash + Eq,
+{
+    pub fn intern(&mut self, ty: T, s: &Session) -> Obj<T> {
+        let hash = FxBuildHasher::default().hash_one(&ty);
+
+        match self
+            .interns
+            .raw_entry_mut()
+            .from_hash(hash, |(other, other_hash)| {
+                hash == *other_hash && &ty == other.r(s)
+            }) {
+            hash_map::RawEntryMut::Occupied(entry) => entry.key().0,
+            hash_map::RawEntryMut::Vacant(entry) => {
+                let ty = Obj::new(ty, s);
+                entry.insert_with_hasher(hash, (ty, hash), (), |(_, hash)| *hash);
+                ty
+            }
+        }
     }
 }
 

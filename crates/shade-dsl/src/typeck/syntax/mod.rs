@@ -4,5 +4,5 @@ pub use func::*;
 mod value;
 pub use value::*;
 
-mod interner;
-pub use interner::*;
+mod value_alloc;
+pub use value_alloc::*;

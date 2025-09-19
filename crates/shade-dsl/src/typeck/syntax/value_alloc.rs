@@ -44,6 +44,38 @@ impl ValueArena {
     pub fn write(&mut self, ptr: ValuePtr) -> &mut Value {
         &mut self.arena[ptr.0]
     }
+
+    pub fn duplicate(&mut self, target: ValuePtr) -> ValuePtr {
+        self.duplicate_ext(None, target)
+    }
+
+    pub fn duplicate_ext(
+        &mut self,
+        from_arena: Option<&ValueArena>,
+        from_root: ValuePtr,
+    ) -> ValuePtr {
+        let to_root = self.alloc(Value::Placeholder);
+
+        let mut stack = vec![(from_root, to_root)];
+        let mut mapping = FxHashMap::from_iter([(from_root, to_root)]);
+
+        while let Some((from, to)) = stack.pop() {
+            let mut value = from_arena.unwrap_or(self).read(from).clone();
+
+            cbit::cbit!(for edge in follow_node_mut(&mut value) {
+                let edge_from = *edge;
+                *edge = *mapping.entry(edge_from).or_insert_with(|| {
+                    let edge_to = self.alloc(Value::Placeholder);
+                    stack.push((edge_from, edge_to));
+                    edge_to
+                });
+            });
+
+            *self.write(to) = value;
+        }
+
+        to_root
+    }
 }
 
 impl LabelledDiGraph for ValueArena {
@@ -187,6 +219,10 @@ impl ValueInterner {
         });
 
         resolved_canonicals[&user_root]
+    }
+
+    pub fn value_arena(&self) -> &ValueArena {
+        &self.value_arena
     }
 }
 

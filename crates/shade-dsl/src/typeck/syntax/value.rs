@@ -125,7 +125,7 @@ pub enum AdtValue {
 
 // === Ty === //
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Eq, PartialEq)]
 pub enum Ty {
     MetaTy,
     MetaFunc,
