@@ -27,52 +27,57 @@
 //!
 
 use std::{
-    fmt,
-    hash::{self, Hash, Hasher},
+    hash::{self, Hash as _},
     ops::ControlFlow,
 };
 
-use ctx2d_utils::hash::{FxHashMap, FxHasher, hash_map};
+use ctx2d_utils::hash::FxHashMap;
 use derive_where::derive_where;
 
-// === IsoGraph === //
+// === LabelledDiGraph === //
 
-pub trait IsoGraph: Sized {
-    type Node: fmt::Debug + Clone + hash::Hash + Eq;
-    type Placeholder: fmt::Debug + Clone + hash::Hash + Eq;
-
-    fn data_eq(&self, lhs: &Self::Node, rhs: &Self::Node) -> bool;
-
-    fn data_hash(&self, node: &Self::Node, hasher: &mut impl hash::Hasher);
+/// A directed graph where each edge is implicitly "labelled" by its order in the successor list.
+///
+/// For example, a binary search tree would be a labelled directed graph because the left and right
+/// edges are labelled as such. As a much more relevant example to our application, the graph formed
+/// by ADTs referencing other values is a labelled directed graph because each other value an ADT
+/// references is labelled by the field in which that value is contained.
+///
+/// Sometimes, a successor may be missing—e.g. a binary-search-tree node may be missing its left
+/// child node. If we were to simply skip that successor during enumeration, however, the right edge
+/// could be confused for the left edge. To prevent that, users must emit one or more placeholder
+/// nodes to help disambiguate these cases.
+pub trait LabelledDiGraph {
+    type Node: Clone + hash::Hash + Eq;
+    type Placeholder: Clone + hash::Hash + Eq;
 
     fn successors<B>(
         &self,
         node: &Self::Node,
-        f: impl FnMut(IsoSuccessor<Self>) -> ControlFlow<B>,
+        f: impl FnMut(LabelledSuccessor<Self::Node, Self::Placeholder>) -> ControlFlow<B>,
     ) -> ControlFlow<B>;
 }
 
-#[derive_where(Debug, Clone)]
-pub enum IsoSuccessor<G: IsoGraph> {
-    Node(G::Node),
-    Placeholder(G::Placeholder),
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub enum LabelledSuccessor<N, P> {
+    Node(N),
+    Placeholder(P),
 }
 
+// === Tarjan === //
+
 // Adapted from: https://en.wikipedia.org/w/index.php?title=Tarjan%27s_strongly_connected_components_algorithm&oldid=1270884973#The_algorithm_in_pseudocode
-fn tarjan<G, B>(
+pub fn tarjan<G: LabelledDiGraph, B>(
     graph: &G,
     starts: impl IntoIterator<Item = G::Node>,
     f: impl FnMut(&[G::Node]) -> ControlFlow<B>,
-) -> ControlFlow<B>
-where
-    G: IsoGraph,
-{
+) -> ControlFlow<B> {
     #[derive_where(Default)]
-    struct GraphAnnotator<G: IsoGraph, V: Default> {
+    struct GraphAnnotator<G: LabelledDiGraph, V: Default> {
         map: FxHashMap<G::Node, V>,
     }
 
-    impl<G: IsoGraph, V: Default> GraphAnnotator<G, V> {
+    impl<G: LabelledDiGraph, V: Default> GraphAnnotator<G, V> {
         fn get(&mut self, node: &G::Node) -> &mut V {
             self.map.entry(node.clone()).or_default()
         }
@@ -80,7 +85,7 @@ where
 
     struct Tarjan<'a, G, F, B>
     where
-        G: IsoGraph,
+        G: LabelledDiGraph,
         F: FnMut(&[G::Node]) -> ControlFlow<B>,
     {
         graph: &'a G,
@@ -99,7 +104,7 @@ where
 
     impl<G, F, B> Tarjan<'_, G, F, B>
     where
-        G: IsoGraph,
+        G: LabelledDiGraph,
         F: FnMut(&[G::Node]) -> ControlFlow<B>,
     {
         fn strong_connect(&mut self, v: G::Node) -> ControlFlow<B> {
@@ -113,7 +118,7 @@ where
 
             // Consider successors of `v`
             cbit::cbit!(for w in self.graph.successors(&v) {
-                let IsoSuccessor::Node(w) = w else {
+                let LabelledSuccessor::Node(w) = w else {
                     continue;
                 };
 
@@ -168,234 +173,285 @@ where
     ControlFlow::Continue(())
 }
 
-#[derive_where(Debug)]
-struct IsoSubgraph<G: IsoGraph> {
+// === IsoSccPortrait === //
+
+/// A "portrait" of a strongly-connected component from a given starting node. Two labelled directed
+/// graph portraits with the same origin node will be treated as equal *iff* they are isomorphic.
+///
+/// - `NInt` is an internal node which has not yet been interned.
+/// - `NExt` is an external node which has been interned.
+/// - `P` is a successor placeholder type.
+///
+pub struct IsoSccPortrait<NInt, NExt, P> {
     /// The internal nodes forming this sub-graph. The order of these nodes is deterministic w.r.t
     /// a given key and sub-graph structure.
-    internal_nodes: Vec<G::Node>,
+    internal_nodes: Vec<NInt>,
 
-    /// Internal edges from source node indices to destination node indices.
-    internal_edges: Vec<(u32, EdgeDest<G>)>,
-
-    /// Edges from internal nodes to pre-interned external nodes.
-    external_edges: Vec<(u32, G::Node)>,
+    /// Edges from internal source node indices to destination nodes.
+    edges: Vec<(u32, EdgeDest<NExt, P>)>,
 }
 
-#[derive_where(Debug, Hash, Eq, PartialEq)]
-enum EdgeDest<G: IsoGraph> {
-    Node(u32),
-    Placeholder(G::Placeholder),
+#[derive(Debug, Hash, Eq, PartialEq)]
+enum EdgeDest<NExt, P> {
+    Internal(u32),
+    External(NExt),
+    Placeholder(P),
 }
 
-impl<G: IsoGraph> IsoSubgraph<G> {
-    fn new(
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
+pub enum SccNode<NInt, NExt> {
+    Internal(NInt),
+    External(NExt),
+}
+
+impl<NInt, NExt, P> IsoSccPortrait<NInt, NExt, P>
+where
+    NExt: Clone + hash::Hash + Eq,
+    P: Clone + hash::Hash + Eq,
+{
+    pub fn new<G>(
         graph: &G,
         key: G::Node,
-        mut map_external: impl FnMut(&G::Node) -> Option<G::Node>,
-    ) -> Self {
+        mut import_int_normalize_ext: impl FnMut(&G::Node) -> SccNode<NInt, NExt>,
+    ) -> Self
+    where
+        G: LabelledDiGraph<Placeholder = P>,
+    {
         let mut internal_nodes = Vec::new();
         let mut internal_node_map = FxHashMap::default();
-
-        let mut get_internal_id = |node: &G::Node| -> (u32, bool) {
-            if let Some(&id) = internal_node_map.get(node) {
-                return (id, false);
-            }
-
-            let id = internal_nodes.len() as u32;
-            internal_nodes.push(node.clone());
-            internal_node_map.insert(node.clone(), id);
-
-            (id, true)
-        };
-
-        let mut internal_edges = Vec::new();
-        let mut external_edges = Vec::new();
-
+        let mut edges = Vec::new();
         let mut stack = Vec::new();
 
-        debug_assert!(map_external(&key).is_none());
-        stack.push((key.clone(), get_internal_id(&key).0));
+        // Import the root node.
+        let SccNode::Internal(key_as_internal) = import_int_normalize_ext(&key) else {
+            unreachable!();
+        };
+        let key_id = internal_nodes.len() as u32;
+        internal_nodes.push(key_as_internal);
+        internal_node_map.insert(key.clone(), key_id);
 
+        stack.push((key.clone(), key_id));
+
+        // DFS through the graph.
         while let Some((curr, curr_idx)) = stack.pop() {
             cbit::cbit!(for successor in graph.successors(&curr) {
                 let successor = match successor {
-                    IsoSuccessor::Node(node) => node,
-                    IsoSuccessor::Placeholder(ref placeholder) => {
-                        internal_edges.push((curr_idx, EdgeDest::Placeholder(placeholder.clone())));
+                    LabelledSuccessor::Node(node) => node,
+                    LabelledSuccessor::Placeholder(placeholder) => {
+                        edges.push((curr_idx, EdgeDest::Placeholder(placeholder)));
                         continue;
                     }
                 };
 
-                if let Some(external) = map_external(&successor) {
-                    external_edges.push((curr_idx, external));
-                } else {
-                    let (successor_idx, successor_is_new) = get_internal_id(&successor);
+                if let Some(&successor_idx) = internal_node_map.get(&successor) {
+                    edges.push((curr_idx, EdgeDest::Internal(successor_idx)));
+                    continue;
+                }
 
-                    if successor_is_new {
-                        stack.push((successor.clone(), successor_idx));
+                match import_int_normalize_ext(&curr) {
+                    SccNode::Internal(internal) => {
+                        let successor_idx = internal_nodes.len() as u32;
+                        internal_nodes.push(internal);
+                        internal_node_map.insert(successor.clone(), successor_idx);
+                        stack.push((successor, successor_idx));
                     }
-
-                    internal_edges.push((curr_idx, EdgeDest::Node(successor_idx)));
+                    SccNode::External(external) => {
+                        edges.push((curr_idx, EdgeDest::External(external)));
+                    }
                 }
             });
         }
 
         Self {
             internal_nodes,
-            internal_edges,
-            external_edges,
+            edges,
         }
     }
 
-    /// Compares two [`IsoScc`]s. If two graphs are comprised of distinct internal node instances
-    /// but share the same internal edges with respect to isomorphic key nodes, this method will
-    /// return `true`.
-    fn eq(&self, graph: &G, other: &Self) -> bool {
+    pub fn eq<OInt>(
+        &self,
+        other: &IsoSccPortrait<OInt, NExt, P>,
+        mut cmp_internal_data: impl FnMut(&NInt, &OInt) -> bool,
+    ) -> bool {
+        // Trivial degree checks
         if self.internal_nodes.len() != other.internal_nodes.len() {
             return false;
         }
 
+        if self.edges.len() != other.edges.len() {
+            return false;
+        }
+
+        // Ensure that the internal nodes' values match.
         if !self
             .internal_nodes
             .iter()
             .zip(&other.internal_nodes)
-            .all(|(l, r)| graph.data_eq(l, r))
+            .all(|(l, r)| cmp_internal_data(l, r))
         {
             return false;
         }
 
-        if self.internal_edges != other.internal_edges {
-            return false;
-        }
-
-        if self.external_edges != other.external_edges {
+        // Ensure that internal, external, and placeholder edges match.
+        if self.edges != other.edges {
             return false;
         }
 
         true
     }
 
-    fn hash(&self, graph: &G, hasher: &mut impl hash::Hasher) {
+    pub fn hash<H: hash::Hasher>(
+        &self,
+        mut hash_internal_data: impl FnMut(&NInt, &mut H),
+        hasher: &mut H,
+    ) {
         // TODO: Use `write_length_prefix` once it stabilizes.
         hasher.write_usize(self.internal_nodes.len());
 
         for elem in &self.internal_nodes {
-            graph.data_hash(elem, hasher);
+            hash_internal_data(elem, hasher);
         }
 
-        self.internal_edges.hash(hasher);
-        self.external_edges.hash(hasher);
+        self.edges.hash(hasher);
     }
 }
 
-// === IsoInterner === //
+// === Portrait Keys === //
 
-#[derive_where(Debug, Default)]
-pub struct IsoInterner<G: IsoGraph> {
-    roots: FxHashMap<(IsoSubgraph<G>, u64), ()>,
-}
+/// Given the list of nodes in a strongly connected component, this function returns a
+/// (hopefully small) set of nodes such that, if two graphs are isomorphic, their set of portrait
+/// keys is equal up to isomorphism.
+pub fn portrait_keys<'a, G: LabelledDiGraph>(
+    graph: &G,
+    scc: &'a [G::Node],
+    mut hash_node_data: impl FnMut(&G::Node) -> u64,
+) -> Vec<&'a G::Node> {
+    _ = graph;
 
-impl<G: IsoGraph> IsoInterner<G> {
-    pub fn intern(&mut self, graph: &G, node: &G::Node) -> G::Node {
-        let mut external_canonicals = FxHashMap::<G::Node, G::Node>::default();
+    let mut keys = Vec::new();
+    let mut min_hash = None;
 
-        cbit::cbit!(for scc in tarjan(graph, [node.clone()]) {
-            // Determine a small number of candidate "key" elements for this SCC based
-            // deterministically off of component structure.
-            let keys = {
-                let mut keys = Vec::new();
-                let mut min_hash = None;
+    for candidate in scc {
+        let candidate_hash = hash_node_data(candidate);
 
-                for candidate in scc {
-                    let candidate_hash = {
-                        let mut hasher = FxHasher::default();
-                        graph.data_hash(candidate, &mut hasher);
-                        hasher.finish()
-                    };
+        if min_hash.is_none_or(|min_hash| candidate_hash < min_hash) {
+            keys.clear();
+            min_hash = Some(candidate_hash);
+        }
 
-                    if min_hash.is_none_or(|min_hash| candidate_hash < min_hash) {
-                        keys.clear();
-                        min_hash = Some(candidate_hash);
-                    }
-
-                    if min_hash.unwrap() == candidate_hash {
-                        keys.push(candidate);
-                    }
-                }
-
-                keys
-            };
-
-            // TODO: Further attempt to filter out key nodes by their structure (e.g. least-mode
-            //  degree or in-between centrality).
-
-            // Resolve (or create) the canonical sub-graph for this SCC.
-            let tmp;
-            let (src_sub_graph, canonical_sub_graph) = 'canonicalize: {
-                // See if any of the keys lead to an interned version of this component.
-                let mut first_sub_graph = None;
-
-                for key in keys {
-                    let sub_graph = IsoSubgraph::new(graph, key.clone(), |node| {
-                        external_canonicals.get(node).cloned()
-                    });
-
-                    let hash = {
-                        let mut hasher = FxHasher::default();
-                        sub_graph.hash(graph, &mut hasher);
-                        hasher.finish()
-                    };
-
-                    let canonical_sub_graph = self.roots.raw_entry().from_hash(
-                        hash,
-                        |&(ref other_sub_graph, other_hash)| {
-                            hash == other_hash && sub_graph.eq(graph, other_sub_graph)
-                        },
-                    );
-
-                    if let Some(((canonical_sub_graph, _), ())) = canonical_sub_graph {
-                        tmp = sub_graph;
-                        break 'canonicalize (&tmp, canonical_sub_graph);
-                    }
-
-                    _ = first_sub_graph.get_or_insert((sub_graph, hash));
-                }
-
-                // Otherwise, intern the SCC.
-                let (sub_graph, hash) = first_sub_graph.unwrap();
-
-                let hash_map::RawEntryMut::Vacant(entry) =
-                    self.roots.raw_entry_mut().from_hash(hash, |_| false)
-                else {
-                    unreachable!()
-                };
-
-                let ((sub_graph, _), ()) =
-                    entry.insert_with_hasher(hash, (sub_graph, hash), (), |&(_, hash)| hash);
-
-                (sub_graph, sub_graph)
-            };
-
-            // Record the mapping between input nodes and their canonicals forms into
-            // the `external_canonicals` map.
-            for (src_node, canonical_node) in src_sub_graph
-                .internal_nodes
-                .iter()
-                .zip(&canonical_sub_graph.internal_nodes)
-            {
-                external_canonicals.insert(src_node.clone(), canonical_node.clone());
-            }
-        });
-
-        external_canonicals.remove(node).unwrap()
+        if min_hash.unwrap() == candidate_hash {
+            keys.push(candidate);
+        }
     }
+
+    // TODO: Use graph to solve for some property (e.g. centrality) to further disambiguate.
+
+    keys
 }
 
 // === Tests === //
 
 #[cfg(test)]
 mod tests {
+    use ctx2d_utils::hash::{FxHasher, hash_map};
+
+    use std::hash::Hasher as _;
+
     use super::*;
+
+    trait SimpleGraph: LabelledDiGraph {
+        fn data_eq(&self, lhs: &Self::Node, rhs: &Self::Node) -> bool;
+
+        fn data_hash(&self, node: &Self::Node, hasher: &mut impl hash::Hasher);
+    }
+
+    #[derive_where(Default)]
+    struct SimpleInterner<G: SimpleGraph> {
+        #[expect(clippy::type_complexity)]
+        roots: FxHashMap<(IsoSccPortrait<G::Node, G::Node, G::Placeholder>, u64), ()>,
+    }
+
+    impl<G: SimpleGraph> SimpleInterner<G> {
+        pub fn intern(&mut self, graph: &G, node: &G::Node) -> G::Node {
+            let mut external_canonicals = FxHashMap::<G::Node, G::Node>::default();
+
+            cbit::cbit!(for scc in tarjan(graph, [node.clone()]) {
+                let keys = portrait_keys(graph, scc, |v| {
+                    let mut hasher = FxHasher::default();
+                    graph.data_hash(node, &mut hasher);
+                    hasher.finish()
+                });
+
+                // Resolve (or create) the canonical sub-graph for this SCC.
+                let tmp;
+                let (src_sub_graph, canonical_sub_graph) = 'canonicalize: {
+                    // See if any of the keys lead to an interned version of this component.
+                    let mut first_sub_graph = None;
+
+                    for key in keys {
+                        let sub_graph =
+                            IsoSccPortrait::new(
+                                graph,
+                                key.clone(),
+                                |node| match external_canonicals.get(node).cloned() {
+                                    Some(ext) => SccNode::External(ext),
+                                    None => SccNode::Internal(node.clone()),
+                                },
+                            );
+
+                        let hash = {
+                            let mut hasher = FxHasher::default();
+                            sub_graph
+                                .hash(|node, hasher| graph.data_hash(node, hasher), &mut hasher);
+                            hasher.finish()
+                        };
+
+                        let canonical_sub_graph = self.roots.raw_entry().from_hash(
+                            hash,
+                            |&(ref other_sub_graph, other_hash)| {
+                                hash == other_hash
+                                    && sub_graph
+                                        .eq(other_sub_graph, |lhs, rhs| graph.data_eq(lhs, rhs))
+                            },
+                        );
+
+                        if let Some(((canonical_sub_graph, _), ())) = canonical_sub_graph {
+                            tmp = sub_graph;
+                            break 'canonicalize (&tmp, canonical_sub_graph);
+                        }
+
+                        _ = first_sub_graph.get_or_insert((sub_graph, hash));
+                    }
+
+                    // Otherwise, intern the SCC.
+                    let (sub_graph, hash) = first_sub_graph.unwrap();
+
+                    let hash_map::RawEntryMut::Vacant(entry) =
+                        self.roots.raw_entry_mut().from_hash(hash, |_| false)
+                    else {
+                        unreachable!()
+                    };
+
+                    let ((sub_graph, _), ()) =
+                        entry.insert_with_hasher(hash, (sub_graph, hash), (), |&(_, hash)| hash);
+
+                    (sub_graph, sub_graph)
+                };
+
+                // Record the mapping between input nodes and their canonicals forms into
+                // the `external_canonicals` map.
+                for (src_node, canonical_node) in src_sub_graph
+                    .internal_nodes
+                    .iter()
+                    .zip(&canonical_sub_graph.internal_nodes)
+                {
+                    external_canonicals.insert(src_node.clone(), canonical_node.clone());
+                }
+            });
+
+            external_canonicals.remove(node).unwrap()
+        }
+    }
 
     #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
     struct Cons(usize);
@@ -431,40 +487,42 @@ mod tests {
         }
     }
 
-    impl IsoGraph for ConsGraph {
+    impl LabelledDiGraph for ConsGraph {
         type Node = Cons;
         type Placeholder = ();
 
-        fn data_eq(&self, lhs: &Self::Node, rhs: &Self::Node) -> bool {
-            self.nodes[lhs.0].label == self.nodes[rhs.0].label
-        }
-
-        fn data_hash(&self, node: &Self::Node, hasher: &mut impl hash::Hasher) {
-            self.nodes[node.0].label.hash(hasher);
-        }
-
         fn successors<B>(
             &self,
-            node: &Self::Node,
-            mut f: impl FnMut(IsoSuccessor<Self>) -> ControlFlow<B>,
+            node: &Cons,
+            mut f: impl FnMut(LabelledSuccessor<Self::Node, Self::Placeholder>) -> ControlFlow<B>,
         ) -> ControlFlow<B> {
             f(match self.nodes[node.0].left {
-                Some(node) => IsoSuccessor::Node(node),
-                None => IsoSuccessor::Placeholder(()),
+                Some(node) => LabelledSuccessor::Node(node),
+                None => LabelledSuccessor::Placeholder(()),
             })?;
 
             f(match self.nodes[node.0].right {
-                Some(node) => IsoSuccessor::Node(node),
-                None => IsoSuccessor::Placeholder(()),
+                Some(node) => LabelledSuccessor::Node(node),
+                None => LabelledSuccessor::Placeholder(()),
             })?;
 
             ControlFlow::Continue(())
         }
     }
 
+    impl SimpleGraph for ConsGraph {
+        fn data_eq(&self, lhs: &Cons, rhs: &Cons) -> bool {
+            self.nodes[lhs.0].label == self.nodes[rhs.0].label
+        }
+
+        fn data_hash(&self, node: &Cons, hasher: &mut impl hash::Hasher) {
+            self.nodes[node.0].label.hash(hasher);
+        }
+    }
+
     #[test]
     fn simple() {
-        let mut interner = IsoInterner::default();
+        let mut interner = SimpleInterner::default();
         let mut graph = ConsGraph::default();
 
         // First alias

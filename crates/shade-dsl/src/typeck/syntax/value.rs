@@ -12,10 +12,10 @@ use super::OwnGenericIdx;
 // === Handles === //
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct ValueIntern(thunderdome::Index);
+pub struct ValueIntern(pub(super) thunderdome::Index);
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct ValuePtr(thunderdome::Index);
+pub struct ValuePtr(pub(super) thunderdome::Index);
 
 // === Values === //
 
@@ -25,7 +25,7 @@ pub enum Value {
     MetaType(Obj<Ty>),
 
     /// A value representing an uninstantiated function.
-    MetaFunc(Obj<SemiFuncInstance>),
+    MetaFunc(SemiFuncInstance),
 
     /// A value representing a dynamically-allocated array of values.
     MetaList(Vec<ValuePtr>),
@@ -134,9 +134,9 @@ pub enum Ty {
     Pointer(Obj<Ty>),
     Func(Vec<Obj<Ty>>, Obj<Ty>),
     Scalar(ScalarKind),
-    Tuple(Vec<Ty>),
+    Tuple(Vec<Obj<Ty>>),
     Array(Obj<Ty>, usize),
-    Adt(Obj<AdtInstance>),
+    Adt(AdtInstance),
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -160,7 +160,7 @@ pub enum ScalarKind {
 
 // === Instance === //
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
 pub struct AdtInstance {
     /// The function which created the ADT.
     pub owner: Obj<FuncInstance>,

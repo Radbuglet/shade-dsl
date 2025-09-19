@@ -19,31 +19,31 @@ use derive_where::derive_where;
 
 use crate::base::Session;
 
-// === Arena === //
+// === GpArena === //
 
-pub struct Arena {
+pub struct GpArena {
     generation: NonZeroU64,
-    inner: Mutex<ArenaInner>,
+    inner: Mutex<GpArenaInner>,
 }
 
-struct ArenaInner {
+struct GpArenaInner {
     bump: bumpalo::Bump,
     singles: Vec<NonNull<dyn Any + Send + Sync>>,
 }
 
-impl fmt::Debug for Arena {
+impl fmt::Debug for GpArena {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Arena").finish_non_exhaustive()
+        f.debug_struct("GpArena").finish_non_exhaustive()
     }
 }
 
-impl Default for Arena {
+impl Default for GpArena {
     fn default() -> Self {
         static ID_GEN: AtomicU64 = AtomicU64::new(1);
 
         Self {
             generation: NonZeroU64::new(ID_GEN.fetch_add(1, Relaxed)).unwrap(),
-            inner: Mutex::new(ArenaInner {
+            inner: Mutex::new(GpArenaInner {
                 bump: Bump::new(),
                 singles: Vec::new(),
             }),
@@ -51,7 +51,7 @@ impl Default for Arena {
     }
 }
 
-impl Drop for Arena {
+impl Drop for GpArena {
     fn drop(&mut self) {
         let inner = self.inner.get_mut().unwrap();
 
@@ -100,19 +100,19 @@ where
 
 impl<T: 'static + Send + Sync> Obj<T> {
     pub fn new(value: T, s: &Session) -> Self {
-        let mut inner = s.ir_arena.inner.lock().unwrap();
+        let mut inner = s.gp_arena.inner.lock().unwrap();
 
         let ptr = NonNull::from(inner.bump.alloc(value));
         inner.singles.push(ptr);
 
         Self {
-            generation: s.ir_arena.generation,
+            generation: s.gp_arena.generation,
             ptr,
         }
     }
 
     pub fn r(self, s: &Session) -> &T {
-        assert_eq!(s.ir_arena.generation, self.generation);
+        assert_eq!(s.gp_arena.generation, self.generation);
         unsafe { self.ptr.as_ref() }
     }
 }
