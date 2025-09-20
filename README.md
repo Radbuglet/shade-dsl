@@ -1,3 +1,3 @@
-# ctx2d
+# Shade-DSL
 
-A 2D game graphics library built on top of `wgpu`.
+A DSL for writing shaders.
