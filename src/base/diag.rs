@@ -50,10 +50,6 @@ pub struct DiagCtxt {
 }
 
 impl DiagCtxt {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn emit<E: EmissionGuarantee>(&self, diag: Diag<E>) -> E {
         if diag.is_fatal() {
             self.error_guaranteed.store(true, Relaxed);

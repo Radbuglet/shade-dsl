@@ -120,7 +120,7 @@ impl<T: 'static + Send + Sync> Obj<T> {
 
 #[derive_where(Default)]
 pub struct ObjInterner<T: 'static + Send + Sync> {
-    interns: FxHashMap<(Obj<T>, u64), ()>,
+    interns: RefCell<FxHashMap<(Obj<T>, u64), ()>>,
 }
 
 impl<T: 'static + Send + Sync> fmt::Debug for ObjInterner<T> {
@@ -133,11 +133,11 @@ impl<T> ObjInterner<T>
 where
     T: 'static + Send + Sync + hash::Hash + Eq,
 {
-    pub fn intern(&mut self, ty: T, s: &Session) -> Obj<T> {
+    pub fn intern(&self, ty: T, s: &Session) -> Obj<T> {
+        let mut interns = self.interns.borrow_mut();
         let hash = FxBuildHasher::default().hash_one(&ty);
 
-        match self
-            .interns
+        match interns
             .raw_entry_mut()
             .from_hash(hash, |(other, other_hash)| {
                 hash == *other_hash && &ty == other.r(s)

@@ -68,7 +68,7 @@ pub struct FuncInner {
     pub body: Obj<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct FuncParam {
     pub span: Span,
     pub binding: Obj<Pat>,

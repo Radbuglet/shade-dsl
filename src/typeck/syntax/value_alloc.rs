@@ -1,19 +1,31 @@
 use std::{
+    cell::RefCell,
     fmt,
     hash::{self, Hash, Hasher},
     mem,
     ops::ControlFlow,
+    ptr::NonNull,
 };
 
+use bumpalo::Bump;
 use thunderdome::Arena;
 
 use crate::{
-    base::analysis::{
-        IsoSccPortrait, LabelledDiGraph, LabelledSuccessor, SccNode, portrait_keys, tarjan,
+    base::{
+        analysis::{
+            IsoSccPortrait, LabelledDiGraph, LabelledSuccessor, SccNode, portrait_keys, tarjan,
+        },
+        arena::LateInit,
     },
     typeck::syntax::{AdtValue, SemiFuncInstance, Value, ValueKind, ValuePtr},
     utils::hash::{FxHashMap, FxHasher, hash_map},
 };
+
+// === ValueArenaLike === //
+
+pub trait ValueArenaLike: Sized {
+    fn read(&self, ptr: ValuePtr) -> &Value;
+}
 
 // === ValueArena === //
 
@@ -55,12 +67,12 @@ impl ValueArena {
     }
 
     pub fn duplicate(&mut self, target: ValuePtr) -> ValuePtr {
-        self.duplicate_ext(None, target)
+        self.duplicate_from(Option::<&Self>::None, target)
     }
 
-    pub fn duplicate_ext(
+    pub fn duplicate_from(
         &mut self,
-        from_arena: Option<&ValueArena>,
+        from_arena: Option<&impl ValueArenaLike>,
         from_root: ValuePtr,
     ) -> ValuePtr {
         let to_root = self.reserve();
@@ -69,7 +81,9 @@ impl ValueArena {
         let mut mapping = FxHashMap::from_iter([(from_root, to_root)]);
 
         while let Some((from, to)) = stack.pop() {
-            let mut value = from_arena.unwrap_or(self).read(from).clone();
+            let mut value = from_arena
+                .map_or_else(|| self.read(from), |other| other.read(from))
+                .clone();
 
             cbit::cbit!(for edge in follow_node_mut(&mut value) {
                 let edge_from = *edge;
@@ -87,6 +101,12 @@ impl ValueArena {
     }
 }
 
+impl ValueArenaLike for ValueArena {
+    fn read(&self, ptr: ValuePtr) -> &Value {
+        self.read(ptr)
+    }
+}
+
 impl LabelledDiGraph for ValueArena {
     type Node = ValuePtr;
     type Placeholder = ();
@@ -101,12 +121,57 @@ impl LabelledDiGraph for ValueArena {
     }
 }
 
+// === ValueBump === //
+
+#[derive(Default)]
+pub struct ValueBump {
+    bump: Bump,
+    arena: RefCell<Arena<NonNull<LateInit<Value>>>>,
+}
+
+impl fmt::Debug for ValueBump {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ValueBump").finish_non_exhaustive()
+    }
+}
+
+impl ValueBump {
+    pub fn reserve(&self) -> ValuePtr {
+        let value = self.bump.alloc(LateInit::uninit());
+        ValuePtr(self.arena.borrow_mut().insert(NonNull::from(value)))
+    }
+
+    pub fn fetch(&self, ptr: ValuePtr) -> &LateInit<Value> {
+        unsafe { self.arena.borrow()[ptr.0].as_ref() }
+    }
+
+    pub fn init(&self, ptr: ValuePtr, value: Value) {
+        LateInit::init(self.fetch(ptr), value);
+    }
+
+    pub fn alloc(&self, value: Value) -> ValuePtr {
+        let ptr = self.reserve();
+        self.init(ptr, value);
+        ptr
+    }
+
+    pub fn read(&self, ptr: ValuePtr) -> &Value {
+        self.fetch(ptr)
+    }
+}
+
+impl ValueArenaLike for ValueBump {
+    fn read(&self, ptr: ValuePtr) -> &Value {
+        self.read(ptr)
+    }
+}
+
 // === ValueInterner === //
 
 #[derive(Default)]
 pub struct ValueInterner {
-    value_arena: ValueArena,
-    value_interns: FxHashMap<InternEntry, ()>,
+    value_arena: ValueBump,
+    value_interns: RefCell<FxHashMap<InternEntry, ()>>,
 }
 
 struct InternEntry {
@@ -121,8 +186,9 @@ impl fmt::Debug for ValueInterner {
 }
 
 impl ValueInterner {
-    pub fn intern(&mut self, user_graph: &ValueArena, user_root: ValuePtr) -> ValuePtr {
+    pub fn intern(&self, user_graph: &ValueArena, user_root: ValuePtr) -> ValuePtr {
         let mut resolved_canonicals = FxHashMap::<ValuePtr, ValuePtr>::default();
+        let mut value_interns = self.value_interns.borrow_mut();
 
         cbit::cbit!(for scc in tarjan(user_graph, [user_root]) {
             let keys = portrait_keys(user_graph, scc, |&node| {
@@ -153,20 +219,15 @@ impl ValueInterner {
                     };
 
                     let canonical_portrait =
-                        self.value_interns
-                            .raw_entry()
-                            .from_hash(portrait_hash, |entry| {
-                                if entry.hash != portrait_hash {
-                                    return false;
-                                }
+                        value_interns.raw_entry().from_hash(portrait_hash, |entry| {
+                            if entry.hash != portrait_hash {
+                                return false;
+                            }
 
-                                entry.portrait.eq(&portrait, |&lhs, &rhs| {
-                                    eq_value(
-                                        self.value_arena.read(ValuePtr(lhs.0)),
-                                        user_graph.read(rhs),
-                                    )
-                                })
-                            });
+                            entry.portrait.eq(&portrait, |&lhs, &rhs| {
+                                eq_value(self.read(ValuePtr(lhs.0)), user_graph.read(rhs))
+                            })
+                        });
 
                     if let Some((canonical_portrait, ())) = canonical_portrait {
                         Some(&canonical_portrait.portrait)
@@ -204,11 +265,10 @@ impl ValueInterner {
                         *out_ref = resolved_canonicals[out_ref];
                     });
 
-                    *self.value_arena.write(resolved_canonicals[&user]) = value;
+                    self.value_arena.init(resolved_canonicals[&user], value);
                 }
 
-                let hash_map::RawEntryMut::Vacant(entry) = self
-                    .value_interns
+                let hash_map::RawEntryMut::Vacant(entry) = value_interns
                     .raw_entry_mut()
                     .from_hash(user_portrait_hash, |_| false)
                 else {
@@ -230,7 +290,11 @@ impl ValueInterner {
         resolved_canonicals[&user_root]
     }
 
-    pub fn value_arena(&self) -> &ValueArena {
+    pub fn read(&self, value: ValuePtr) -> &Value {
+        self.value_arena.read(value)
+    }
+
+    pub fn arena(&self) -> &ValueBump {
         &self.value_arena
     }
 }

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Deref, sync::Arc};
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use crate::base::{
     DiagCtxt,
@@ -10,10 +10,10 @@ thread_local! {
     static SESSION_TLS: RefCell<Option<Session>> = const { RefCell::new(None) };
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Session(Arc<SessionInner>);
+#[derive(Debug, Clone)]
+pub struct Session(Rc<SessionInner>);
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SessionInner {
     pub symbols: SymbolInterner,
     pub diag: DiagCtxt,
@@ -22,6 +22,16 @@ pub struct SessionInner {
 }
 
 impl Session {
+    #[expect(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self(Rc::new(SessionInner {
+            symbols: SymbolInterner::default(),
+            diag: DiagCtxt::default(),
+            source_map: SourceMap::default(),
+            gp_arena: GpArena::default(),
+        }))
+    }
+
     #[must_use]
     pub fn bind(self) -> impl Sized {
         let old = SESSION_TLS.replace(Some(self));

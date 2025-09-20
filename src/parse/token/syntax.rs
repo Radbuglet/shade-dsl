@@ -1,4 +1,4 @@
-use std::{ops::Deref, slice, str, sync::Arc};
+use std::{ops::Deref, rc::Rc, slice, str};
 
 use crate::{
     base::{
@@ -15,7 +15,7 @@ use crate::{
 // === TokenStream === //
 
 #[derive(Debug, Clone, Default)]
-pub struct TokenStream(Arc<Vec<TokenTree>>);
+pub struct TokenStream(Rc<Vec<TokenTree>>);
 
 impl TokenStream {
     pub fn new() -> Self {
@@ -23,7 +23,7 @@ impl TokenStream {
     }
 
     pub fn tokens_mut(&mut self) -> &mut Vec<TokenTree> {
-        Arc::make_mut(&mut self.0)
+        Rc::make_mut(&mut self.0)
     }
 
     pub fn push(&mut self, token: impl Into<TokenTree>) {

@@ -1,8 +1,14 @@
 use std::{ops::Deref, rc::Rc};
 
+use index_vec::IndexVec;
+
 use crate::{
-    base::{Session, arena::ObjInterner},
-    typeck::syntax::{FuncInstance, Ty, ValueInterner},
+    base::{
+        Session,
+        analysis::Memo,
+        arena::{Obj, ObjInterner},
+    },
+    typeck::syntax::{Func, FuncInstance, Ty, ValueInterner, ValuePtr},
 };
 
 #[derive(Debug, Clone)]
@@ -20,7 +26,18 @@ pub struct TyCtxtInner {
 }
 
 #[derive(Debug, Default)]
-pub struct Queries {}
+pub struct Queries {
+    pub eval_paramless: Memo<Obj<FuncInstance>, ValuePtr>,
+    pub type_check: Memo<Obj<FuncInstance>, ()>,
+}
+
+impl Deref for TyCtxt {
+    type Target = TyCtxtInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
 
 impl TyCtxt {
     pub fn new(session: Session) -> Self {
@@ -34,12 +51,19 @@ impl TyCtxt {
             }),
         }
     }
-}
 
-impl Deref for TyCtxt {
-    type Target = TyCtxtInner;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+    pub fn intern_fn_instance(
+        &self,
+        func: Obj<Func>,
+        parent: Option<Obj<FuncInstance>>,
+    ) -> Obj<FuncInstance> {
+        self.fn_interner.intern(
+            FuncInstance {
+                func,
+                parent,
+                generics: IndexVec::new(),
+            },
+            &self.session,
+        )
     }
 }

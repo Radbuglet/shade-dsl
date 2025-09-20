@@ -284,10 +284,6 @@ impl fmt::Debug for SourceMap {
 }
 
 impl SourceMap {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn create(
         &self,
         segmenter: &mut impl Segmenter,

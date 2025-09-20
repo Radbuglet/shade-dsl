@@ -6,10 +6,11 @@ use shade_dsl::{
         syntax::{NaiveSegmenter, SourceFileOrigin},
     },
     parse::{ast::parse_file, lower::lower_file, token::tokenize},
+    typeck::analysis::tcx::TyCtxt,
 };
 
 fn main() {
-    let session = Session::default();
+    let session = Session::new();
     let _guard = session.bind();
 
     let path = Path::new("samples/app.sdl");
@@ -23,4 +24,11 @@ fn main() {
     let tokens = tokenize(span);
     let ast = parse_file(&tokens);
     let ir = lower_file(&ast);
+
+    let tcx = TyCtxt::new(Session::fetch());
+    let value = tcx
+        .eval_paramless(tcx.intern_fn_instance(ir, None))
+        .unwrap();
+
+    // TODO: Pretty-printing
 }

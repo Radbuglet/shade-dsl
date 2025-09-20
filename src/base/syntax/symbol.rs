@@ -56,10 +56,6 @@ impl fmt::Debug for SymbolInterner {
 }
 
 impl SymbolInterner {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn intern(&self, value: &str) -> Symbol {
         let hash = fx_hash_one(value);
 
