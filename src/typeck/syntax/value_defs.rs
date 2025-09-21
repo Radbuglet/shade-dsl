@@ -12,7 +12,7 @@ use super::OwnGenericIdx;
 // === Handles === //
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct ValuePtr(pub(super) thunderdome::Index);
+pub struct ValuePlace(pub(super) thunderdome::Index);
 
 // === Values === //
 
@@ -31,10 +31,10 @@ pub enum ValueKind {
     MetaFunc(SemiFuncInstance),
 
     /// A value representing a dynamically-allocated array of values.
-    MetaList(Vec<ValuePtr>),
+    MetaList(Vec<ValuePlace>),
 
     /// A pointer to another value.
-    Pointer(ValuePtr),
+    Pointer(ValuePlace),
 
     /// A value representing an instantiated function.
     Func(Obj<FuncInstance>),
@@ -43,13 +43,16 @@ pub enum ValueKind {
     Scalar(ValueScalar),
 
     /// A value representing a tuple.
-    Tuple(Vec<ValuePtr>),
+    Tuple(Vec<ValuePlace>),
 
     /// A value representing a statically-allocated array of values.
-    Array(Vec<ValuePtr>),
+    Array(Vec<ValuePlace>),
 
-    /// A value representing a user-defined ADT.
-    Adt(AdtInstance, AdtValue),
+    /// A value representing a user-defined aggregate ADT.
+    AdtAggregate(Vec<ValuePlace>),
+
+    /// A value representing a user-defined variant ADT.
+    AdtVariant(u32, ValuePlace),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -121,12 +124,6 @@ impl PartialEq for ValueScalar {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum AdtValue {
-    Composite(Vec<ValuePtr>),
-    Variant(u32, ValuePtr),
-}
-
 // === Ty === //
 
 #[derive(Debug, Hash, Eq, PartialEq)]
@@ -145,6 +142,7 @@ pub enum Ty {
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum ScalarKind {
     Bool,
+    Char,
     U8,
     I8,
     U16,
@@ -181,7 +179,7 @@ pub struct FuncInstance {
     pub parent: Option<Obj<FuncInstance>>,
 
     /// The generic parameters passed to the function.
-    pub generics: IndexVec<OwnGenericIdx, ValuePtr>,
+    pub generics: IndexVec<OwnGenericIdx, ValuePlace>,
 }
 
 #[derive(Debug, Clone)]
@@ -193,5 +191,5 @@ pub struct SemiFuncInstance {
     pub parent: Option<Obj<FuncInstance>>,
 
     /// The partial list of generic arguments to the function, filled from left to right.
-    pub generics: Vec<ValuePtr>,
+    pub generics: Vec<ValuePlace>,
 }

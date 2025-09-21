@@ -8,7 +8,7 @@ use crate::{
         analysis::Memo,
         arena::{Obj, ObjInterner},
     },
-    typeck::syntax::{Func, FuncInstance, Ty, ValueInterner, ValuePtr},
+    typeck::syntax::{BycFunction, Func, FuncInstance, Ty, ValueInterner, ValuePlace},
 };
 
 #[derive(Debug, Clone)]
@@ -27,8 +27,9 @@ pub struct TyCtxtInner {
 
 #[derive(Debug, Default)]
 pub struct Queries {
-    pub eval_paramless: Memo<Obj<FuncInstance>, ValuePtr>,
+    pub eval_paramless: Memo<Obj<FuncInstance>, ValuePlace>,
     pub type_check: Memo<Obj<FuncInstance>, ()>,
+    pub build_bytecode: Memo<Obj<FuncInstance>, Obj<BycFunction>>,
 }
 
 impl Deref for TyCtxt {

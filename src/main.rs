@@ -6,7 +6,7 @@ use shade_dsl::{
         syntax::{NaiveSegmenter, SourceFileOrigin},
     },
     parse::{ast::parse_file, lower::lower_file, token::tokenize},
-    typeck::analysis::tcx::TyCtxt,
+    typeck::analysis::TyCtxt,
 };
 
 fn main() {

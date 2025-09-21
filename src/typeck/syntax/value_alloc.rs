@@ -17,14 +17,14 @@ use crate::{
         },
         arena::LateInit,
     },
-    typeck::syntax::{AdtValue, SemiFuncInstance, Value, ValueKind, ValuePtr},
+    typeck::syntax::{SemiFuncInstance, Value, ValueKind, ValuePlace},
     utils::hash::{FxHashMap, FxHasher, hash_map},
 };
 
 // === ValueArenaLike === //
 
 pub trait ValueArenaLike: Sized {
-    fn read(&self, ptr: ValuePtr) -> &Value;
+    fn read(&self, ptr: ValuePlace) -> &Value;
 }
 
 // === ValueArena === //
@@ -41,40 +41,40 @@ impl fmt::Debug for ValueArena {
 }
 
 impl ValueArena {
-    pub fn reserve(&mut self) -> ValuePtr {
-        ValuePtr(self.arena.insert(None))
+    pub fn reserve(&mut self) -> ValuePlace {
+        ValuePlace(self.arena.insert(None))
     }
 
-    pub fn init(&mut self, ptr: ValuePtr, value: Value) {
+    pub fn init(&mut self, ptr: ValuePlace, value: Value) {
         assert!(self.arena[ptr.0].is_some());
         self.arena[ptr.0] = Some(value);
     }
 
-    pub fn alloc(&mut self, value: Value) -> ValuePtr {
-        ValuePtr(self.arena.insert(Some(value)))
+    pub fn alloc(&mut self, value: Value) -> ValuePlace {
+        ValuePlace(self.arena.insert(Some(value)))
     }
 
-    pub fn free(&mut self, ptr: ValuePtr) {
+    pub fn free(&mut self, ptr: ValuePlace) {
         self.arena.remove(ptr.0).unwrap();
     }
 
-    pub fn read(&self, ptr: ValuePtr) -> &Value {
+    pub fn read(&self, ptr: ValuePlace) -> &Value {
         self.arena[ptr.0].as_ref().unwrap()
     }
 
-    pub fn write(&mut self, ptr: ValuePtr) -> &mut Value {
+    pub fn mutate(&mut self, ptr: ValuePlace) -> &mut Value {
         self.arena[ptr.0].as_mut().unwrap()
     }
 
-    pub fn duplicate(&mut self, target: ValuePtr) -> ValuePtr {
+    pub fn duplicate(&mut self, target: ValuePlace) -> ValuePlace {
         self.duplicate_from(Option::<&Self>::None, target)
     }
 
     pub fn duplicate_from(
         &mut self,
         from_arena: Option<&impl ValueArenaLike>,
-        from_root: ValuePtr,
-    ) -> ValuePtr {
+        from_root: ValuePlace,
+    ) -> ValuePlace {
         let to_root = self.reserve();
 
         let mut stack = vec![(from_root, to_root)];
@@ -94,7 +94,7 @@ impl ValueArena {
                 });
             });
 
-            *self.write(to) = value;
+            *self.mutate(to) = value;
         }
 
         to_root
@@ -102,13 +102,13 @@ impl ValueArena {
 }
 
 impl ValueArenaLike for ValueArena {
-    fn read(&self, ptr: ValuePtr) -> &Value {
+    fn read(&self, ptr: ValuePlace) -> &Value {
         self.read(ptr)
     }
 }
 
 impl LabelledDiGraph for ValueArena {
-    type Node = ValuePtr;
+    type Node = ValuePlace;
     type Placeholder = ();
 
     fn successors<B>(
@@ -136,32 +136,32 @@ impl fmt::Debug for ValueBump {
 }
 
 impl ValueBump {
-    pub fn reserve(&self) -> ValuePtr {
+    pub fn reserve(&self) -> ValuePlace {
         let value = self.bump.alloc(LateInit::uninit());
-        ValuePtr(self.arena.borrow_mut().insert(NonNull::from(value)))
+        ValuePlace(self.arena.borrow_mut().insert(NonNull::from(value)))
     }
 
-    pub fn fetch(&self, ptr: ValuePtr) -> &LateInit<Value> {
+    pub fn fetch(&self, ptr: ValuePlace) -> &LateInit<Value> {
         unsafe { self.arena.borrow()[ptr.0].as_ref() }
     }
 
-    pub fn init(&self, ptr: ValuePtr, value: Value) {
+    pub fn init(&self, ptr: ValuePlace, value: Value) {
         LateInit::init(self.fetch(ptr), value);
     }
 
-    pub fn alloc(&self, value: Value) -> ValuePtr {
+    pub fn alloc(&self, value: Value) -> ValuePlace {
         let ptr = self.reserve();
         self.init(ptr, value);
         ptr
     }
 
-    pub fn read(&self, ptr: ValuePtr) -> &Value {
+    pub fn read(&self, ptr: ValuePlace) -> &Value {
         self.fetch(ptr)
     }
 }
 
 impl ValueArenaLike for ValueBump {
-    fn read(&self, ptr: ValuePtr) -> &Value {
+    fn read(&self, ptr: ValuePlace) -> &Value {
         self.read(ptr)
     }
 }
@@ -175,7 +175,7 @@ pub struct ValueInterner {
 }
 
 struct InternEntry {
-    portrait: IsoSccPortrait<ValuePtr, ValuePtr, ()>,
+    portrait: IsoSccPortrait<ValuePlace, ValuePlace, ()>,
     hash: u64,
 }
 
@@ -186,8 +186,8 @@ impl fmt::Debug for ValueInterner {
 }
 
 impl ValueInterner {
-    pub fn intern(&self, user_graph: &ValueArena, user_root: ValuePtr) -> ValuePtr {
-        let mut resolved_canonicals = FxHashMap::<ValuePtr, ValuePtr>::default();
+    pub fn intern(&self, user_graph: &ValueArena, user_root: ValuePlace) -> ValuePlace {
+        let mut resolved_canonicals = FxHashMap::<ValuePlace, ValuePlace>::default();
         let mut value_interns = self.value_interns.borrow_mut();
 
         cbit::cbit!(for scc in tarjan(user_graph, [user_root]) {
@@ -225,7 +225,7 @@ impl ValueInterner {
                             }
 
                             entry.portrait.eq(&portrait, |&lhs, &rhs| {
-                                eq_value(self.read(ValuePtr(lhs.0)), user_graph.read(rhs))
+                                eq_value(self.read(ValuePlace(lhs.0)), user_graph.read(rhs))
                             })
                         });
 
@@ -290,7 +290,7 @@ impl ValueInterner {
         resolved_canonicals[&user_root]
     }
 
-    pub fn read(&self, value: ValuePtr) -> &Value {
+    pub fn read(&self, value: ValuePlace) -> &Value {
         self.value_arena.read(value)
     }
 
@@ -334,14 +334,11 @@ fn hash_value(value: &Value, state: &mut impl hash::Hasher) {
         ValueKind::Array(list) => {
             state.write_usize(list.len());
         }
-        ValueKind::Adt(instance, AdtValue::Composite(_)) => {
-            state.write_u8(0);
-            instance.hash(state);
+        ValueKind::AdtAggregate(_) => {
+            // (nothing)
         }
-        ValueKind::Adt(instance, AdtValue::Variant(discriminant, _)) => {
-            state.write_u8(1);
-            instance.hash(state);
-            state.write_u32(*discriminant);
+        ValueKind::AdtVariant(id, _) => {
+            id.hash(state);
         }
     }
 }
@@ -371,21 +368,15 @@ fn eq_value(lhs: &Value, rhs: &Value) -> bool {
         (ValueKind::Scalar(lhs), ValueKind::Scalar(rhs)) => lhs == rhs,
         (ValueKind::Tuple(lhs), ValueKind::Tuple(rhs)) => lhs.len() == rhs.len(),
         (ValueKind::Array(lhs), ValueKind::Array(rhs)) => lhs.len() == rhs.len(),
-        (
-            ValueKind::Adt(lhs_inst, AdtValue::Composite(_)),
-            ValueKind::Adt(rhs_inst, AdtValue::Composite(_)),
-        ) => lhs_inst == rhs_inst,
-        (
-            ValueKind::Adt(lhs_inst, AdtValue::Variant(lhs_variant, _)),
-            ValueKind::Adt(rhs_inst, AdtValue::Variant(rhs_variant, _)),
-        ) => lhs_inst == rhs_inst && lhs_variant == rhs_variant,
+        (ValueKind::AdtAggregate(_), ValueKind::AdtAggregate(_)) => true,
+        (ValueKind::AdtVariant(lhs, _), ValueKind::AdtVariant(rhs, _)) => lhs == rhs,
         _ => false,
     }
 }
 
 fn follow_node_ref<B>(
     value: &Value,
-    mut f: impl FnMut(ValuePtr) -> ControlFlow<B>,
+    mut f: impl FnMut(ValuePlace) -> ControlFlow<B>,
 ) -> ControlFlow<B> {
     match &value.kind {
         ValueKind::MetaType(_) => {}
@@ -397,12 +388,12 @@ fn follow_node_ref<B>(
         | ValueKind::MetaList(values)
         | ValueKind::Tuple(values)
         | ValueKind::Array(values)
-        | ValueKind::Adt(_, AdtValue::Composite(values)) => {
+        | ValueKind::AdtAggregate(values) => {
             for &value in values {
                 f(value)?;
             }
         }
-        ValueKind::Pointer(value) | ValueKind::Adt(_, AdtValue::Variant(_, value)) => {
+        ValueKind::Pointer(value) | ValueKind::AdtVariant(_, value) => {
             f(*value)?;
         }
         ValueKind::Func(_) | ValueKind::Scalar(_) => {}
@@ -413,7 +404,7 @@ fn follow_node_ref<B>(
 
 fn follow_node_mut<B>(
     value: &mut Value,
-    mut f: impl FnMut(&mut ValuePtr) -> ControlFlow<B>,
+    mut f: impl FnMut(&mut ValuePlace) -> ControlFlow<B>,
 ) -> ControlFlow<B> {
     match &mut value.kind {
         ValueKind::MetaType(_) => {}
@@ -425,12 +416,12 @@ fn follow_node_mut<B>(
         | ValueKind::MetaList(values)
         | ValueKind::Tuple(values)
         | ValueKind::Array(values)
-        | ValueKind::Adt(_, AdtValue::Composite(values)) => {
+        | ValueKind::AdtAggregate(values) => {
             for value in values {
                 f(value)?;
             }
         }
-        ValueKind::Pointer(value) | ValueKind::Adt(_, AdtValue::Variant(_, value)) => {
+        ValueKind::Pointer(value) | ValueKind::AdtVariant(_, value) => {
             f(value)?;
         }
         ValueKind::Func(_) | ValueKind::Scalar(_) => {}
