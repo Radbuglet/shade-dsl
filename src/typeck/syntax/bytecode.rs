@@ -15,7 +15,10 @@ pub struct BycFunction {
 #[derive(Debug)]
 pub enum BycInstr {
     /// Reserves a new place and pushes it to the stack.
-    Allocate,
+    Reserve,
+
+    /// Allocates a scalar value place and pushes it to the stack.
+    AllocScalar(Box<ValueScalar>),
 
     /// Copies an existing place reference on the stack relative to the top and pushes it to the
     /// stack.
@@ -41,15 +44,40 @@ pub enum BycInstr {
     /// the variant ADT onto the stack.
     AdtVariantUnwrap(BycPopMode),
 
+    /// Pops the stack without freeing, allocates a new value with a shallow copy of the value, and
+    /// pushes it to the stack.
+    ShallowCopy,
+
     /// Pops the stack according to the first pop mode and uses it as an RHS, pops the stack again
     /// according to the second pop mode and uses it as an LHS, and performs the binary operation.
     BinOp(BycBinOp, BycPopMode, BycPopMode),
 
-    /// Sets a place to a scalar value literal.
-    AssignLitScalar(Box<ValueScalar>),
-
     /// Performs an unconditional jump.
-    Jump(i32),
+    Jump(usize),
+
+    /// Pops the stack according to the pop mode, expecting a boolean. If the boolean is false,
+    /// jumps to the target instruction.
+    JumpOtherwise(BycPopMode, usize),
+}
+
+impl BycInstr {
+    pub fn depth_delta(&self) -> i32 {
+        match self {
+            BycInstr::Reserve => 1,
+            BycInstr::AllocScalar(..) => 1,
+            BycInstr::Tee(..) => 1,
+            BycInstr::Pop(..) => -1,
+            BycInstr::Const(..) => 1,
+            BycInstr::Call(..) => -1,
+            BycInstr::Return => 0,
+            BycInstr::AdtAggregateIndex(..) => 0,
+            BycInstr::AdtVariantUnwrap(..) => 0,
+            BycInstr::ShallowCopy => 0,
+            BycInstr::BinOp(..) => -1,
+            BycInstr::Jump(..) => 0,
+            BycInstr::JumpOtherwise(..) => 0,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]

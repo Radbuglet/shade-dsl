@@ -30,8 +30,8 @@ pub enum ValueKind {
     /// A value representing an uninstantiated function.
     MetaFunc(SemiFuncInstance),
 
-    /// A value representing a dynamically-allocated array of values.
-    MetaList(Vec<ValuePlace>),
+    /// An array of values whose size is not part of its type.
+    MetaArray(Vec<ValuePlace>),
 
     /// A pointer to another value.
     Pointer(ValuePlace),
@@ -130,7 +130,7 @@ impl PartialEq for ValueScalar {
 pub enum Ty {
     MetaTy,
     MetaFunc,
-    MetaList(Obj<Ty>),
+    MetaArray(Obj<Ty>),
     Pointer(Obj<Ty>),
     Func(Vec<Obj<Ty>>, Obj<Ty>),
     Scalar(ScalarKind),
@@ -161,7 +161,7 @@ pub enum ScalarKind {
 
 // === Instance === //
 
-#[derive(Debug, Hash, Eq, PartialEq, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct AdtInstance {
     /// The function which created the ADT.
     pub owner: Obj<FuncInstance>,
@@ -182,7 +182,7 @@ pub struct FuncInstance {
     pub generics: IndexVec<OwnGenericIdx, ValuePlace>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct SemiFuncInstance {
     /// The function we're trying to instantiate.
     pub func: Obj<Func>,

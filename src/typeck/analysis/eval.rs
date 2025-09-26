@@ -3,7 +3,8 @@ use crate::{
     typeck::{
         analysis::TyCtxt,
         syntax::{
-            BycFunction, BycInstr, Func, FuncInstance, Ty, Value, ValueArena, ValueKind, ValuePlace,
+            BycBinOp, BycFunction, BycInstr, CopyDepth, Func, FuncInstance, Ty, Value, ValueArena,
+            ValueKind, ValuePlace, ValueScalar,
         },
     },
 };
@@ -45,9 +46,13 @@ impl TyCtxt {
         let mut call_stack = Vec::from_iter([(root_func.r(s), 0usize)]);
         let mut place_stack = args.to_vec();
 
-        while let Some((curr_byc, curr_ip)) = call_stack.last().copied() {
+        while let Some((curr_byc, next_ip)) = call_stack.last_mut() {
+            let curr_byc = *curr_byc;
+            let curr_ip = *next_ip;
+            *next_ip += 1;
+
             match curr_byc.instructions[curr_ip] {
-                BycInstr::Allocate => {
+                BycInstr::Reserve => {
                     place_stack.push(arena.reserve());
                 }
                 BycInstr::Tee(idx) => {
@@ -61,9 +66,10 @@ impl TyCtxt {
                     }
                 }
                 BycInstr::Const(cst) => {
-                    place_stack.push(arena.duplicate_from(
+                    place_stack.push(arena.copy_from(
                         Some(self.value_interner.arena()),
                         self.eval_paramless(cst)?,
+                        CopyDepth::Deep,
                     ));
                 }
                 BycInstr::Call(mode) => {
@@ -105,25 +111,55 @@ impl TyCtxt {
                         arena.free(place);
                     }
                 }
+                BycInstr::ShallowCopy => {
+                    let to_copy = place_stack.pop().unwrap();
+                    let copied = arena.copy(to_copy, CopyDepth::Shallow);
+                    place_stack.push(copied);
+                }
                 BycInstr::BinOp(op, rhs_mode, lhs_mode) => {
                     let rhs_place = place_stack.pop().unwrap();
                     let lhs_place = place_stack.pop().unwrap();
 
                     match op {
-                        crate::typeck::syntax::BycBinOp::ShallowAssign => todo!(),
-                        crate::typeck::syntax::BycBinOp::Scalar(bin_op_kind) => todo!(),
+                        BycBinOp::ShallowAssign => {
+                            arena.assign(rhs_place, lhs_place);
+                        }
+                        BycBinOp::Scalar(op) => {
+                            todo!()
+                        }
                     }
 
-                    let to_copy = arena.read(place_stack.pop().unwrap()).clone();
-                    *arena.mutate(place_stack.pop().unwrap()) = to_copy;
+                    if rhs_mode.needs_free() {
+                        arena.free(rhs_place);
+                    }
+
+                    if lhs_mode.needs_free() {
+                        arena.free(lhs_place);
+                    }
                 }
-                BycInstr::AssignLitScalar(ref value) => {
+                BycInstr::AllocScalar(ref value) => {
                     *arena.mutate(place_stack.pop().unwrap()) = Value {
                         ty: self.ty_interner.intern(Ty::Scalar(value.kind()), s),
                         kind: ValueKind::Scalar(**value),
                     };
                 }
-                BycInstr::Jump(_) => todo!(),
+                BycInstr::Jump(addr) => {
+                    *next_ip = addr;
+                }
+                BycInstr::JumpOtherwise(mode, addr) => {
+                    let place = place_stack.pop().unwrap();
+                    let ValueKind::Scalar(ValueScalar::Bool(value)) = arena.read(place).kind else {
+                        unreachable!();
+                    };
+
+                    if !value {
+                        *next_ip = addr;
+                    }
+
+                    if mode.needs_free() {
+                        arena.free(place);
+                    }
+                }
             }
         }
 

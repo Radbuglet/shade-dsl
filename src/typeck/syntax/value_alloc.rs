@@ -45,38 +45,182 @@ impl ValueArena {
         ValuePlace(self.arena.insert(None))
     }
 
-    pub fn init(&mut self, ptr: ValuePlace, value: Value) {
-        assert!(self.arena[ptr.0].is_some());
-        self.arena[ptr.0] = Some(value);
-    }
-
     pub fn alloc(&mut self, value: Value) -> ValuePlace {
         ValuePlace(self.arena.insert(Some(value)))
     }
 
     pub fn free(&mut self, ptr: ValuePlace) {
-        self.arena.remove(ptr.0).unwrap();
+        let mut stack = vec![ptr];
+
+        while let Some(ptr) = stack.pop() {
+            let Some(value) = self.arena.remove(ptr.0).unwrap() else {
+                continue;
+            };
+
+            if matches!(value.kind, ValueKind::Pointer(_)) {
+                // (do not follow)
+                continue;
+            }
+
+            cbit::cbit!(for pointee in follow_node_ref(&value) {
+                stack.push(pointee);
+            });
+        }
+    }
+
+    pub fn is_init(&self, ptr: ValuePlace) -> bool {
+        self.arena[ptr.0].is_some()
+    }
+
+    pub fn init(&mut self, ptr: ValuePlace, value: Value) {
+        debug_assert!(!self.is_init(ptr));
+        self.arena[ptr.0] = Some(value);
     }
 
     pub fn read(&self, ptr: ValuePlace) -> &Value {
-        self.arena[ptr.0].as_ref().unwrap()
+        self.arena[ptr.0].as_ref().expect("place never initialized")
+    }
+
+    pub fn write(&mut self, ptr: ValuePlace, value: Value) {
+        self.arena[ptr.0] = Some(value);
     }
 
     pub fn mutate(&mut self, ptr: ValuePlace) -> &mut Value {
-        self.arena[ptr.0].as_mut().unwrap()
+        self.arena[ptr.0].as_mut().expect("place never initialized")
     }
 
-    pub fn duplicate(&mut self, target: ValuePlace) -> ValuePlace {
-        self.duplicate_from(Option::<&Self>::None, target)
+    pub fn assign(&mut self, from: ValuePlace, to: ValuePlace) {
+        let mut stack = vec![(from, to)];
+
+        while let Some((from_handle, to_handle)) = stack.pop() {
+            let (Some(Some(from)), Some(to)) = self.arena.get2_mut(from_handle.0, to_handle.0)
+            else {
+                unreachable!()
+            };
+
+            let from = &*from;
+
+            let Some(to) = to else {
+                self.copy_from_with_initial_root(
+                    None::<&ValueArena>,
+                    from_handle,
+                    to_handle,
+                    CopyDepth::Shallow,
+                );
+                continue;
+            };
+
+            debug_assert_eq!(from.ty, to.ty);
+
+            match (&from.kind, &mut to.kind) {
+                // External references are interned so terminal copies are okay.
+                (ValueKind::MetaType(from), ValueKind::MetaType(to)) => {
+                    *to = *from;
+                }
+                (ValueKind::MetaFunc(from), ValueKind::MetaFunc(to)) => {
+                    *to = from.clone();
+                }
+                (ValueKind::Func(from), ValueKind::Func(to)) => {
+                    *to = *from;
+                }
+
+                // Pointers are raw pointers. Just copy the address.
+                (ValueKind::Pointer(from), ValueKind::Pointer(to)) => {
+                    *to = *from;
+                }
+
+                // These are naturally terminal.
+                (ValueKind::Scalar(from), ValueKind::Scalar(to)) => {
+                    *to = *from;
+                }
+
+                // Here are the actually interesting cases.
+                (ValueKind::Tuple(from), ValueKind::Tuple(to))
+                | (ValueKind::Array(from), ValueKind::Array(to))
+                | (ValueKind::AdtAggregate(from), ValueKind::AdtAggregate(to)) => {
+                    for (&from, &mut to) in from.iter().zip(to) {
+                        stack.push((from, to));
+                    }
+                }
+                (ValueKind::MetaArray(from), ValueKind::MetaArray(to)) => {
+                    if from.len() == to.len() {
+                        for (&from, &mut to) in from.iter().zip(to) {
+                            stack.push((from, to));
+                        }
+                    } else {
+                        let old_to = mem::take(to);
+                        let mut new_to = from.clone();
+
+                        for place in old_to {
+                            self.free(place);
+                        }
+
+                        for elem in &mut new_to {
+                            *elem = self.copy(*elem, CopyDepth::Shallow);
+                        }
+
+                        let ValueKind::MetaArray(to) =
+                            &mut self.arena[to_handle.0].as_mut().unwrap().kind
+                        else {
+                            unreachable!()
+                        };
+
+                        *to = new_to;
+                    }
+                }
+                (
+                    ValueKind::AdtVariant(from_variant, from_pointee),
+                    ValueKind::AdtVariant(to_variant, to_pointee),
+                ) => {
+                    if from_variant == to_variant {
+                        stack.push((*from_pointee, *to_pointee));
+                    } else {
+                        *to_variant = *from_variant;
+
+                        let from_pointee = *from_pointee;
+                        let old_to_pointee = *to_pointee;
+
+                        self.free(old_to_pointee);
+
+                        let new_to_pointee = self.copy(from_pointee, CopyDepth::Shallow);
+
+                        let ValueKind::Pointer(to_pointee) =
+                            &mut self.arena[to_handle.0].as_mut().unwrap().kind
+                        else {
+                            unreachable!()
+                        };
+
+                        *to_pointee = new_to_pointee;
+                    }
+                }
+
+                _ => unreachable!(),
+            }
+        }
     }
 
-    pub fn duplicate_from(
+    pub fn copy(&mut self, target: ValuePlace, depth: CopyDepth) -> ValuePlace {
+        self.copy_from(Option::<&Self>::None, target, depth)
+    }
+
+    pub fn copy_from(
         &mut self,
         from_arena: Option<&impl ValueArenaLike>,
         from_root: ValuePlace,
+        depth: CopyDepth,
     ) -> ValuePlace {
         let to_root = self.reserve();
+        self.copy_from_with_initial_root(from_arena, from_root, to_root, depth);
+        to_root
+    }
 
+    pub fn copy_from_with_initial_root(
+        &mut self,
+        from_arena: Option<&impl ValueArenaLike>,
+        from_root: ValuePlace,
+        to_root: ValuePlace,
+        depth: CopyDepth,
+    ) {
         let mut stack = vec![(from_root, to_root)];
         let mut mapping = FxHashMap::from_iter([(from_root, to_root)]);
 
@@ -85,19 +229,35 @@ impl ValueArena {
                 .map_or_else(|| self.read(from), |other| other.read(from))
                 .clone();
 
-            cbit::cbit!(for edge in follow_node_mut(&mut value) {
-                let edge_from = *edge;
-                *edge = *mapping.entry(edge_from).or_insert_with(|| {
-                    let edge_to = self.reserve();
-                    stack.push((edge_from, edge_to));
-                    edge_to
+            if depth.is_deep() || !matches!(value.kind, ValueKind::Pointer(_)) {
+                cbit::cbit!(for edge in follow_node_mut(&mut value) {
+                    let edge_from = *edge;
+                    *edge = *mapping.entry(edge_from).or_insert_with(|| {
+                        let edge_to = self.reserve();
+                        stack.push((edge_from, edge_to));
+                        edge_to
+                    });
                 });
-            });
+            }
 
             *self.mutate(to) = value;
         }
+    }
+}
 
-        to_root
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum CopyDepth {
+    Deep,
+    Shallow,
+}
+
+impl CopyDepth {
+    pub fn is_deep(self) -> bool {
+        matches!(self, Self::Deep)
+    }
+
+    pub fn is_shallow(self) -> bool {
+        matches!(self, Self::Shallow)
     }
 }
 
@@ -193,7 +353,7 @@ impl ValueInterner {
         cbit::cbit!(for scc in tarjan(user_graph, [user_root]) {
             let keys = portrait_keys(user_graph, scc, |&node| {
                 let mut hasher = FxHasher::default();
-                hash_value(user_graph.read(node), &mut hasher);
+                hash_value_terminal(user_graph.read(node), &mut hasher);
                 hasher.finish()
             });
 
@@ -212,7 +372,7 @@ impl ValueInterner {
                     let portrait_hash = {
                         let mut hasher = FxHasher::default();
                         portrait.hash(
-                            |&node, hasher| hash_value(user_graph.read(node), hasher),
+                            |&node, hasher| hash_value_terminal(user_graph.read(node), hasher),
                             &mut hasher,
                         );
                         hasher.finish()
@@ -225,7 +385,10 @@ impl ValueInterner {
                             }
 
                             entry.portrait.eq(&portrait, |&lhs, &rhs| {
-                                eq_value(self.read(ValuePlace(lhs.0)), user_graph.read(rhs))
+                                eq_value_terminal(
+                                    self.read(ValuePlace(lhs.0)),
+                                    user_graph.read(rhs),
+                                )
                             })
                         });
 
@@ -301,22 +464,17 @@ impl ValueInterner {
 
 // === Value Introspection === //
 
-fn hash_value(value: &Value, state: &mut impl hash::Hasher) {
+fn hash_value_terminal(value: &Value, state: &mut impl hash::Hasher) {
     value.ty.hash(state);
 
     mem::discriminant(&value.kind).hash(state);
 
     match &value.kind {
         ValueKind::MetaType(ty) => ty.hash(state),
-        ValueKind::MetaFunc(SemiFuncInstance {
-            func,
-            parent,
-            generics: _,
-        }) => {
+        ValueKind::MetaFunc(func) => {
             func.hash(state);
-            parent.hash(state);
         }
-        ValueKind::MetaList(list) => {
+        ValueKind::MetaArray(list) => {
             state.write_usize(list.len());
         }
         ValueKind::Pointer(_) => {
@@ -343,27 +501,16 @@ fn hash_value(value: &Value, state: &mut impl hash::Hasher) {
     }
 }
 
-fn eq_value(lhs: &Value, rhs: &Value) -> bool {
+fn eq_value_terminal(lhs: &Value, rhs: &Value) -> bool {
     if lhs.ty != rhs.ty {
         return false;
     }
 
     match (&lhs.kind, &rhs.kind) {
         (ValueKind::MetaType(lhs), ValueKind::MetaType(rhs)) => lhs == rhs,
-        (
-            ValueKind::MetaFunc(SemiFuncInstance {
-                func: lhs_func,
-                parent: lhs_parent,
-                generics: _,
-            }),
-            ValueKind::MetaFunc(SemiFuncInstance {
-                func: rhs_func,
-                parent: rhs_parent,
-                generics: _,
-            }),
-        ) => lhs_func == rhs_func && lhs_parent == rhs_parent,
-        (ValueKind::MetaList(lhs), ValueKind::MetaList(rhs)) => lhs.len() == rhs.len(),
-        (ValueKind::Pointer(_), ValueKind::Pointer(_)) => true,
+        (ValueKind::MetaFunc(lhs), ValueKind::MetaFunc(rhs)) => lhs == rhs,
+        (ValueKind::MetaArray(lhs), ValueKind::MetaArray(rhs)) => lhs.len() == rhs.len(),
+        (ValueKind::Pointer(_lhs_heap), ValueKind::Pointer(_rhs_heap)) => true,
         (ValueKind::Func(lhs), ValueKind::Func(rhs)) => lhs == rhs,
         (ValueKind::Scalar(lhs), ValueKind::Scalar(rhs)) => lhs == rhs,
         (ValueKind::Tuple(lhs), ValueKind::Tuple(rhs)) => lhs.len() == rhs.len(),
@@ -374,58 +521,46 @@ fn eq_value(lhs: &Value, rhs: &Value) -> bool {
     }
 }
 
+macro_rules! follow_node {
+    ($value:expr, $f:expr) => {{
+        let mut f = $f;
+
+        match $value {
+            ValueKind::MetaFunc(SemiFuncInstance {
+                func: _,
+                parent: _,
+                generics: values,
+            })
+            | ValueKind::Tuple(values)
+            | ValueKind::Array(values)
+            | ValueKind::MetaArray(values)
+            | ValueKind::AdtAggregate(values) => {
+                for value in values {
+                    f(value)?;
+                }
+            }
+            ValueKind::Pointer(value) | ValueKind::AdtVariant(_, value) => {
+                f(value)?;
+            }
+            ValueKind::MetaType(_) | ValueKind::Func(_) | ValueKind::Scalar(_) => {
+                // (nothing to follow)
+            }
+        }
+
+        ControlFlow::Continue(())
+    }};
+}
+
 fn follow_node_ref<B>(
     value: &Value,
     mut f: impl FnMut(ValuePlace) -> ControlFlow<B>,
 ) -> ControlFlow<B> {
-    match &value.kind {
-        ValueKind::MetaType(_) => {}
-        ValueKind::MetaFunc(SemiFuncInstance {
-            func: _,
-            parent: _,
-            generics: values,
-        })
-        | ValueKind::MetaList(values)
-        | ValueKind::Tuple(values)
-        | ValueKind::Array(values)
-        | ValueKind::AdtAggregate(values) => {
-            for &value in values {
-                f(value)?;
-            }
-        }
-        ValueKind::Pointer(value) | ValueKind::AdtVariant(_, value) => {
-            f(*value)?;
-        }
-        ValueKind::Func(_) | ValueKind::Scalar(_) => {}
-    }
-
-    ControlFlow::Continue(())
+    follow_node!(&value.kind, |v: &ValuePlace| f(*v))
 }
 
 fn follow_node_mut<B>(
     value: &mut Value,
-    mut f: impl FnMut(&mut ValuePlace) -> ControlFlow<B>,
+    f: impl FnMut(&mut ValuePlace) -> ControlFlow<B>,
 ) -> ControlFlow<B> {
-    match &mut value.kind {
-        ValueKind::MetaType(_) => {}
-        ValueKind::MetaFunc(SemiFuncInstance {
-            func: _,
-            parent: _,
-            generics: values,
-        })
-        | ValueKind::MetaList(values)
-        | ValueKind::Tuple(values)
-        | ValueKind::Array(values)
-        | ValueKind::AdtAggregate(values) => {
-            for value in values {
-                f(value)?;
-            }
-        }
-        ValueKind::Pointer(value) | ValueKind::AdtVariant(_, value) => {
-            f(value)?;
-        }
-        ValueKind::Func(_) | ValueKind::Scalar(_) => {}
-    }
-
-    ControlFlow::Continue(())
+    follow_node!(&mut value.kind, f)
 }
