@@ -55,6 +55,18 @@ impl TyCtxt {
                 BycInstr::Reserve => {
                     place_stack.push(arena.reserve());
                 }
+                BycInstr::AllocScalar(ref value) => {
+                    place_stack.push(arena.alloc(Value {
+                        ty: self.ty_interner.intern(Ty::Scalar(value.kind()), s),
+                        kind: ValueKind::Scalar(**value),
+                    }));
+                }
+                BycInstr::AllocType(ty) => {
+                    place_stack.push(arena.alloc(Value {
+                        ty: self.ty_interner.intern(Ty::MetaTy, s),
+                        kind: ValueKind::MetaType(ty),
+                    }));
+                }
                 BycInstr::Tee(idx) => {
                     place_stack.push(place_stack[place_stack.len() - 1 - idx as usize]);
                 }
@@ -136,12 +148,6 @@ impl TyCtxt {
                     if lhs_mode.needs_free() {
                         arena.free(lhs_place);
                     }
-                }
-                BycInstr::AllocScalar(ref value) => {
-                    *arena.mutate(place_stack.pop().unwrap()) = Value {
-                        ty: self.ty_interner.intern(Ty::Scalar(value.kind()), s),
-                        kind: ValueKind::Scalar(**value),
-                    };
                 }
                 BycInstr::Jump(addr) => {
                     *next_ip = addr;

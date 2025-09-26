@@ -6,7 +6,8 @@ use crate::{
     typeck::{
         analysis::tcx::TyCtxt,
         syntax::{
-            BycBinOp, BycFunction, BycInstr, BycPopMode, Expr, ExprKind, FuncInstance, ValueScalar,
+            AdtInstance, BycBinOp, BycFunction, BycInstr, BycPopMode, Expr, ExprKind, FuncInstance,
+            Ty, ValueScalar,
         },
     },
 };
@@ -104,7 +105,20 @@ impl<'a> BycBuilderCtxt<'a> {
             ExprKind::Call(obj, objs) => todo!(),
             ExprKind::Destructure(obj, obj1) => todo!(),
             ExprKind::Match(expr_match) => todo!(),
-            ExprKind::Adt(obj) => todo!(),
+            ExprKind::Adt(adt) => {
+                self.push(
+                    [BycInstr::AllocType(self.tcx.ty_interner.intern(
+                        Ty::Adt(AdtInstance {
+                            owner: self.instance,
+                            adt: *adt,
+                        }),
+                        s,
+                    ))],
+                    depth,
+                );
+
+                BycPopMode::PopAndFree
+            }
             ExprKind::Func(obj) => todo!(),
             ExprKind::Error(_) | ExprKind::Placeholder => unreachable!(),
         }

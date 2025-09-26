@@ -1,7 +1,7 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     fmt,
-    hash::{self, Hash, Hasher},
+    hash::{self, BuildHasherDefault, Hash, Hasher},
     mem,
     ops::ControlFlow,
     ptr::NonNull,
@@ -18,13 +18,70 @@ use crate::{
         arena::LateInit,
     },
     typeck::syntax::{SemiFuncInstance, Value, ValueKind, ValuePlace},
-    utils::hash::{FxHashMap, FxHasher, hash_map},
+    utils::hash::{FxHashMap, FxHashSet, FxHasher, hash_map},
 };
 
 // === ValueArenaLike === //
 
-pub trait ValueArenaLike: Sized {
+thread_local! {
+    static CURRENT_VALUE_ARENA: Cell<Option<NonNull<dyn ValueArenaLike>>>
+        = const { Cell::new(None) };
+
+    static REENTRANT_FMT: RefCell<FxHashSet<ValuePlace>> =
+        const { RefCell::new(FxHashSet::with_hasher(BuildHasherDefault::new()) )};
+}
+
+pub trait ValueArenaLike {
     fn read(&self, ptr: ValuePlace) -> &Value;
+}
+
+impl fmt::Debug for ValuePlace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)?;
+
+        if let Some(arena) = CURRENT_VALUE_ARENA.get()
+            && REENTRANT_FMT.with_borrow_mut(|v| v.insert(*self))
+        {
+            let _guard = scopeguard::guard((), |()| {
+                REENTRANT_FMT.with_borrow_mut(|v| v.remove(self));
+            });
+
+            let arena = unsafe { arena.as_ref() };
+
+            f.write_str(": ")?;
+            arena.read(*self).fmt(f)?;
+        }
+
+        Ok(())
+    }
+}
+
+pub struct ArenaFmtWrapper<'a> {
+    arena: &'a (dyn ValueArenaLike + 'a),
+    target: ValuePlace,
+}
+
+impl fmt::Debug for ArenaFmtWrapper<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _guard = scopeguard::guard(
+            CURRENT_VALUE_ARENA.replace(Some(
+                NonNull::new(self.arena as *const dyn ValueArenaLike as *mut dyn ValueArenaLike)
+                    .unwrap(),
+            )),
+            |old| CURRENT_VALUE_ARENA.set(old),
+        );
+
+        self.target.fmt(f)
+    }
+}
+
+impl ValuePlace {
+    pub fn debug(self, arena: &dyn ValueArenaLike) -> ArenaFmtWrapper<'_> {
+        ArenaFmtWrapper {
+            arena,
+            target: self,
+        }
+    }
 }
 
 // === ValueArena === //

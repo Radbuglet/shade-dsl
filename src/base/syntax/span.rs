@@ -16,6 +16,10 @@ pub struct FilePos(NonZeroU32);
 
 impl fmt::Debug for FilePos {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_dummy() {
+            return f.write_str("<dummy>");
+        }
+
         let file = self.file();
         write!(f, "{}:{}", file.origin(), file.pos_to_loc(*self))
     }
@@ -84,6 +88,10 @@ impl FilePos {
 
     pub fn delta_usize(self, other: Self) -> usize {
         (other.u32() - self.u32()) as usize
+    }
+
+    pub fn is_dummy(self) -> bool {
+        self == Self::DUMMY
     }
 
     pub fn file(self) -> Rc<SourceMapFile> {
@@ -161,6 +169,10 @@ pub struct Span {
 
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_dummy() {
+            return f.write_str("<dummy>");
+        }
+
         let file = self.lo.file();
 
         let lo = file.pos_to_loc(self.lo);
@@ -244,6 +256,10 @@ impl Span {
 
     pub fn interpret_byte_range(self) -> ops::Range<usize> {
         self.lo.usize()..self.hi.usize()
+    }
+
+    pub fn is_dummy(self) -> bool {
+        self == Self::DUMMY
     }
 }
 

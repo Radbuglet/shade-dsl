@@ -11,7 +11,7 @@ use super::OwnGenericIdx;
 
 // === Handles === //
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct ValuePlace(pub(super) thunderdome::Index);
 
 // === Values === //

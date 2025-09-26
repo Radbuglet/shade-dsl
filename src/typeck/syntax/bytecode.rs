@@ -3,7 +3,7 @@
 use crate::{
     base::arena::Obj,
     parse::ast::BinOpKind,
-    typeck::syntax::{FuncInstance, ValueScalar},
+    typeck::syntax::{FuncInstance, Ty, ValueScalar},
 };
 
 #[derive(Debug)]
@@ -19,6 +19,9 @@ pub enum BycInstr {
 
     /// Allocates a scalar value place and pushes it to the stack.
     AllocScalar(Box<ValueScalar>),
+
+    /// Allocates a `MetaType` value place and pushes it to the stack.
+    AllocType(Obj<Ty>),
 
     /// Copies an existing place reference on the stack relative to the top and pushes it to the
     /// stack.
@@ -65,6 +68,7 @@ impl BycInstr {
         match self {
             BycInstr::Reserve => 1,
             BycInstr::AllocScalar(..) => 1,
+            BycInstr::AllocType(..) => 1,
             BycInstr::Tee(..) => 1,
             BycInstr::Pop(..) => -1,
             BycInstr::Const(..) => 1,

@@ -6,7 +6,7 @@ use shade_dsl::{
         syntax::{NaiveSegmenter, SourceFileOrigin},
     },
     parse::{ast::parse_file, lower::lower_file, token::tokenize},
-    typeck::analysis::TyCtxt,
+    typeck::{analysis::TyCtxt, syntax::ValueKind},
 };
 
 fn main() {
@@ -30,5 +30,5 @@ fn main() {
         .eval_paramless(tcx.intern_fn_instance(ir, None))
         .unwrap();
 
-    // TODO: Pretty-printing
+    dbg!(value.debug(tcx.value_interner.arena()));
 }
