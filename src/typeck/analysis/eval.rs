@@ -47,6 +47,10 @@ impl TyCtxt {
             let curr_ip = *next_ip;
             *next_ip += 1;
 
+            let expected_depth = (place_stack.len() as u32)
+                .checked_add_signed(curr_byc.instructions[curr_ip].depth_delta())
+                .unwrap();
+
             match curr_byc.instructions[curr_ip] {
                 BycInstr::Reserve => {
                     place_stack.push(arena.reserve());
@@ -114,7 +118,11 @@ impl TyCtxt {
                 }
                 BycInstr::CallCleanup(arg_count) => {
                     let ret_place = place_stack.pop().unwrap();
-                    place_stack.truncate(place_stack.len() - arg_count as usize - 1);
+
+                    for place in place_stack.drain((place_stack.len() - arg_count as usize - 1)..) {
+                        arena.free(place);
+                    }
+
                     place_stack.push(ret_place);
                 }
                 BycInstr::Return => {
@@ -188,6 +196,8 @@ impl TyCtxt {
                     }
                 }
             }
+
+            debug_assert_eq!(place_stack.len() as u32, expected_depth);
         }
 
         debug_assert_eq!(place_stack.len(), 1);
