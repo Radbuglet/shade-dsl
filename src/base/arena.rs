@@ -27,7 +27,7 @@ pub struct GpArena {
 
 struct GpArenaInner {
     bump: bumpalo::Bump,
-    singles: Vec<NonNull<dyn Any + Send + Sync>>,
+    singles: Vec<NonNull<dyn Any>>,
 }
 
 impl fmt::Debug for GpArena {
@@ -61,18 +61,14 @@ impl Drop for GpArena {
 }
 
 #[derive_where(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct Obj<T: 'static + Send + Sync> {
+pub struct Obj<T: 'static> {
     generation: NonZeroU64,
     ptr: NonNull<T>,
 }
 
-unsafe impl<T: 'static + Send + Sync> Send for Obj<T> {}
-
-unsafe impl<T: 'static + Send + Sync> Sync for Obj<T> {}
-
 impl<T> fmt::Debug for Obj<T>
 where
-    T: 'static + Send + Sync + fmt::Debug,
+    T: 'static + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         thread_local! {
@@ -97,7 +93,7 @@ where
     }
 }
 
-impl<T: 'static + Send + Sync> Obj<T> {
+impl<T: 'static> Obj<T> {
     pub fn new(value: T, s: &Session) -> Self {
         let mut inner = s.gp_arena.inner.borrow_mut();
 
@@ -119,11 +115,11 @@ impl<T: 'static + Send + Sync> Obj<T> {
 // === ObjInterner === //
 
 #[derive_where(Default)]
-pub struct ObjInterner<T: 'static + Send + Sync> {
+pub struct ObjInterner<T: 'static> {
     interns: RefCell<FxHashMap<(Obj<T>, u64), ()>>,
 }
 
-impl<T: 'static + Send + Sync> fmt::Debug for ObjInterner<T> {
+impl<T: 'static> fmt::Debug for ObjInterner<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ObjInterner").finish_non_exhaustive()
     }
@@ -131,7 +127,7 @@ impl<T: 'static + Send + Sync> fmt::Debug for ObjInterner<T> {
 
 impl<T> ObjInterner<T>
 where
-    T: 'static + Send + Sync + hash::Hash + Eq,
+    T: 'static + hash::Hash + Eq,
 {
     pub fn intern(&self, ty: T, s: &Session) -> Obj<T> {
         let mut interns = self.interns.borrow_mut();
@@ -158,10 +154,6 @@ pub struct LateInit<T> {
     is_init: Cell<bool>,
     cell: UnsafeCell<MaybeUninit<T>>,
 }
-
-unsafe impl<T: Send> Send for LateInit<T> {}
-
-unsafe impl<T: Send + Sync> Sync for LateInit<T> {}
 
 impl<T: fmt::Debug> fmt::Debug for LateInit<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

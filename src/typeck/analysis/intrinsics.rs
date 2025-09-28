@@ -1,10 +1,14 @@
-use std::{fmt, hash::BuildHasher};
+use std::{fmt, hash::BuildHasher, panic::Location};
 
+use derive_where::derive_where;
 use hashbrown::{HashMap, hash_map};
 
 use crate::{
-    base::syntax::Symbol,
-    typeck::{analysis::TyCtxt, syntax::ValuePlace},
+    base::{ErrorGuaranteed, arena::Obj, syntax::Symbol},
+    typeck::{
+        analysis::TyCtxt,
+        syntax::{Ty, ValuePlace},
+    },
     utils::hash::FxHashMap,
 };
 
@@ -126,4 +130,33 @@ impl IntrinsicResolverTrait for fn(&TyCtxt) -> Option<ValuePlace> {
     fn clone_erased(&self) -> IntrinsicResolver {
         IntrinsicResolver::new(*self)
     }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct MetaFuncIntrinsic {
+    inner: Obj<IntrinsicMetaFnInner>,
+}
+
+#[derive_where(Debug)]
+struct IntrinsicMetaFnInner {
+    location: &'static Location<'static>,
+    #[derive_where(skip)]
+    #[expect(clippy::type_complexity)]
+    construct: Box<dyn Fn(&TyCtxt, &[ValuePlace]) -> Result<FuncIntrinsic, ErrorGuaranteed>>,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct FuncIntrinsic {
+    inner: Obj<FuncIntrinsicInner>,
+}
+
+#[derive_where(Debug)]
+struct FuncIntrinsicInner {
+    location: &'static Location<'static>,
+    inputs: Vec<Obj<Ty>>,
+    output: Obj<Ty>,
+
+    #[derive_where(skip)]
+    #[expect(clippy::type_complexity)]
+    invoke: Box<dyn Fn(&TyCtxt, &[ValuePlace]) -> Result<FuncIntrinsic, ErrorGuaranteed>>,
 }

@@ -4,7 +4,10 @@ use index_vec::IndexVec;
 
 use crate::{
     base::arena::Obj,
-    typeck::syntax::{ExprAdt, Func},
+    typeck::{
+        analysis::{FuncIntrinsic, MetaFuncIntrinsic},
+        syntax::{ExprAdt, Func},
+    },
 };
 
 use super::OwnGenericIdx;
@@ -28,7 +31,7 @@ pub enum ValueKind {
     MetaType(Obj<Ty>),
 
     /// A value representing an uninstantiated function.
-    MetaFunc(SemiFuncInstance),
+    MetaFunc(AnyMetaFuncValue),
 
     /// An array of values whose size is not part of its type.
     MetaArray(Vec<ValuePlace>),
@@ -37,7 +40,7 @@ pub enum ValueKind {
     Pointer(ValuePlace),
 
     /// A value representing an instantiated function.
-    Func(Obj<FuncInstance>),
+    Func(AnyFuncValue),
 
     /// A value representing a scalar.
     Scalar(ValueScalar),
@@ -170,6 +173,18 @@ pub struct AdtInstance {
     pub adt: Obj<ExprAdt>,
 }
 
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum AnyFuncValue {
+    Intrinsic(FuncIntrinsic),
+    Instance(Obj<FuncInstance>),
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum AnyMetaFuncValue {
+    Intrinsic(MetaFuncIntrinsic),
+    Instance(MetaFuncInstance),
+}
+
 #[derive(Debug, Hash, Eq, PartialEq)]
 pub struct FuncInstance {
     /// The function we're evaluating.
@@ -182,14 +197,11 @@ pub struct FuncInstance {
     pub generics: IndexVec<OwnGenericIdx, ValuePlace>,
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct SemiFuncInstance {
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct MetaFuncInstance {
     /// The function we're trying to instantiate.
     pub func: Obj<Func>,
 
     /// The upvars captured by parent functions which have already been evaluated.
     pub parent: Option<Obj<FuncInstance>>,
-
-    /// The partial list of generic arguments to the function, filled from left to right.
-    pub generics: Vec<ValuePlace>,
 }

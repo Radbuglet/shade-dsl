@@ -17,7 +17,7 @@ use crate::{
         },
         arena::LateInit,
     },
-    typeck::syntax::{SemiFuncInstance, Value, ValueKind, ValuePlace},
+    typeck::syntax::{Value, ValueKind, ValuePlace},
     utils::hash::{FxHashMap, FxHashSet, FxHasher, hash_map},
 };
 
@@ -175,7 +175,7 @@ impl ValueArena {
                     *to = *from;
                 }
                 (ValueKind::MetaFunc(from), ValueKind::MetaFunc(to)) => {
-                    *to = from.clone();
+                    *to = *from;
                 }
                 (ValueKind::Func(from), ValueKind::Func(to)) => {
                     *to = *from;
@@ -583,12 +583,7 @@ macro_rules! follow_node {
         let mut f = $f;
 
         match $value {
-            ValueKind::MetaFunc(SemiFuncInstance {
-                func: _,
-                parent: _,
-                generics: values,
-            })
-            | ValueKind::Tuple(values)
+            ValueKind::Tuple(values)
             | ValueKind::Array(values)
             | ValueKind::MetaArray(values)
             | ValueKind::AdtAggregate(values) => {
@@ -599,7 +594,10 @@ macro_rules! follow_node {
             ValueKind::Pointer(value) | ValueKind::AdtVariant(_, value) => {
                 f(value)?;
             }
-            ValueKind::MetaType(_) | ValueKind::Func(_) | ValueKind::Scalar(_) => {
+            ValueKind::MetaType(_)
+            | ValueKind::MetaFunc(_)
+            | ValueKind::Func(_)
+            | ValueKind::Scalar(_) => {
                 // (nothing to follow)
             }
         }

@@ -3,8 +3,8 @@ use crate::{
     typeck::{
         analysis::{TyCtxt, WfRequirement},
         syntax::{
-            BycBinOp, BycFunction, BycInstr, CopyDepth, FuncInstance, Ty, Value, ValueArena,
-            ValueKind, ValuePlace, ValueScalar,
+            AnyFuncValue, BycBinOp, BycFunction, BycInstr, CopyDepth, FuncInstance, Ty, Value,
+            ValueArena, ValueKind, ValuePlace, ValueScalar,
         },
     },
 };
@@ -101,7 +101,12 @@ impl TyCtxt {
                         arena.free(callee_place);
                     }
 
-                    call_stack.push((self.build_bytecode(callee)?.r(s), 0usize));
+                    match callee {
+                        AnyFuncValue::Intrinsic(callee) => todo!(),
+                        AnyFuncValue::Instance(callee) => {
+                            call_stack.push((self.build_bytecode(callee)?.r(s), 0usize));
+                        }
+                    }
                 }
                 BycInstr::Return => {
                     call_stack.pop().unwrap();

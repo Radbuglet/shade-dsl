@@ -39,20 +39,6 @@ pub struct MappedRc<O: ?Sized, T: ?Sized> {
     mapped: NonNull<T>,
 }
 
-unsafe impl<O, T> Send for MappedRc<O, T>
-where
-    O: ?Sized + Send + Sync,
-    T: ?Sized + Sync,
-{
-}
-
-unsafe impl<O, T> Sync for MappedRc<O, T>
-where
-    O: ?Sized + Send + Sync,
-    T: ?Sized + Sync,
-{
-}
-
 impl<O: ?Sized, T: ?Sized> MappedRc<O, T> {
     pub unsafe fn new_unchecked(original: Rc<O>, mapped: NonNull<T>) -> Self {
         Self { original, mapped }

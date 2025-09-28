@@ -1,4 +1,4 @@
-use std::{fmt, num::NonZeroU32, sync::RwLock};
+use std::{cell::RefCell, fmt, num::NonZeroU32};
 
 use bumpalo::Bump;
 
@@ -37,7 +37,7 @@ impl Symbol {
 // === SymbolInterner === //
 
 #[derive(Default)]
-pub struct SymbolInterner(RwLock<SymbolInternInner>);
+pub struct SymbolInterner(RefCell<SymbolInternInner>);
 
 #[derive(Default)]
 struct SymbolInternInner {
@@ -45,9 +45,6 @@ struct SymbolInternInner {
     symbols: Vec<*const str>,
     symbol_map: FxHashMap<(u64, *const str), Symbol>,
 }
-
-unsafe impl Send for SymbolInterner {}
-unsafe impl Sync for SymbolInterner {}
 
 impl fmt::Debug for SymbolInterner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -59,24 +56,7 @@ impl SymbolInterner {
     pub fn intern(&self, value: &str) -> Symbol {
         let hash = fx_hash_one(value);
 
-        // Fast path: return existing symbol
-        let inner = self.0.read().unwrap();
-
-        if let Some((_key, sym)) =
-            inner
-                .symbol_map
-                .raw_entry()
-                .from_hash(hash, |&(candidate_hash, candidate)| {
-                    candidate_hash == hash && unsafe { *candidate == *value }
-                })
-        {
-            return *sym;
-        }
-
-        drop(inner);
-
-        // Slow path: create a new symbol
-        let mut inner = self.0.write().unwrap();
+        let mut inner = self.0.borrow_mut();
         let inner = &mut *inner;
 
         let entry =
@@ -105,7 +85,7 @@ impl SymbolInterner {
     }
 
     pub fn lookup(&self, sym: Symbol) -> &str {
-        let inner = self.0.read().unwrap();
+        let inner = self.0.borrow();
 
         unsafe { &*inner.symbols[(sym.0.get() - 1) as usize] }
     }
