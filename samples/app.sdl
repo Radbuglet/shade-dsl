@@ -1,3 +1,5 @@
-const whee = mod {
+const whee = struct {
     const wazoo = true;
 };
+
+const waz = whee.my_type {}.woo;

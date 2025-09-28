@@ -158,7 +158,7 @@ fn parse_ast_member_const(p: P, is_public: bool) -> OptPResult<AstMember> {
     }
 
     // Match initializer.
-    let initializer = parse_expr(p);
+    let initializer = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
 
     // Match semi-colon.
     if match_punct(punct!(';')).expect(p).is_none() {
@@ -174,12 +174,18 @@ fn parse_ast_member_const(p: P, is_public: bool) -> OptPResult<AstMember> {
 
 // === Expression parsing === //
 
-fn parse_expr(p: P) -> AstExpr {
-    parse_expr_pratt(p, Bp::MIN)
+bitflags::bitflags! {
+    #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+    struct ExprParseFlags : u32 {
+        const NO_RESTRICTIONS = !0;
+        const IN_SCRUTINEE = 0;
+
+        const ALLOW_STRUCT_CTOR = 1 << 0;
+    }
 }
 
 fn parse_expr_full(p: P) -> AstExpr {
-    let expr = parse_expr(p);
+    let expr = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
 
     if !match_eos(p) {
         // Recovery strategy: ignore
@@ -189,16 +195,25 @@ fn parse_expr_full(p: P) -> AstExpr {
     expr
 }
 
-fn parse_expr_pratt(p: P, min_bp: Bp) -> AstExpr {
-    parse_expr_pratt_inner(p, min_bp, false).unwrap()
+fn parse_expr(p: P, flags: ExprParseFlags) -> AstExpr {
+    parse_expr_pratt(p, Bp::MIN, flags)
 }
 
-fn parse_expr_pratt_opt(p: P, min_bp: Bp) -> Option<AstExpr> {
-    parse_expr_pratt_inner(p, min_bp, true)
+fn parse_expr_pratt(p: P, min_bp: Bp, flags: ExprParseFlags) -> AstExpr {
+    parse_expr_pratt_inner(p, min_bp, false, flags).unwrap()
+}
+
+fn parse_expr_pratt_opt(p: P, min_bp: Bp, flags: ExprParseFlags) -> Option<AstExpr> {
+    parse_expr_pratt_inner(p, min_bp, true, flags)
 }
 
 // See: https://matklad.github.io/2020/04/13/simple-but-powerful-pratt-parsing.html
-fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr> {
+fn parse_expr_pratt_inner(
+    p: P,
+    min_bp: Bp,
+    is_optional: bool,
+    flags: ExprParseFlags,
+) -> Option<AstExpr> {
     // Parse seed expression
     let seed_start = p.next_span();
     let build_expr = move |expr: AstExprKind, p: P| AstExpr {
@@ -214,7 +229,9 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
 
         // Parse a parenthesis or tuple.
         if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
-            let res = parse_comma_group(&mut p.enter(&paren), parse_expr);
+            let res = parse_comma_group(&mut p.enter(&paren), |p| {
+                parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
+            });
 
             break 'seed build_expr(
                 match res.into_singleton() {
@@ -228,7 +245,12 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
         // Parse an array.
         if let Some(array) = match_group(GroupDelimiter::Bracket).expect(p) {
             break 'seed build_expr(
-                AstExprKind::Array(parse_comma_group(&mut p.enter(&array), parse_expr).elems),
+                AstExprKind::Array(
+                    parse_comma_group(&mut p.enter(&array), |p| {
+                        parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
+                    })
+                    .elems,
+                ),
                 p,
             );
         }
@@ -338,38 +360,10 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
             break 'seed build_expr(AstExprKind::TypeExpr(Box::new(ty)), p);
         }
 
-        // Parse an `new` expression
-        if match_kw(kw!("new")).expect(p).is_some() {
-            // Parse the structure kind
-            let kind = parse_expr(p);
-
-            // Parse the initializers.
-            let Some(braced) = match_group(GroupDelimiter::Brace).expect(p) else {
-                // Recovery strategy: do nothing
-                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
-            };
-
-            let initializers = parse_comma_group(&mut p.enter(&braced), |p| {
-                let name = match_ident().expect(p)?;
-
-                if match_punct(punct!(':')).expect(p).is_none() {
-                    return Some((name, None));
-                }
-
-                Some((name, Some(Box::new(parse_expr(p)))))
-            })
-            .elems
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-
-            break 'seed build_expr(AstExprKind::New(Box::new(kind), initializers), p);
-        }
-
         // Parse an `if` expression
         if match_kw(kw!("if")).expect(p).is_some() {
             fn parse_after_if(if_span: Span, p: P) -> AstExpr {
-                let cond = parse_expr(p);
+                let cond = parse_expr(p, ExprParseFlags::IN_SCRUTINEE);
 
                 let Some(truthy) = parse_brace_block(p) else {
                     // Recovery strategy: do nothing
@@ -435,7 +429,7 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
         if match_kw(kw!("while")).expect(p).is_some() {
             // TODO: Labels
 
-            let cond = parse_expr(p);
+            let cond = parse_expr(p, ExprParseFlags::IN_SCRUTINEE);
 
             let Some(block) = parse_brace_block(p) else {
                 // Recovery strategy: do nothing
@@ -465,7 +459,7 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
 
         // Parse a `match` expression
         if match_kw(kw!("match")).expect(p).is_some() {
-            let scrutinee = parse_expr(p);
+            let scrutinee = parse_expr(p, ExprParseFlags::IN_SCRUTINEE);
 
             let Some(braced) = match_group(GroupDelimiter::Brace).expect(p) else {
                 // Recovery strategy: do nothing
@@ -492,7 +486,7 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
 
         // Parse a `return` expression
         if match_kw(kw!("return")).expect(p).is_some() {
-            let expr = parse_expr_pratt_opt(p, expr_bp::PRE_RETURN.right);
+            let expr = parse_expr_pratt_opt(p, expr_bp::PRE_RETURN.right, flags);
 
             break 'seed build_expr(AstExprKind::Return(expr.map(Box::new)), p);
         }
@@ -506,21 +500,21 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
         if match_kw(kw!("break")).expect(p).is_some() {
             // TODO: Labels
 
-            let expr = parse_expr_pratt_opt(p, expr_bp::PRE_BREAK.right);
+            let expr = parse_expr_pratt_opt(p, expr_bp::PRE_BREAK.right, flags);
 
             break 'seed build_expr(AstExprKind::Break(expr.map(Box::new)), p);
         }
 
         // Parse unary neg.
         if match_punct(punct!('-')).expect(p).is_some() {
-            let lhs = parse_expr_pratt(p, expr_bp::PRE_NEG.right);
+            let lhs = parse_expr_pratt(p, expr_bp::PRE_NEG.right, flags);
 
             break 'seed build_expr(AstExprKind::Unary(UnaryOpKind::Neg, Box::new(lhs)), p);
         }
 
         // Parse unary not.
         if match_punct(punct!('!')).expect(p).is_some() {
-            let lhs = parse_expr_pratt(p, expr_bp::PRE_NOT.right);
+            let lhs = parse_expr_pratt(p, expr_bp::PRE_NOT.right, flags);
 
             break 'seed build_expr(AstExprKind::Unary(UnaryOpKind::Not, Box::new(lhs)), p);
         }
@@ -558,7 +552,7 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
                 span: punct.span,
                 kind: AstExprKind::Assign(
                     Box::new(lhs),
-                    Box::new(parse_expr_pratt(p, expr_bp::INFIX_ASSIGN.right)),
+                    Box::new(parse_expr_pratt(p, expr_bp::INFIX_ASSIGN.right, flags)),
                 ),
             };
         }
@@ -588,7 +582,7 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
                     kind: AstExprKind::Bin(
                         kind,
                         Box::new(lhs),
-                        Box::new(parse_expr_pratt(p, op_bp.right)),
+                        Box::new(parse_expr_pratt(p, op_bp.right, flags)),
                     ),
                 };
 
@@ -616,12 +610,41 @@ fn parse_expr_pratt_inner(p: P, min_bp: Bp, is_optional: bool) -> Option<AstExpr
                     kind: AstExprKind::Bin(
                         kind,
                         Box::new(lhs),
-                        Box::new(parse_expr_pratt(p, op_bp.right)),
+                        Box::new(parse_expr_pratt(p, op_bp.right, flags)),
                     ),
                 };
 
                 continue 'chaining;
             }
+        }
+
+        // Parse an `new` expression
+        if flags.contains(ExprParseFlags::ALLOW_STRUCT_CTOR)
+            && !matches!(lhs.kind, AstExprKind::New(..))
+            && let Some(braced) = match_group(GroupDelimiter::Brace).expect(p)
+        {
+            let initializers = parse_comma_group(&mut p.enter(&braced), |p| {
+                let name = match_ident().expect(p)?;
+
+                if match_punct(punct!(':')).expect(p).is_none() {
+                    return Some((name, None));
+                }
+
+                Some((
+                    name,
+                    Some(Box::new(parse_expr(p, ExprParseFlags::NO_RESTRICTIONS))),
+                ))
+            })
+            .elems
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+
+            lhs = AstExpr {
+                span: braced.span,
+                kind: AstExprKind::New(Box::new(lhs), initializers),
+            };
+            continue 'chaining;
         }
 
         break;
@@ -638,7 +661,7 @@ fn parse_match_arm(p: P) -> AstMatchArm {
         p.stuck_recover_with(|_| {});
     }
 
-    let expr = parse_expr(p);
+    let expr = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
 
     AstMatchArm { pat, expr }
 }
@@ -674,7 +697,9 @@ fn parse_ty_pratt(p: P, min_bp: Bp) -> AstExpr {
 
         // Parse a parenthesis or tuple type constructor.
         if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
-            let res = parse_comma_group(&mut p.enter(&paren), parse_expr);
+            let res = parse_comma_group(&mut p.enter(&paren), |p| {
+                parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
+            });
 
             break 'seed build_expr(
                 match res.into_singleton() {
@@ -850,7 +875,9 @@ fn parse_common_expr_chains(p: P, mut lhs: AstExpr, min_bp: Bp) -> (AstExpr, boo
     if let Some(paren) =
         match_group(GroupDelimiter::Paren).maybe_expect(p, expr_bp::POST_CALL.left >= min_bp)
     {
-        let res = parse_comma_group(&mut p.enter(&paren), parse_expr);
+        let res = parse_comma_group(&mut p.enter(&paren), |p| {
+            parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
+        });
 
         lhs = AstExpr {
             span: paren.span,
@@ -980,7 +1007,7 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
                 let _ = p.stuck_recover();
             }
 
-            let init = parse_expr(p);
+            let init = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
 
             if match_punct(punct!(';')).expect(p).is_none() {
                 // Recovery strategy: ignore
@@ -1011,7 +1038,7 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
                 let _ = p.stuck_recover();
             }
 
-            let init = parse_expr(p);
+            let init = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
 
             if match_punct(punct!(';')).expect(p).is_none() {
                 // Recovery strategy: ignore
@@ -1030,7 +1057,7 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
         }
 
         // Match expressions
-        let expr = parse_expr(p);
+        let expr = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
 
         if match_eos(p) {
             break Some(expr);

@@ -87,7 +87,7 @@ pub enum AstExprKind {
     /// Can only be parsed in expression parsing contexts.
     Array(Vec<AstExpr>),
 
-    /// A struct instance constructor (e.g. `new Point { x, y }`).
+    /// A struct instance constructor (e.g. `my.Type { x, y }`).
     ///
     /// Can only be parsed in expression parsing contexts.
     New(Box<AstExpr>, Vec<(Ident, Option<Box<AstExpr>>)>),
