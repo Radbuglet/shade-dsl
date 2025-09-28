@@ -1,9 +1,9 @@
 use crate::{
     base::{ErrorGuaranteed, arena::Obj},
     typeck::{
-        analysis::TyCtxt,
+        analysis::{TyCtxt, WfRequirement},
         syntax::{
-            BycBinOp, BycFunction, BycInstr, CopyDepth, Func, FuncInstance, Ty, Value, ValueArena,
+            BycBinOp, BycFunction, BycInstr, CopyDepth, FuncInstance, Ty, Value, ValueArena,
             ValueKind, ValuePlace, ValueScalar,
         },
     },
@@ -22,12 +22,8 @@ impl TyCtxt {
         })
     }
 
-    pub fn eval_ty(
-        &self,
-        ty: Obj<Func>,
-        parent: Obj<FuncInstance>,
-    ) -> Result<Obj<Ty>, ErrorGuaranteed> {
-        let value = self.eval_paramless(self.intern_fn_instance(ty, Some(parent)))?;
+    pub fn eval_ty(&self, instance: Obj<FuncInstance>) -> Result<Obj<Ty>, ErrorGuaranteed> {
+        let value = self.eval_paramless(instance)?;
 
         let ValueKind::MetaType(ty) = self.value_interner.read(value).kind else {
             todo!();
@@ -62,6 +58,10 @@ impl TyCtxt {
                     }));
                 }
                 BycInstr::AllocType(ty) => {
+                    if let Ty::Adt(instance) = ty.r(&self.session) {
+                        self.queue_wf(WfRequirement::ValidateAdt(*instance));
+                    }
+
                     place_stack.push(arena.alloc(Value {
                         ty: self.ty_interner.intern(Ty::MetaTy, s),
                         kind: ValueKind::MetaType(ty),

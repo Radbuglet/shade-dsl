@@ -59,10 +59,13 @@ impl<T> NameResolver<T> {
     }
 
     pub fn push_rib(&mut self) {
+        self.depth += 1;
         self.stack.push(Op::Rib);
     }
 
     pub fn pop_rib(&mut self) {
+        self.depth -= 1;
+
         while let Some(op) = self.stack.pop() {
             let Op::Set(sym, prev) = op else {
                 // Hit the previous `push`.

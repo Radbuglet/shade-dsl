@@ -608,14 +608,14 @@ macro_rules! follow_node {
     }};
 }
 
-fn follow_node_ref<B>(
+pub fn follow_node_ref<B>(
     value: &Value,
     mut f: impl FnMut(ValuePlace) -> ControlFlow<B>,
 ) -> ControlFlow<B> {
     follow_node!(&value.kind, |v: &ValuePlace| f(*v))
 }
 
-fn follow_node_mut<B>(
+pub fn follow_node_mut<B>(
     value: &mut Value,
     f: impl FnMut(&mut ValuePlace) -> ControlFlow<B>,
 ) -> ControlFlow<B> {

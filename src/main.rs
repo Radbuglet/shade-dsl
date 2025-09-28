@@ -6,7 +6,7 @@ use shade_dsl::{
         syntax::{NaiveSegmenter, SourceFileOrigin},
     },
     parse::{ast::parse_file, lower::lower_file, token::tokenize},
-    typeck::{analysis::TyCtxt, syntax::ValueKind},
+    typeck::analysis::{TyCtxt, WfRequirement},
 };
 
 fn main() {
@@ -26,9 +26,10 @@ fn main() {
     let ir = lower_file(&ast);
 
     let tcx = TyCtxt::new(Session::fetch());
-    let value = tcx
-        .eval_paramless(tcx.intern_fn_instance(ir, None))
-        .unwrap();
 
-    dbg!(value.debug(tcx.value_interner.arena()));
+    tcx.queue_wf(WfRequirement::EvaluateType(
+        tcx.intern_fn_instance(ir, None),
+    ));
+
+    tcx.flush_wf();
 }

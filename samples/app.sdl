@@ -1,1 +1,3 @@
-const whee = 3;
+const whee = mod {
+    const wazoo = true;
+};

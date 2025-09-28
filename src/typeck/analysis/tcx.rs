@@ -1,4 +1,4 @@
-use std::{ops::Deref, rc::Rc};
+use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use index_vec::IndexVec;
 
@@ -8,7 +8,8 @@ use crate::{
         analysis::Memo,
         arena::{Obj, ObjInterner},
     },
-    typeck::syntax::{BycFunction, Func, FuncInstance, Ty, ValueInterner, ValuePlace},
+    typeck::syntax::{AdtInstance, BycFunction, Func, FuncInstance, Ty, ValueInterner, ValuePlace},
+    utils::hash::FxHashSet,
 };
 
 #[derive(Debug, Clone)]
@@ -22,7 +23,22 @@ pub struct TyCtxtInner {
     pub value_interner: ValueInterner,
     pub ty_interner: ObjInterner<Ty>,
     pub fn_interner: ObjInterner<FuncInstance>,
+    pub wf_state: RefCell<WfState>,
     pub queries: Queries,
+}
+
+#[derive(Debug, Default)]
+pub struct WfState {
+    pub validated: FxHashSet<WfRequirement>,
+    pub queue: Vec<WfRequirement>,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum WfRequirement {
+    TypeCheck(Obj<FuncInstance>),
+    EvaluateAny(Obj<FuncInstance>),
+    EvaluateType(Obj<FuncInstance>),
+    ValidateAdt(AdtInstance),
 }
 
 #[derive(Debug, Default)]
@@ -48,6 +64,7 @@ impl TyCtxt {
                 value_interner: ValueInterner::default(),
                 ty_interner: ObjInterner::default(),
                 fn_interner: ObjInterner::default(),
+                wf_state: RefCell::default(),
                 queries: Queries::default(),
             }),
         }
@@ -66,5 +83,48 @@ impl TyCtxt {
             },
             &self.session,
         )
+    }
+
+    pub fn queue_wf(&self, req: WfRequirement) {
+        let mut state = self.wf_state.borrow_mut();
+
+        if state.validated.insert(req) {
+            state.queue.push(req);
+        }
+    }
+
+    pub fn flush_wf(&self) {
+        let s = &self.session;
+
+        loop {
+            let Some(req) = self.wf_state.borrow_mut().queue.pop() else {
+                break;
+            };
+
+            match req {
+                WfRequirement::TypeCheck(instance) => {
+                    _ = self.type_check(instance);
+                }
+                WfRequirement::EvaluateAny(instance) => {
+                    _ = self.eval_paramless(instance);
+                }
+                WfRequirement::EvaluateType(instance) => {
+                    _ = self.eval_ty(instance);
+                }
+                WfRequirement::ValidateAdt(instance) => {
+                    let lexical = instance.adt.r(s);
+
+                    for field in &lexical.fields {
+                        _ = self.eval_ty(self.intern_fn_instance(field.ty, Some(instance.owner)));
+                    }
+
+                    for member in &lexical.members {
+                        _ = self.eval_paramless(
+                            self.intern_fn_instance(member.init, Some(instance.owner)),
+                        );
+                    }
+                }
+            }
+        }
     }
 }
