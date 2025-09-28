@@ -6,8 +6,8 @@ use crate::{
     typeck::{
         analysis::tcx::TyCtxt,
         syntax::{
-            AdtInstance, BycBinOp, BycFunction, BycInstr, BycPopMode, Expr, ExprKind, FuncInstance,
-            Ty, ValueScalar,
+            AdtInstance, AnyName, BycBinOp, BycFunction, BycInstr, BycPopMode, Expr, ExprKind,
+            FuncInstance, Ty, ValueScalar,
         },
     },
 };
@@ -49,7 +49,7 @@ impl<'a> BycBuilderCtxt<'a> {
     fn push(&mut self, instructions: impl IntoIterator<Item = BycInstr>, depth: &mut u32) {
         self.instructions
             .extend(instructions.into_iter().inspect(|instr| {
-                *depth += depth.checked_add_signed(instr.depth_delta()).unwrap();
+                *depth = depth.checked_add_signed(instr.depth_delta()).unwrap();
             }));
     }
 
@@ -68,7 +68,12 @@ impl<'a> BycBuilderCtxt<'a> {
     fn lower_expr_maybe_place(&mut self, expr: &Expr, depth: &mut u32) -> BycPopMode {
         let old_depth = *depth;
         let mode = self.lower_expr_maybe_place_inner(expr, depth);
-        debug_assert_eq!(*depth, old_depth + 1);
+        debug_assert_eq!(
+            *depth,
+            old_depth + 1,
+            "the stack was broken by...\n{expr:#?}\nexpected just one place to be pushed to the stack but got {}",
+            (*depth as i32) - (old_depth as i32),
+        );
         mode
     }
 
@@ -76,7 +81,16 @@ impl<'a> BycBuilderCtxt<'a> {
         let s = &self.tcx.session;
 
         match &expr.kind {
-            ExprKind::Name(any_name) => todo!(),
+            ExprKind::Name(name) => match name {
+                AnyName::Const(cst) => {
+                    let cst = self.tcx.intern_fn_instance(*cst, Some(self.instance));
+                    self.push([BycInstr::ConstEval(cst)], depth);
+
+                    BycPopMode::PopAndFree
+                }
+                AnyName::Generic(obj) => todo!(),
+                AnyName::Local(obj) => todo!(),
+            },
             ExprKind::Block(obj) => todo!(),
             ExprKind::Lit(lit) => {
                 self.push(
@@ -109,7 +123,23 @@ impl<'a> BycBuilderCtxt<'a> {
 
                 BycPopMode::PopAndFree
             }
-            ExprKind::Call(obj, objs) => todo!(),
+            ExprKind::Call(callee, args) => {
+                self.lower_expr_for_value(callee.r(s), depth);
+
+                for &arg in args {
+                    self.lower_expr_for_value(arg.r(s), depth);
+                }
+
+                self.push(
+                    [
+                        BycInstr::CallStart(args.len() as u32),
+                        BycInstr::CallCleanup(args.len() as u32),
+                    ],
+                    depth,
+                );
+
+                BycPopMode::PopAndFree
+            }
             ExprKind::Destructure(obj, obj1) => todo!(),
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(adt) => {

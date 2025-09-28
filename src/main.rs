@@ -8,7 +8,7 @@ use shade_dsl::{
     parse::{ast::parse_file, lower::lower_file, token::tokenize},
     typeck::{
         analysis::{IntrinsicResolver, TyCtxt, WfRequirement},
-        syntax::{AnyFuncValue, FuncIntrinsic, Ty, Value, ValueKind},
+        syntax::{AnyFuncValue, FuncIntrinsic, ScalarKind, Ty, Value, ValueKind},
     },
 };
 
@@ -41,7 +41,14 @@ fn main() {
                         arena.alloc(Value {
                             ty: tcx.intern_ty(Ty::Func(vec![], tcx.intern_ty(Ty::MetaTy))),
                             kind: ValueKind::Func(AnyFuncValue::Intrinsic(FuncIntrinsic::new(
-                                move |tcx, arena, args| todo!(),
+                                move |tcx, arena, _args| {
+                                    Ok(arena.alloc(Value {
+                                        ty: tcx.intern_ty(Ty::MetaTy),
+                                        kind: ValueKind::MetaType(
+                                            tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
+                                        ),
+                                    }))
+                                },
                                 s,
                             ))),
                         })

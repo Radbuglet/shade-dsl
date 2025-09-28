@@ -37,8 +37,26 @@ pub enum BycInstr {
     /// to the stack.
     ConstEval(Obj<FuncInstance>),
 
-    /// Calls the function at the top of the stack, popping it according to the pop mode.
-    Call(BycPopMode),
+    /// Calls the function with the specified number of arguments. The stack layout is...
+    ///
+    /// ```text
+    /// (top)
+    /// - Arg N-1
+    /// - ...
+    /// - Arg 0
+    /// - Callee
+    /// ```
+    ///
+    /// This should be followed by a `CallCleanup` instruction.
+    ///
+    /// The callee returns to us with the return value at the top of the stack. Hence, this
+    /// instruction "pushes" one item to the stack from the POV of the caller.
+    CallStart(u32),
+
+    /// Finishes up a function call started with `CallStart` by popping all arguments and callees
+    /// off the stack using the `PopAndFree` pop mode and moves the function's result to the new top
+    /// of the stack.
+    CallCleanup(u32),
 
     /// Returns to the caller.
     Return,
@@ -69,7 +87,7 @@ pub enum BycInstr {
 
 impl BycInstr {
     pub fn depth_delta(&self) -> i32 {
-        match self {
+        match *self {
             BycInstr::Reserve => 1,
             BycInstr::AllocScalar(..) => 1,
             BycInstr::AllocType(..) => 1,
@@ -77,7 +95,8 @@ impl BycInstr {
             BycInstr::Tee(..) => 1,
             BycInstr::Pop(..) => -1,
             BycInstr::ConstEval(..) => 1,
-            BycInstr::Call(..) => -1,
+            BycInstr::CallStart(..) => 1,
+            BycInstr::CallCleanup(args) => -(args as i32) - 1,
             BycInstr::Return => 0,
             BycInstr::AdtAggregateIndex(..) => 0,
             BycInstr::AdtVariantUnwrap(..) => 0,

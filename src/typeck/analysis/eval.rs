@@ -91,22 +91,31 @@ impl TyCtxt {
                         CopyDepth::Deep,
                     ));
                 }
-                BycInstr::Call(mode) => {
-                    let callee_place = place_stack.pop().unwrap();
-                    let ValueKind::Func(callee) = arena.read(callee_place).kind else {
+                BycInstr::CallStart(arg_count) => {
+                    let callee_place = place_stack[place_stack.len() - arg_count as usize - 1];
+                    let callee = arena.read(callee_place);
+
+                    let ValueKind::Func(callee) = callee.kind else {
                         unreachable!()
                     };
 
-                    if mode.needs_free() {
-                        arena.free(callee_place);
-                    }
-
                     match callee {
-                        AnyFuncValue::Intrinsic(callee) => todo!(),
+                        AnyFuncValue::Intrinsic(callee) => {
+                            place_stack.push(callee.invoke(
+                                self,
+                                arena,
+                                &place_stack[(place_stack.len() - arg_count as usize)..],
+                            )?);
+                        }
                         AnyFuncValue::Instance(callee) => {
                             call_stack.push((self.build_bytecode(callee)?.r(s), 0usize));
                         }
                     }
+                }
+                BycInstr::CallCleanup(arg_count) => {
+                    let ret_place = place_stack.pop().unwrap();
+                    place_stack.truncate(place_stack.len() - arg_count as usize - 1);
+                    place_stack.push(ret_place);
                 }
                 BycInstr::Return => {
                     call_stack.pop().unwrap();
