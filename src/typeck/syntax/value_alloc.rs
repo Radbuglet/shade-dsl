@@ -37,7 +37,7 @@ pub trait ValueArenaLike {
 
 impl fmt::Debug for ValuePlace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)?;
+        write!(f, "{}v{}", self.0.slot(), self.0.generation())?;
 
         if let Some(arena) = CURRENT_VALUE_ARENA.get()
             && REENTRANT_FMT.with_borrow_mut(|v| v.insert(*self))
@@ -415,8 +415,8 @@ impl ValueInterner {
             });
 
             // See whether an existing canonical graph exists.
-            let mut user_portrait = None;
-            let canonical_portrait = keys
+            let mut user_portrait_if_no_canon = None;
+            let user_and_canonical_portrait = keys
                 .into_iter()
                 .filter_map(|&key| {
                     let portrait = IsoSccPortrait::new(user_graph, key, |&node| {
@@ -450,19 +450,19 @@ impl ValueInterner {
                         });
 
                     if let Some((canonical_portrait, ())) = canonical_portrait {
-                        Some(&canonical_portrait.portrait)
+                        Some((portrait, &canonical_portrait.portrait))
                     } else {
-                        user_portrait = Some((portrait, portrait_hash));
+                        user_portrait_if_no_canon = Some((portrait, portrait_hash));
                         None
                     }
                 })
                 .next();
 
             // If it doesn't, create the canonical graph.
-            if let Some(canonical_sub_graph) = canonical_portrait {
+            if let Some((user_portrait, canonical_sub_graph)) = user_and_canonical_portrait {
                 // Record the mapping between input nodes and their canonicals forms into
                 // the `resolved_canonicals` map.
-                for (&user_node, &canonical_node) in canonical_sub_graph
+                for (&user_node, &canonical_node) in user_portrait
                     .internal_nodes
                     .iter()
                     .zip(&canonical_sub_graph.internal_nodes)
@@ -470,7 +470,7 @@ impl ValueInterner {
                     resolved_canonicals.insert(user_node, canonical_node);
                 }
             } else {
-                let (user_portrait, user_portrait_hash) = user_portrait.unwrap();
+                let (user_portrait, user_portrait_hash) = user_portrait_if_no_canon.unwrap();
 
                 // Intern every internal node, recording into the `resolved_canonicals` map.
                 for &user_value in &user_portrait.internal_nodes {
