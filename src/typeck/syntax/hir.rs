@@ -132,6 +132,7 @@ pub enum ExprKind {
     Match(Box<ExprMatch>),
     Adt(Obj<ExprAdt>),
     Func(Obj<Func>),
+    Intrinsic(Symbol),
     Error(ErrorGuaranteed),
     Placeholder,
 }

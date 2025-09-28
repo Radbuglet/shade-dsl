@@ -67,6 +67,13 @@ impl TyCtxt {
                         kind: ValueKind::MetaType(ty),
                     }));
                 }
+                BycInstr::AllocConst(intern) => {
+                    place_stack.push(arena.copy_from(
+                        Some(self.value_interner.arena()),
+                        intern,
+                        CopyDepth::Deep,
+                    ));
+                }
                 BycInstr::Tee(idx) => {
                     place_stack.push(place_stack[place_stack.len() - 1 - idx as usize]);
                 }
@@ -77,7 +84,7 @@ impl TyCtxt {
                         arena.free(top);
                     }
                 }
-                BycInstr::Const(cst) => {
+                BycInstr::ConstEval(cst) => {
                     place_stack.push(arena.copy_from(
                         Some(self.value_interner.arena()),
                         self.eval_paramless(cst)?,

@@ -91,6 +91,13 @@ impl<'a> BycBuilderCtxt<'a> {
 
                 BycPopMode::PopAndFree
             }
+            ExprKind::Intrinsic(id) => {
+                let intern = self.tcx.resolve_intrinsic(*id).unwrap();
+
+                self.push([BycInstr::AllocConst(intern)], depth);
+
+                BycPopMode::PopAndFree
+            }
             ExprKind::BinOp(op, lhs, rhs) => {
                 let rhs_mode = self.lower_expr_maybe_place(rhs.r(s), depth);
                 let lhs_mode = self.lower_expr_maybe_place(lhs.r(s), depth);

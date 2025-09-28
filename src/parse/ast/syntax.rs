@@ -148,6 +148,11 @@ pub enum AstExprKind {
     /// Can only be parsed in expression parsing contexts.
     SymDef(Box<AstExpr>),
 
+    /// An intrinsic fetch expression (e.g. `intrinsic("my_intrinsic")`).
+    ///
+    /// Can be parsed in both type and expression parsing contexts.
+    Intrinsic(Symbol),
+
     /// A use expression (e.g. `use("path/to/other.sdl")`).
     ///
     /// Can only be parsed in expression parsing contexts.
@@ -258,6 +263,7 @@ impl AstExprKind {
             | AstExprKind::Break(..)
             | AstExprKind::FuncDef(..)
             | AstExprKind::SymDef(..)
+            | AstExprKind::Intrinsic(..)
             | AstExprKind::Use(..)
             | AstExprKind::Unary(..)
             | AstExprKind::Bin(..)

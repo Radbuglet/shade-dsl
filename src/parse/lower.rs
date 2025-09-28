@@ -186,6 +186,7 @@ impl<'a> LowerCtxt<'a> {
             AstExprKind::Break(ast_expr) => todo!(),
             AstExprKind::FuncDef(def) => ExprKind::Func(self.lower_func(Some(owner), def)),
             AstExprKind::SymDef(ast_expr) => todo!(),
+            AstExprKind::Intrinsic(id) => ExprKind::Intrinsic(*id),
             AstExprKind::Use(token_str_lit) => todo!(),
             AstExprKind::Unary(kind, ast_expr) => todo!(),
             AstExprKind::Bin(kind, lhs, rhs) => ExprKind::BinOp(

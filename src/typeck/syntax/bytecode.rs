@@ -3,7 +3,7 @@
 use crate::{
     base::arena::Obj,
     parse::ast::BinOpKind,
-    typeck::syntax::{FuncInstance, Ty, ValueScalar},
+    typeck::syntax::{FuncInstance, Ty, ValuePlace, ValueScalar},
 };
 
 #[derive(Debug)]
@@ -23,6 +23,9 @@ pub enum BycInstr {
     /// Allocates a `MetaType` value place and pushes it to the stack.
     AllocType(Obj<Ty>),
 
+    /// Allocates a value by performing a deep-clone of an intern and pushes that to the stack.
+    AllocConst(ValuePlace),
+
     /// Copies an existing place reference on the stack relative to the top and pushes it to the
     /// stack.
     Tee(u32),
@@ -30,8 +33,9 @@ pub enum BycInstr {
     /// Pops the stack according to the pop-mode.
     Pop(BycPopMode),
 
-    /// Performs a deep copy of a constant value and pushes the new place to the stack.
-    Const(Obj<FuncInstance>),
+    /// Evaluates a constant and performs a deep copy the resulting value, pushing a new place
+    /// to the stack.
+    ConstEval(Obj<FuncInstance>),
 
     /// Calls the function at the top of the stack, popping it according to the pop mode.
     Call(BycPopMode),
@@ -69,9 +73,10 @@ impl BycInstr {
             BycInstr::Reserve => 1,
             BycInstr::AllocScalar(..) => 1,
             BycInstr::AllocType(..) => 1,
+            BycInstr::AllocConst(..) => 1,
             BycInstr::Tee(..) => 1,
             BycInstr::Pop(..) => -1,
-            BycInstr::Const(..) => 1,
+            BycInstr::ConstEval(..) => 1,
             BycInstr::Call(..) => -1,
             BycInstr::Return => 0,
             BycInstr::AdtAggregateIndex(..) => 0,

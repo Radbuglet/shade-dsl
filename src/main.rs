@@ -6,7 +6,7 @@ use shade_dsl::{
         syntax::{NaiveSegmenter, SourceFileOrigin},
     },
     parse::{ast::parse_file, lower::lower_file, token::tokenize},
-    typeck::analysis::{TyCtxt, WfRequirement},
+    typeck::analysis::{IntrinsicResolver, TyCtxt, WfRequirement},
 };
 
 fn main() {
@@ -25,7 +25,16 @@ fn main() {
     let ast = parse_file(&tokens);
     let ir = lower_file(&ast);
 
-    let tcx = TyCtxt::new(Session::fetch());
+    let tcx = TyCtxt::new(
+        Session::fetch(),
+        IntrinsicResolver::new_map([(
+            "core",
+            IntrinsicResolver::new_map([(
+                "get_builtin_type",
+                IntrinsicResolver::new_terminal(|tcx| todo!()),
+            )]),
+        )]),
+    );
 
     tcx.queue_wf(WfRequirement::EvaluateType(
         tcx.intern_fn_instance(ir, None),

@@ -618,7 +618,7 @@ fn parse_expr_pratt_inner(
             }
         }
 
-        // Parse an `new` expression
+        // Parse a constructor expression
         if flags.contains(ExprParseFlags::ALLOW_STRUCT_CTOR)
             && !matches!(lhs.kind, AstExprKind::New(..))
             && let Some(braced) = match_group(GroupDelimiter::Brace).expect(p)
@@ -813,6 +813,25 @@ fn parse_common_expr_seeds(p: P) -> Option<AstExprKind> {
     // Parse a name.
     if let Some(ident) = match_ident().expect(p) {
         return Some(AstExprKind::Name(ident));
+    }
+
+    // Parse an intrinsic.
+    if match_kw(kw!("intrinsic")).expect(p).is_some() {
+        let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
+            // Recovery strategy: do nothing
+            return Some(AstExprKind::Error(p.stuck_recover_with(|_| {})));
+        };
+
+        let mut p = p.enter(&block);
+
+        let Some(intrinsic) = match_str_lit().expect(&mut p) else {
+            // Recovery strategy: do nothing
+            return Some(AstExprKind::Error(p.stuck_recover_with(|_| {})));
+        };
+
+        _ = match_eos(&mut p);
+
+        return Some(AstExprKind::Intrinsic(intrinsic.value));
     }
 
     // Parse a boolean literal.

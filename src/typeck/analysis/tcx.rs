@@ -7,9 +7,13 @@ use crate::{
         Session,
         analysis::Memo,
         arena::{Obj, ObjInterner},
+        syntax::Symbol,
     },
-    typeck::syntax::{AdtInstance, BycFunction, Func, FuncInstance, Ty, ValueInterner, ValuePlace},
-    utils::hash::FxHashSet,
+    typeck::{
+        analysis::IntrinsicResolver,
+        syntax::{AdtInstance, BycFunction, Func, FuncInstance, Ty, ValueInterner, ValuePlace},
+    },
+    utils::hash::{FxHashMap, FxHashSet},
 };
 
 #[derive(Debug, Clone)]
@@ -20,6 +24,8 @@ pub struct TyCtxt {
 #[derive(Debug)]
 pub struct TyCtxtInner {
     pub session: Session,
+    pub intrinsic_resolver: IntrinsicResolver,
+    pub intrinsic_cache: RefCell<FxHashMap<Symbol, ValuePlace>>,
     pub value_interner: ValueInterner,
     pub ty_interner: ObjInterner<Ty>,
     pub fn_interner: ObjInterner<FuncInstance>,
@@ -57,10 +63,12 @@ impl Deref for TyCtxt {
 }
 
 impl TyCtxt {
-    pub fn new(session: Session) -> Self {
+    pub fn new(session: Session, intrinsic_resolver: IntrinsicResolver) -> Self {
         Self {
             inner: Rc::new(TyCtxtInner {
                 session,
+                intrinsic_resolver,
+                intrinsic_cache: RefCell::default(),
                 value_interner: ValueInterner::default(),
                 ty_interner: ObjInterner::default(),
                 fn_interner: ObjInterner::default(),

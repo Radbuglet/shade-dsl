@@ -1,5 +1,9 @@
-const whee = struct {
-    const wazoo = true;
+pub const intrinsics = mod {
+    pub const get_type = intrinsic("core.get_builtin_type");
+
+    pub const u32 = get_type("u32");
+    pub const i32 = get_type("i32");
+    pub const f32 = get_type("f32");
+    pub const bool = get_type("bool");
 };
 
-const waz = whee.my_type {}.woo;
