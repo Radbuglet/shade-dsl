@@ -114,13 +114,12 @@ impl<'a> BycBuilderCtxt<'a> {
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(adt) => {
                 self.push(
-                    [BycInstr::AllocType(self.tcx.ty_interner.intern(
-                        Ty::Adt(AdtInstance {
+                    [BycInstr::AllocType(self.tcx.intern_ty(Ty::Adt(
+                        AdtInstance {
                             owner: self.instance,
                             adt: *adt,
-                        }),
-                        s,
-                    ))],
+                        },
+                    )))],
                     depth,
                 );
 

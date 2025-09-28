@@ -1,12 +1,13 @@
-use std::hash;
+use std::{hash, panic::Location};
 
+use derive_where::derive_where;
 use index_vec::IndexVec;
 
 use crate::{
-    base::arena::Obj,
+    base::{ErrorGuaranteed, Session, arena::Obj},
     typeck::{
-        analysis::{FuncIntrinsic, MetaFuncIntrinsic},
-        syntax::{ExprAdt, Func},
+        analysis::TyCtxt,
+        syntax::{ExprAdt, Func, ValueArena},
     },
 };
 
@@ -204,4 +205,89 @@ pub struct MetaFuncInstance {
 
     /// The upvars captured by parent functions which have already been evaluated.
     pub parent: Option<Obj<FuncInstance>>,
+}
+
+// === Intrinsic Functions === //
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct MetaFuncIntrinsic {
+    inner: Obj<IntrinsicMetaFnInner>,
+}
+
+#[derive_where(Debug)]
+struct IntrinsicMetaFnInner {
+    _location: &'static Location<'static>,
+
+    #[derive_where(skip)]
+    #[expect(clippy::type_complexity)]
+    construct: Box<dyn Fn(&TyCtxt, &[ValuePlace]) -> Result<FuncIntrinsic, ErrorGuaranteed>>,
+}
+
+impl MetaFuncIntrinsic {
+    #[track_caller]
+    pub fn new(
+        f: impl 'static + Fn(&TyCtxt, &[ValuePlace]) -> Result<FuncIntrinsic, ErrorGuaranteed>,
+        s: &Session,
+    ) -> Self {
+        Self {
+            inner: Obj::new(
+                IntrinsicMetaFnInner {
+                    _location: Location::caller(),
+                    construct: Box::new(f),
+                },
+                s,
+            ),
+        }
+    }
+
+    pub fn instance_uncached(
+        &self,
+        tcx: &TyCtxt,
+        args: &[ValuePlace],
+    ) -> Result<FuncIntrinsic, ErrorGuaranteed> {
+        (self.inner.r(&tcx.session).construct)(tcx, args)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct FuncIntrinsic {
+    inner: Obj<FuncIntrinsicInner>,
+}
+
+#[derive_where(Debug)]
+struct FuncIntrinsicInner {
+    _location: &'static Location<'static>,
+
+    #[derive_where(skip)]
+    #[expect(clippy::type_complexity)]
+    invoke:
+        Box<dyn Fn(&TyCtxt, &mut ValueArena, &[ValuePlace]) -> Result<ValuePlace, ErrorGuaranteed>>,
+}
+
+impl FuncIntrinsic {
+    #[track_caller]
+    pub fn new<F>(f: F, s: &Session) -> Self
+    where
+        F: Fn(&TyCtxt, &mut ValueArena, &[ValuePlace]) -> Result<ValuePlace, ErrorGuaranteed>,
+        F: 'static,
+    {
+        Self {
+            inner: Obj::new(
+                FuncIntrinsicInner {
+                    _location: Location::caller(),
+                    invoke: Box::new(f),
+                },
+                s,
+            ),
+        }
+    }
+
+    pub fn invoke(
+        &self,
+        tcx: &TyCtxt,
+        arena: &mut ValueArena,
+        args: &[ValuePlace],
+    ) -> Result<ValuePlace, ErrorGuaranteed> {
+        (self.inner.r(&tcx.session).invoke)(tcx, arena, args)
+    }
 }

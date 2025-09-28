@@ -6,7 +6,10 @@ use shade_dsl::{
         syntax::{NaiveSegmenter, SourceFileOrigin},
     },
     parse::{ast::parse_file, lower::lower_file, token::tokenize},
-    typeck::analysis::{IntrinsicResolver, TyCtxt, WfRequirement},
+    typeck::{
+        analysis::{IntrinsicResolver, TyCtxt, WfRequirement},
+        syntax::{AnyFuncValue, FuncIntrinsic, Ty, Value, ValueKind},
+    },
 };
 
 fn main() {
@@ -31,7 +34,19 @@ fn main() {
             "core",
             IntrinsicResolver::new_map([(
                 "get_builtin_type",
-                IntrinsicResolver::new_terminal(|tcx| todo!()),
+                IntrinsicResolver::new_terminal(|tcx| {
+                    let s = &tcx.session;
+
+                    tcx.intern_from_scratch_arena(|arena| {
+                        arena.alloc(Value {
+                            ty: tcx.intern_ty(Ty::Func(vec![], tcx.intern_ty(Ty::MetaTy))),
+                            kind: ValueKind::Func(AnyFuncValue::Intrinsic(FuncIntrinsic::new(
+                                move |tcx, arena, args| todo!(),
+                                s,
+                            ))),
+                        })
+                    })
+                }),
             )]),
         )]),
     );

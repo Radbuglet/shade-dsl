@@ -53,7 +53,7 @@ impl TyCtxt {
                 }
                 BycInstr::AllocScalar(ref value) => {
                     place_stack.push(arena.alloc(Value {
-                        ty: self.ty_interner.intern(Ty::Scalar(value.kind()), s),
+                        ty: self.intern_ty(Ty::Scalar(value.kind())),
                         kind: ValueKind::Scalar(**value),
                     }));
                 }
@@ -63,7 +63,7 @@ impl TyCtxt {
                     }
 
                     place_stack.push(arena.alloc(Value {
-                        ty: self.ty_interner.intern(Ty::MetaTy, s),
+                        ty: self.intern_ty(Ty::MetaTy),
                         kind: ValueKind::MetaType(ty),
                     }));
                 }

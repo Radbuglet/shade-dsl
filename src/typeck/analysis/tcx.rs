@@ -11,7 +11,10 @@ use crate::{
     },
     typeck::{
         analysis::IntrinsicResolver,
-        syntax::{AdtInstance, BycFunction, Func, FuncInstance, Ty, ValueInterner, ValuePlace},
+        syntax::{
+            AdtInstance, BycFunction, Func, FuncInstance, FuncIntrinsic, MetaFuncIntrinsic, Ty,
+            ValueArena, ValueInterner, ValuePlace,
+        },
     },
     utils::hash::{FxHashMap, FxHashSet},
 };
@@ -52,6 +55,7 @@ pub struct Queries {
     pub eval_paramless: Memo<Obj<FuncInstance>, ValuePlace>,
     pub type_check: Memo<Obj<FuncInstance>, ()>,
     pub build_bytecode: Memo<Obj<FuncInstance>, Obj<BycFunction>>,
+    pub eval_intrinsic_meta_fn: Memo<(MetaFuncIntrinsic, Vec<ValuePlace>), FuncIntrinsic>,
 }
 
 impl Deref for TyCtxt {
@@ -76,6 +80,31 @@ impl TyCtxt {
                 queries: Queries::default(),
             }),
         }
+    }
+
+    pub fn try_intern_from_scratch_arena<E>(
+        &self,
+        f: impl FnOnce(&mut ValueArena) -> Result<ValuePlace, E>,
+    ) -> Result<ValuePlace, E> {
+        let mut arena = ValueArena::default();
+        let root = f(&mut arena)?;
+        Ok(self.value_interner.intern(&arena, root))
+    }
+
+    pub fn intern_from_scratch_arena(
+        &self,
+        f: impl FnOnce(&mut ValueArena) -> ValuePlace,
+    ) -> ValuePlace {
+        enum Never {}
+
+        match self.try_intern_from_scratch_arena::<Never>(|arena| Ok(f(arena))) {
+            Ok(v) => v,
+            Err(e) => match e {},
+        }
+    }
+
+    pub fn intern_ty(&self, ty: Ty) -> Obj<Ty> {
+        self.ty_interner.intern(ty, &self.session)
     }
 
     pub fn intern_fn_instance(

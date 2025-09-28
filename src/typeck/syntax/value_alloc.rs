@@ -297,7 +297,7 @@ impl ValueArena {
                 });
             }
 
-            *self.mutate(to) = value;
+            self.write(to, value);
         }
     }
 }

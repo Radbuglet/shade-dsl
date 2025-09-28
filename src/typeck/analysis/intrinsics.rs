@@ -1,13 +1,12 @@
-use std::{fmt, hash::BuildHasher, panic::Location};
+use std::{fmt, hash::BuildHasher};
 
-use derive_where::derive_where;
 use hashbrown::{HashMap, hash_map};
 
 use crate::{
-    base::{ErrorGuaranteed, arena::Obj, syntax::Symbol},
+    base::{ErrorGuaranteed, syntax::Symbol},
     typeck::{
         analysis::TyCtxt,
-        syntax::{Ty, ValuePlace},
+        syntax::{FuncIntrinsic, MetaFuncIntrinsic, ValuePlace},
     },
     utils::hash::FxHashMap,
 };
@@ -29,6 +28,18 @@ impl TyCtxt {
                 Some(value)
             }
         }
+    }
+
+    pub fn eval_intrinsic_meta_fn(
+        &self,
+        intrinsic: MetaFuncIntrinsic,
+        args: &[ValuePlace],
+    ) -> Result<FuncIntrinsic, ErrorGuaranteed> {
+        self.queries
+            .eval_intrinsic_meta_fn
+            .compute((intrinsic, args.to_vec()), |(_, args)| {
+                intrinsic.instance_uncached(self, args)
+            })
     }
 }
 
@@ -62,7 +73,7 @@ impl IntrinsicResolver {
         Self::new(entries.into_iter().collect::<FxHashMap<_, _>>())
     }
 
-    pub fn new_terminal(f: fn(&TyCtxt) -> Option<ValuePlace>) -> Self {
+    pub fn new_terminal(f: fn(&TyCtxt) -> ValuePlace) -> Self {
         Self::new(f)
     }
 
@@ -118,45 +129,16 @@ impl IntrinsicResolverTrait for fn(&TyCtxt, &str) -> Option<ValuePlace> {
     }
 }
 
-impl IntrinsicResolverTrait for fn(&TyCtxt) -> Option<ValuePlace> {
+impl IntrinsicResolverTrait for fn(&TyCtxt) -> ValuePlace {
     fn resolve(&self, tcx: &TyCtxt, parts: &[&str]) -> Option<ValuePlace> {
         if !parts.is_empty() {
             return None;
         }
 
-        self(tcx)
+        Some(self(tcx))
     }
 
     fn clone_erased(&self) -> IntrinsicResolver {
         IntrinsicResolver::new(*self)
     }
-}
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct MetaFuncIntrinsic {
-    inner: Obj<IntrinsicMetaFnInner>,
-}
-
-#[derive_where(Debug)]
-struct IntrinsicMetaFnInner {
-    location: &'static Location<'static>,
-    #[derive_where(skip)]
-    #[expect(clippy::type_complexity)]
-    construct: Box<dyn Fn(&TyCtxt, &[ValuePlace]) -> Result<FuncIntrinsic, ErrorGuaranteed>>,
-}
-
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct FuncIntrinsic {
-    inner: Obj<FuncIntrinsicInner>,
-}
-
-#[derive_where(Debug)]
-struct FuncIntrinsicInner {
-    location: &'static Location<'static>,
-    inputs: Vec<Obj<Ty>>,
-    output: Obj<Ty>,
-
-    #[derive_where(skip)]
-    #[expect(clippy::type_complexity)]
-    invoke: Box<dyn Fn(&TyCtxt, &[ValuePlace]) -> Result<FuncIntrinsic, ErrorGuaranteed>>,
 }
