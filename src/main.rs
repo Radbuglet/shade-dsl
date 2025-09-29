@@ -39,7 +39,10 @@ fn main() {
 
                     tcx.intern_from_scratch_arena(|arena| {
                         arena.alloc(Value {
-                            ty: tcx.intern_ty(Ty::Func(vec![], tcx.intern_ty(Ty::MetaTy))),
+                            ty: tcx.intern_ty(Ty::Func(
+                                tcx.intern_tys(&[]),
+                                tcx.intern_ty(Ty::MetaTy),
+                            )),
                             kind: ValueKind::Func(AnyFuncValue::Intrinsic(FuncIntrinsic::new(
                                 move |tcx, arena, _args| {
                                     Ok(arena.alloc(Value {

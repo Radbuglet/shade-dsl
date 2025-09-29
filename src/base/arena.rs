@@ -28,6 +28,14 @@ pub struct GpArena {
 struct GpArenaInner {
     bump: bumpalo::Bump,
     singles: Vec<NonNull<dyn Any>>,
+    lists: Vec<GpList>,
+}
+
+#[derive(Copy, Clone)]
+struct GpList {
+    base: NonNull<()>,
+    len: usize,
+    drop: unsafe fn(NonNull<()>, usize),
 }
 
 impl fmt::Debug for GpArena {
@@ -45,6 +53,7 @@ impl Default for GpArena {
             inner: RefCell::new(GpArenaInner {
                 bump: Bump::new(),
                 singles: Vec::new(),
+                lists: Vec::new(),
             }),
         }
     }
@@ -57,18 +66,22 @@ impl Drop for GpArena {
         for &single in &inner.singles {
             unsafe { single.drop_in_place() };
         }
+
+        for &GpList { base, len, drop } in &inner.lists {
+            unsafe { drop(base, len) };
+        }
     }
 }
 
 #[derive_where(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct Obj<T: 'static> {
+pub struct Obj<T: ?Sized + 'static> {
     generation: NonZeroU64,
     ptr: NonNull<T>,
 }
 
 impl<T> fmt::Debug for Obj<T>
 where
-    T: 'static + fmt::Debug,
+    T: ?Sized + 'static + fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         thread_local! {
@@ -78,7 +91,7 @@ where
 
         let key = (TypeId::of::<T>(), self.ptr.cast());
 
-        write!(f, "{:?}", self.ptr)?;
+        write!(f, "{:?}", self.ptr.as_ptr())?;
 
         if REENTRANT_FMT.with_borrow_mut(|v| v.insert(key)) {
             let _guard = scopeguard::guard((), |()| {
@@ -94,7 +107,10 @@ where
 }
 
 impl<T: 'static> Obj<T> {
-    pub fn new(value: T, s: &Session) -> Self {
+    pub fn new(value: T, s: &Session) -> Self
+    where
+        T: Sized,
+    {
         let mut inner = s.gp_arena.inner.borrow_mut();
 
         let ptr = NonNull::from(inner.bump.alloc(value));
@@ -103,6 +119,59 @@ impl<T: 'static> Obj<T> {
         Self {
             generation: s.gp_arena.generation,
             ptr,
+        }
+    }
+}
+
+impl<T: 'static> Obj<[T]> {
+    pub fn new_slice(value: &[T], s: &Session) -> Self
+    where
+        T: Clone,
+    {
+        let mut inner = s.gp_arena.inner.borrow_mut();
+
+        let ptr = NonNull::from(inner.bump.alloc_slice_clone(value));
+        inner.lists.push(GpList {
+            base: ptr.cast(),
+            len: ptr.len(),
+            drop: |ptr, len| unsafe {
+                NonNull::slice_from_raw_parts(ptr.cast::<T>(), len).drop_in_place();
+            },
+        });
+
+        Self {
+            generation: s.gp_arena.generation,
+            ptr,
+        }
+    }
+
+    pub fn new_iter(
+        value: impl IntoIterator<Item = T, IntoIter: ExactSizeIterator>,
+        s: &Session,
+    ) -> Self {
+        let mut inner = s.gp_arena.inner.borrow_mut();
+
+        let ptr = NonNull::from(inner.bump.alloc_slice_fill_iter(value));
+        inner.lists.push(GpList {
+            base: ptr.cast(),
+            len: ptr.len(),
+            drop: |ptr, len| unsafe {
+                NonNull::slice_from_raw_parts(ptr.cast::<T>(), len).drop_in_place();
+            },
+        });
+
+        Self {
+            generation: s.gp_arena.generation,
+            ptr,
+        }
+    }
+}
+
+impl<T: ?Sized + 'static> Obj<T> {
+    pub fn map<V: ?Sized>(self, f: impl FnOnce(&T) -> &V, s: &Session) -> Obj<V> {
+        Obj {
+            generation: self.generation,
+            ptr: NonNull::from(f(self.r(s))),
         }
     }
 
@@ -129,18 +198,58 @@ impl<T> ObjInterner<T>
 where
     T: 'static + hash::Hash + Eq,
 {
-    pub fn intern(&self, ty: T, s: &Session) -> Obj<T> {
+    pub fn intern(&self, value: T, s: &Session) -> Obj<T> {
         let mut interns = self.interns.borrow_mut();
-        let hash = FxBuildHasher::default().hash_one(&ty);
+        let hash = FxBuildHasher::default().hash_one(&value);
 
         match interns
             .raw_entry_mut()
             .from_hash(hash, |(other, other_hash)| {
-                hash == *other_hash && &ty == other.r(s)
+                hash == *other_hash && &value == other.r(s)
             }) {
             hash_map::RawEntryMut::Occupied(entry) => entry.key().0,
             hash_map::RawEntryMut::Vacant(entry) => {
-                let ty = Obj::new(ty, s);
+                let ty = Obj::new(value, s);
+                entry.insert_with_hasher(hash, (ty, hash), (), |(_, hash)| *hash);
+                ty
+            }
+        }
+    }
+}
+
+// === ObjListInterner === //
+
+#[derive_where(Default)]
+pub struct ObjListInterner<T: 'static> {
+    #[expect(clippy::type_complexity)]
+    interns: RefCell<FxHashMap<(Obj<[T]>, u64), ()>>,
+}
+
+impl<T: 'static> fmt::Debug for ObjListInterner<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ObjListInterner").finish_non_exhaustive()
+    }
+}
+
+impl<T> ObjListInterner<T>
+where
+    T: 'static + hash::Hash + Eq,
+{
+    pub fn intern(&self, values: &[T], s: &Session) -> Obj<[T]>
+    where
+        T: Clone,
+    {
+        let mut interns = self.interns.borrow_mut();
+        let hash = FxBuildHasher::default().hash_one(values);
+
+        match interns
+            .raw_entry_mut()
+            .from_hash(hash, |(other, other_hash)| {
+                hash == *other_hash && values == other.r(s)
+            }) {
+            hash_map::RawEntryMut::Occupied(entry) => entry.key().0,
+            hash_map::RawEntryMut::Vacant(entry) => {
+                let ty = Obj::new_slice(values, s);
                 entry.insert_with_hasher(hash, (ty, hash), (), |(_, hash)| *hash);
                 ty
             }

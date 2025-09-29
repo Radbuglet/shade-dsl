@@ -6,8 +6,9 @@ use crate::{
     typeck::{
         analysis::tcx::TyCtxt,
         syntax::{
-            AdtInstance, AnyName, BycBinOp, BycFunction, BycInstr, BycPopMode, Expr, ExprKind,
-            FuncInstance, Ty, ValueScalar,
+            AdtInstance, AnyFuncValue, AnyMetaFuncValue, AnyName, BycBinOp, BycFunction, BycInstr,
+            BycPopMode, Expr, ExprKind, FuncInstance, MetaFuncInstance, Ty, Value, ValueKind,
+            ValueScalar,
         },
     },
 };
@@ -155,7 +156,31 @@ impl<'a> BycBuilderCtxt<'a> {
 
                 BycPopMode::PopAndFree
             }
-            ExprKind::Func(obj) => todo!(),
+            ExprKind::Func(func) => {
+                let value = if func.r(s).inner.generics.is_empty() {
+                    let instance = self.tcx.intern_fn_instance(*func, Some(self.instance));
+                    Value {
+                        ty: self.tcx.instance_fn_ty(instance).unwrap(),
+                        kind: ValueKind::Func(AnyFuncValue::Instance(instance)),
+                    }
+                } else {
+                    Value {
+                        ty: self.tcx.intern_ty(Ty::MetaFunc),
+                        kind: ValueKind::MetaFunc(AnyMetaFuncValue::Instance(MetaFuncInstance {
+                            func: *func,
+                            parent: Some(self.instance),
+                        })),
+                    }
+                };
+
+                let value = self
+                    .tcx
+                    .intern_from_scratch_arena(|arena| arena.alloc(value));
+
+                self.push([BycInstr::AllocConst(value)], depth);
+
+                BycPopMode::PopAndFree
+            }
             ExprKind::Error(_) | ExprKind::Placeholder => unreachable!(),
         }
     }

@@ -153,15 +153,17 @@ pub enum CheckTy {
     Unknown,
 }
 
-#[derive(Debug, Hash, Eq, PartialEq)]
+pub type TyList = Obj<[Obj<Ty>]>;
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum Ty {
     MetaTy,
     MetaFunc,
     MetaArray(Obj<Ty>),
     Pointer(Obj<Ty>),
-    Func(Vec<Obj<Ty>>, Obj<Ty>),
+    Func(TyList, Obj<Ty>),
     Scalar(ScalarKind),
-    Tuple(Vec<Obj<Ty>>),
+    Tuple(TyList),
     Array(Obj<Ty>, usize),
     Adt(AdtInstance),
 }
