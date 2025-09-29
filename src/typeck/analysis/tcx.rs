@@ -12,8 +12,8 @@ use crate::{
     typeck::{
         analysis::IntrinsicResolver,
         syntax::{
-            AdtInstance, BycFunction, Func, FuncInstance, FuncIntrinsic, MetaFuncIntrinsic, Ty,
-            ValueArena, ValueInterner, ValuePlace,
+            AdtInstance, BycFunction, Func, FuncInstance, FuncIntrinsic, Generic,
+            MetaFuncIntrinsic, Ty, ValueArena, ValueInterner, ValuePlace,
         },
     },
     utils::hash::{FxHashMap, FxHashSet},
@@ -47,6 +47,7 @@ pub enum WfRequirement {
     TypeCheck(Obj<FuncInstance>),
     EvaluateAny(Obj<FuncInstance>),
     EvaluateType(Obj<FuncInstance>),
+    EvalGeneric(Obj<Generic>, Obj<FuncInstance>),
     ValidateAdt(AdtInstance),
 }
 
@@ -160,6 +161,9 @@ impl TyCtxt {
                             self.intern_fn_instance(member.init, Some(instance.owner)),
                         );
                     }
+                }
+                WfRequirement::EvalGeneric(generic, instance) => {
+                    _ = self.eval_generic_ensuring_conformance(generic, instance);
                 }
             }
         }

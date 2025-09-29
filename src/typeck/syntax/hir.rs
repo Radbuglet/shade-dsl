@@ -62,7 +62,7 @@ pub struct FuncInner {
 
     /// The return type of the function. This is `None` if the type-checker is expected to infer it,
     /// which is the case when constructing `Func`s for ADT member initializers.
-    pub return_type: Option<Obj<Expr>>,
+    pub return_type: Option<Obj<Func>>,
 
     /// The main body of the function.
     pub body: Obj<Expr>,
