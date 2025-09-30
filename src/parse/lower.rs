@@ -200,7 +200,14 @@ impl<'a> LowerCtxt<'a> {
                 self.lower_expr(owner, owner_consts, callee),
                 self.lower_expr_vec(owner, owner_consts, args),
             ),
-            AstExprKind::Instantiate(ast_expr, vec) => todo!(),
+            AstExprKind::Instantiate(target, generics) => {
+                // TODO: Put this into its own constant if it's not already.
+
+                ExprKind::Instantiate(
+                    self.lower_expr(owner, owner_consts, target),
+                    self.lower_expr_vec(owner, owner_consts, generics),
+                )
+            }
             AstExprKind::NamedIndex(ast_expr, ident) => todo!(),
             AstExprKind::TypeTuple(vec) => todo!(),
             AstExprKind::TypeArray(ast_expr, ast_expr1) => todo!(),

@@ -12,8 +12,8 @@ use crate::{
     typeck::{
         analysis::IntrinsicResolver,
         syntax::{
-            AdtInstance, BycFunction, Func, FuncInstance, FuncIntrinsic, Generic,
-            MetaFuncIntrinsic, Ty, TyList, ValueArena, ValueInterner, ValuePlace,
+            AdtInstance, BycFunction, Func, FuncInstance, Generic, MetaFuncIntrinsic, Ty, TyList,
+            ValueArena, ValueInterner, ValuePlace,
         },
     },
     utils::hash::{FxHashMap, FxHashSet},
@@ -57,7 +57,7 @@ pub struct Queries {
     pub eval_paramless: Memo<Obj<FuncInstance>, ValuePlace>,
     pub type_check: Memo<Obj<FuncInstance>, ()>,
     pub build_bytecode: Memo<Obj<FuncInstance>, Obj<BycFunction>>,
-    pub eval_intrinsic_meta_fn: Memo<(MetaFuncIntrinsic, Vec<ValuePlace>), FuncIntrinsic>,
+    pub eval_intrinsic_meta_fn: Memo<(MetaFuncIntrinsic, Vec<ValuePlace>), ValuePlace>,
     pub instance_signature: Memo<Obj<FuncInstance>, (TyList, Option<Obj<Ty>>)>,
 }
 
@@ -120,6 +120,20 @@ impl TyCtxt {
         func: Obj<Func>,
         parent: Option<Obj<FuncInstance>>,
     ) -> Obj<FuncInstance> {
+        let s = &self.session;
+
+        let parent = match (parent, func.r(&self.session).parent) {
+            (Some(mut parent), Some(expected_parent)) => {
+                while parent.r(s).func != expected_parent {
+                    parent = parent.r(s).parent.unwrap();
+                }
+
+                Some(parent)
+            }
+            (None, None) => None,
+            _ => unreachable!(),
+        };
+
         self.fn_interner.intern(
             FuncInstance {
                 func,
@@ -154,13 +168,15 @@ impl TyCtxt {
                     _ = self.eval_paramless(instance);
                 }
                 WfRequirement::EvaluateType(instance) => {
-                    _ = self.eval_ty(instance);
+                    _ = self.eval_paramless_for_meta_ty(instance);
                 }
                 WfRequirement::ValidateAdt(instance) => {
                     let lexical = instance.adt.r(s);
 
                     for field in &lexical.fields {
-                        _ = self.eval_ty(self.intern_fn_instance(field.ty, Some(instance.owner)));
+                        _ = self.eval_paramless_for_meta_ty(
+                            self.intern_fn_instance(field.ty, Some(instance.owner)),
+                        );
                     }
 
                     for member in &lexical.members {

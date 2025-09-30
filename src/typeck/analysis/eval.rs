@@ -1,10 +1,12 @@
+use index_vec::IndexVec;
+
 use crate::{
     base::{ErrorGuaranteed, arena::Obj},
     typeck::{
         analysis::{TyCtxt, WfRequirement},
         syntax::{
-            AnyFuncValue, BycBinOp, BycFunction, BycInstr, CopyDepth, FuncInstance, Ty, Value,
-            ValueArena, ValueKind, ValuePlace, ValueScalar,
+            AnyFuncValue, AnyMetaFuncValue, BycBinOp, BycFunction, BycInstr, CopyDepth,
+            FuncInstance, Ty, Value, ValueArena, ValueKind, ValuePlace, ValueScalar,
         },
     },
 };
@@ -22,7 +24,19 @@ impl TyCtxt {
         })
     }
 
-    pub fn eval_ty(&self, instance: Obj<FuncInstance>) -> Result<Obj<Ty>, ErrorGuaranteed> {
+    pub fn ty_of_paramless_fn_val(
+        &self,
+        instance: Obj<FuncInstance>,
+    ) -> Result<Obj<Ty>, ErrorGuaranteed> {
+        let value = self.eval_paramless(instance)?;
+
+        Ok(self.value_interner.read(value).ty)
+    }
+
+    pub fn eval_paramless_for_meta_ty(
+        &self,
+        instance: Obj<FuncInstance>,
+    ) -> Result<Obj<Ty>, ErrorGuaranteed> {
         let value = self.eval_paramless(instance)?;
 
         let ValueKind::MetaType(ty) = self.value_interner.read(value).kind else {
@@ -124,6 +138,65 @@ impl TyCtxt {
                     }
 
                     place_stack.push(ret_place);
+                }
+                BycInstr::Instantiate(arg_count) => {
+                    let target = place_stack[place_stack.len() - arg_count as usize - 1];
+                    let args = &place_stack[(place_stack.len() - arg_count as usize)..];
+
+                    let ValueKind::MetaFunc(target) = arena.read(target).kind else {
+                        unreachable!();
+                    };
+
+                    let args = args
+                        .iter()
+                        .map(|&v| self.value_interner.intern(arena, v))
+                        .collect::<IndexVec<_, _>>();
+
+                    let resolved = match target {
+                        AnyMetaFuncValue::Intrinsic(target) => {
+                            let intern =
+                                self.eval_intrinsic_meta_fn(target, &args.as_slice().raw)?;
+
+                            arena.copy_from(
+                                Some(self.value_interner.arena()),
+                                intern,
+                                CopyDepth::Deep,
+                            )
+                        }
+                        AnyMetaFuncValue::Instance(target) => {
+                            let instance = self.fn_interner.intern(
+                                FuncInstance {
+                                    func: target.func,
+                                    parent: target.parent,
+                                    generics: args,
+                                },
+                                s,
+                            );
+
+                            if target.func.r(s).inner.params.is_some() {
+                                self.queue_wf(WfRequirement::TypeCheck(instance));
+
+                                arena.alloc(Value {
+                                    ty: self.instance_fn_ty(instance)?,
+                                    kind: ValueKind::Func(AnyFuncValue::Instance(instance)),
+                                })
+                            } else {
+                                let intern = self.eval_paramless(instance)?;
+
+                                arena.copy_from(
+                                    Some(self.value_interner.arena()),
+                                    intern,
+                                    CopyDepth::Deep,
+                                )
+                            }
+                        }
+                    };
+
+                    for place in place_stack.drain((place_stack.len() - arg_count as usize - 2)..) {
+                        arena.free(place);
+                    }
+
+                    place_stack.push(resolved);
                 }
                 BycInstr::Return => {
                     call_stack.pop().unwrap();

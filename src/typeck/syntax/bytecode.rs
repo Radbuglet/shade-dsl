@@ -58,6 +58,20 @@ pub enum BycInstr {
     /// of the stack.
     CallCleanup(u32),
 
+    /// Instantiates the function with the specified number of generics. The stack layout is...
+    ///
+    /// ```text
+    /// (top)
+    /// - Arg N-1
+    /// - ...
+    /// - Arg 0
+    /// - Callee
+    /// ```
+    ///
+    /// It then pops all arguments and the target with the `PopAndFree` pop mode and pushes the
+    /// resolved function instance.
+    Instantiate(u32),
+
     /// Returns to the caller.
     Return,
 
@@ -97,6 +111,7 @@ impl BycInstr {
             BycInstr::ConstEval(..) => 1,
             BycInstr::CallStart(..) => 1,
             BycInstr::CallCleanup(args) => -(args as i32) - 1,
+            BycInstr::Instantiate(generics) => -(generics as i32),
             BycInstr::Return => 0,
             BycInstr::AdtAggregateIndex(..) => 0,
             BycInstr::AdtVariantUnwrap(..) => 0,

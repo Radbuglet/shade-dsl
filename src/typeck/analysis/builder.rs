@@ -181,6 +181,17 @@ impl<'a> BycBuilderCtxt<'a> {
 
                 BycPopMode::PopAndFree
             }
+            ExprKind::Instantiate(target, generics) => {
+                self.lower_expr_for_value(target.r(s), depth);
+
+                for generic in generics {
+                    self.lower_expr_for_value(generic.r(s), depth);
+                }
+
+                self.push([BycInstr::Instantiate(generics.len() as u32)], depth);
+
+                BycPopMode::PopAndFree
+            }
             ExprKind::Error(_) | ExprKind::Placeholder => unreachable!(),
         }
     }

@@ -6,7 +6,7 @@ use crate::{
     base::{ErrorGuaranteed, syntax::Symbol},
     typeck::{
         analysis::TyCtxt,
-        syntax::{FuncIntrinsic, MetaFuncIntrinsic, ValuePlace},
+        syntax::{MetaFuncIntrinsic, ValuePlace},
     },
     utils::hash::FxHashMap,
 };
@@ -34,7 +34,7 @@ impl TyCtxt {
         &self,
         intrinsic: MetaFuncIntrinsic,
         args: &[ValuePlace],
-    ) -> Result<FuncIntrinsic, ErrorGuaranteed> {
+    ) -> Result<ValuePlace, ErrorGuaranteed> {
         self.queries
             .eval_intrinsic_meta_fn
             .compute((intrinsic, args.to_vec()), |(_, args)| {

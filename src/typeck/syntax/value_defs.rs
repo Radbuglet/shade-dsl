@@ -245,13 +245,13 @@ struct IntrinsicMetaFnInner {
 
     #[derive_where(skip)]
     #[expect(clippy::type_complexity)]
-    construct: Box<dyn Fn(&TyCtxt, &[ValuePlace]) -> Result<FuncIntrinsic, ErrorGuaranteed>>,
+    construct: Box<dyn Fn(&TyCtxt, &[ValuePlace]) -> Result<ValuePlace, ErrorGuaranteed>>,
 }
 
 impl MetaFuncIntrinsic {
     #[track_caller]
     pub fn new(
-        f: impl 'static + Fn(&TyCtxt, &[ValuePlace]) -> Result<FuncIntrinsic, ErrorGuaranteed>,
+        f: impl 'static + Fn(&TyCtxt, &[ValuePlace]) -> Result<ValuePlace, ErrorGuaranteed>,
         s: &Session,
     ) -> Self {
         Self {
@@ -269,7 +269,7 @@ impl MetaFuncIntrinsic {
         &self,
         tcx: &TyCtxt,
         args: &[ValuePlace],
-    ) -> Result<FuncIntrinsic, ErrorGuaranteed> {
+    ) -> Result<ValuePlace, ErrorGuaranteed> {
         (self.inner.r(&tcx.session).construct)(tcx, args)
     }
 }

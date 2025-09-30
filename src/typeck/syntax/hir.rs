@@ -128,6 +128,7 @@ pub enum ExprKind {
     Lit(LiteralKind),
     BinOp(BinOpKind, Obj<Expr>, Obj<Expr>),
     Call(Obj<Expr>, Vec<Obj<Expr>>),
+    Instantiate(Obj<Expr>, Vec<Obj<Expr>>),
     Destructure(Obj<Pat>, Obj<Expr>),
     Match(Box<ExprMatch>),
     Adt(Obj<ExprAdt>),
