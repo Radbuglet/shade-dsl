@@ -69,12 +69,6 @@ impl TyCtxt {
                 BycInstr::Reserve => {
                     place_stack.push(arena.reserve());
                 }
-                BycInstr::AllocScalar(ref value) => {
-                    place_stack.push(arena.alloc(Value {
-                        ty: self.intern_ty(Ty::Scalar(value.kind())),
-                        kind: ValueKind::Scalar(**value),
-                    }));
-                }
                 BycInstr::AllocType(ty) => {
                     if let Ty::Adt(instance) = ty.r(&self.session) {
                         self.queue_wf(WfRequirement::ValidateAdt(*instance));
@@ -164,14 +158,14 @@ impl TyCtxt {
                             )
                         }
                         AnyMetaFuncValue::Instance(target) => {
-                            let instance = self.fn_interner.intern(
-                                FuncInstance {
-                                    func: target.func,
-                                    parent: target.parent,
-                                    generics: args,
-                                },
-                                s,
-                            );
+                            let expected_count = target.func.r(s).inner.generics.len();
+
+                            if expected_count != args.len() {
+                                todo!();
+                            }
+
+                            let instance =
+                                self.intern_fn_instance_with(target.func, target.parent, args);
 
                             if target.func.r(s).inner.params.is_some() {
                                 self.queue_wf(WfRequirement::TypeCheck(instance));

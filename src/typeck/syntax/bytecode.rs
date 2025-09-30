@@ -3,7 +3,7 @@
 use crate::{
     base::arena::Obj,
     parse::ast::BinOpKind,
-    typeck::syntax::{FuncInstance, Ty, ValuePlace, ValueScalar},
+    typeck::syntax::{FuncInstance, Ty, ValuePlace},
 };
 
 #[derive(Debug)]
@@ -16,9 +16,6 @@ pub struct BycFunction {
 pub enum BycInstr {
     /// Reserves a new place and pushes it to the stack.
     Reserve,
-
-    /// Allocates a scalar value place and pushes it to the stack.
-    AllocScalar(Box<ValueScalar>),
 
     /// Allocates a `MetaType` value place and pushes it to the stack.
     AllocType(Obj<Ty>),
@@ -103,7 +100,6 @@ impl BycInstr {
     pub fn depth_delta(&self) -> i32 {
         match *self {
             BycInstr::Reserve => 1,
-            BycInstr::AllocScalar(..) => 1,
             BycInstr::AllocType(..) => 1,
             BycInstr::AllocConst(..) => 1,
             BycInstr::Tee(..) => 1,

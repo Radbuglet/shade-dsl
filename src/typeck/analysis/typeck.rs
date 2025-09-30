@@ -159,19 +159,39 @@ impl CheckCx<'_> {
 
                     CheckTy::Regular(self.tcx.value_interner.read(value).ty)
                 }
-                AnyName::Local(obj) => todo!(),
+                AnyName::Local(local) => todo!(),
             },
-            ExprKind::Block(obj) => todo!(),
+            ExprKind::Block(block) => todo!(),
             ExprKind::Lit(kind) => match kind {
                 LiteralKind::BoolLit(_) => {
                     CheckTy::Regular(self.tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)))
                 }
-                LiteralKind::StrLit(token_str_lit) => todo!(),
+                LiteralKind::StrLit(_) => CheckTy::Regular(self.tcx.intern_ty(Ty::MetaString)),
                 LiteralKind::CharLit(token_char_lit) => todo!(),
                 LiteralKind::NumLit(token_num_lit) => todo!(),
             },
             ExprKind::BinOp(bin_op_kind, obj, obj1) => todo!(),
-            ExprKind::Call(obj, objs) => todo!(),
+            ExprKind::Call(callee, args) => {
+                let callee = self.check_expr(*callee, None);
+
+                let (expected_args, expected_rv) = if let CheckTy::Regular(callee) = callee
+                    && let Ty::Func(args, rv) = callee.r(s)
+                {
+                    (args, rv)
+                } else {
+                    todo!()
+                };
+
+                if args.len() != expected_args.r(s).len() {
+                    todo!()
+                }
+
+                for (&arg, &expected_ty) in args.iter().zip(expected_args.r(s)) {
+                    self.check_expr(arg, Some(expected_ty));
+                }
+
+                CheckTy::Regular(*expected_rv)
+            }
             ExprKind::Destructure(obj, obj1) => todo!(),
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(_adt) => {
@@ -206,9 +226,15 @@ impl CheckCx<'_> {
 
                 CheckTy::Unknown
             }
-            ExprKind::Intrinsic(symbol) => todo!(),
-            ExprKind::Error(error_guaranteed) => todo!(),
-            ExprKind::Placeholder => todo!(),
+            ExprKind::Intrinsic(name) => {
+                let intrinsic = self.tcx.resolve_intrinsic(*name).unwrap();
+
+                CheckTy::Regular(self.tcx.value_interner.read(intrinsic).ty)
+            }
+            ExprKind::Error(err) => {
+                self.erroneous = Some(*err);
+                CheckTy::Unknown
+            }
         };
 
         if let Some(expected_ty) = expected_ty

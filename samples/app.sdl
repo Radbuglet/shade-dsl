@@ -1,5 +1,13 @@
+/*
 pub const whee = fn<T: Inner, V: T>(v: V) {
     const Inner = T;
 };
 
 const woo = whee.<true, true>;
+*/
+
+const bool = intrinsic("core.get_builtin_type")("bool");
+
+const whee = fn<T: bool>(v: T) {};
+
+const woo = whee.<true>;

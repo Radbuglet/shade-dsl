@@ -7,8 +7,8 @@ use crate::{
         analysis::tcx::TyCtxt,
         syntax::{
             AdtInstance, AnyFuncValue, AnyMetaFuncValue, AnyName, BycBinOp, BycFunction, BycInstr,
-            BycPopMode, Expr, ExprKind, FuncInstance, MetaFuncInstance, Ty, Value, ValueKind,
-            ValueScalar,
+            BycPopMode, Expr, ExprKind, FuncInstance, MetaFuncInstance, ScalarKind, Ty, Value,
+            ValueKind, ValueScalar,
         },
     },
 };
@@ -89,18 +89,35 @@ impl<'a> BycBuilderCtxt<'a> {
 
                     BycPopMode::PopAndFree
                 }
-                AnyName::Generic(obj) => todo!(),
+                AnyName::Generic(generic) => {
+                    let cst = self
+                        .tcx
+                        .eval_generic_ensuring_conformance(*generic, self.instance)
+                        .unwrap();
+
+                    self.push([BycInstr::AllocConst(cst)], depth);
+
+                    BycPopMode::PopAndFree
+                }
                 AnyName::Local(obj) => todo!(),
             },
             ExprKind::Block(obj) => todo!(),
             ExprKind::Lit(lit) => {
                 self.push(
-                    [BycInstr::AllocScalar(Box::new(match lit {
-                        LiteralKind::BoolLit(v) => ValueScalar::Bool(*v),
-                        LiteralKind::StrLit(token_str_lit) => todo!(),
-                        LiteralKind::CharLit(token_char_lit) => todo!(),
-                        LiteralKind::NumLit(token_num_lit) => todo!(),
-                    }))],
+                    [BycInstr::AllocConst(self.tcx.intern_from_scratch_arena(
+                        |arena| match lit {
+                            LiteralKind::BoolLit(v) => arena.alloc(Value {
+                                ty: self.tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
+                                kind: ValueKind::Scalar(ValueScalar::Bool(*v)),
+                            }),
+                            LiteralKind::StrLit(str) => arena.alloc(Value {
+                                ty: self.tcx.intern_ty(Ty::MetaString),
+                                kind: ValueKind::MetaString(str.value),
+                            }),
+                            LiteralKind::CharLit(token_char_lit) => todo!(),
+                            LiteralKind::NumLit(token_num_lit) => todo!(),
+                        },
+                    ))],
                     depth,
                 );
 
@@ -192,7 +209,7 @@ impl<'a> BycBuilderCtxt<'a> {
 
                 BycPopMode::PopAndFree
             }
-            ExprKind::Error(_) | ExprKind::Placeholder => unreachable!(),
+            ExprKind::Error(_) => unreachable!(),
         }
     }
 

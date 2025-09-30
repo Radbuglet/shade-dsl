@@ -116,6 +116,38 @@ fn parse_group(p: P, group_start: Span, delimiter: GroupDelimiter) -> TokenGroup
             continue;
         }
 
+        if p.expect(symbol!("`/*`"), |c| {
+            c.eat() == Some('/') && c.eat() == Some('*')
+        }) {
+            let mut depth = 1;
+
+            while depth > 0 {
+                if p.expect(symbol!("`/*`"), |c| {
+                    c.eat() == Some('/') && c.eat() == Some('*')
+                }) {
+                    depth += 1;
+                    continue;
+                }
+
+                if p.expect(symbol!("`*/`"), |c| {
+                    c.eat() == Some('*') && c.eat() == Some('/')
+                }) {
+                    depth -= 1;
+                    continue;
+                }
+
+                if p.expect(symbol!("commented character"), |c| c.eat().is_some()) {
+                    continue;
+                }
+
+                // Recovery strategy: ignore;
+                p.stuck_recover_with(|_| {});
+                break;
+            }
+
+            continue;
+        }
+
         // Parse identifiers (and prefixed string literals)
         if let Some(ident) = parse_ident(p, builder.glued_num().is_none()) {
             if let Some(glued) = builder.glued_num() {

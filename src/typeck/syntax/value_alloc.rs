@@ -17,6 +17,7 @@ use crate::{
         },
         arena::LateInit,
     },
+    match_pair,
     typeck::syntax::{Value, ValueKind, ValuePlace},
     utils::hash::{FxHashMap, FxHashSet, FxHasher, hash_map},
 };
@@ -169,12 +170,15 @@ impl ValueArena {
 
             debug_assert_eq!(from.ty, to.ty);
 
-            match (&from.kind, &mut to.kind) {
+            match_pair!((&from.kind, &mut to.kind) => {
                 // External references are interned so terminal copies are okay.
                 (ValueKind::MetaType(from), ValueKind::MetaType(to)) => {
                     *to = *from;
                 }
                 (ValueKind::MetaFunc(from), ValueKind::MetaFunc(to)) => {
+                    *to = *from;
+                }
+                (ValueKind::MetaString(from), ValueKind::MetaString(to)) => {
                     *to = *from;
                 }
                 (ValueKind::Func(from), ValueKind::Func(to)) => {
@@ -250,9 +254,10 @@ impl ValueArena {
                         *to_pointee = new_to_pointee;
                     }
                 }
-
-                _ => unreachable!(),
-            }
+                _ => {
+                    unreachable!()
+                }
+            })
         }
     }
 
@@ -532,7 +537,10 @@ fn hash_value_terminal(value: &Value, state: &mut impl hash::Hasher) {
             func.hash(state);
         }
         ValueKind::MetaArray(list) => {
-            state.write_usize(list.len());
+            list.len().hash(state);
+        }
+        ValueKind::MetaString(sym) => {
+            sym.hash(state);
         }
         ValueKind::Pointer(_) => {
             // (nothing)
@@ -563,19 +571,44 @@ fn eq_value_terminal(lhs: &Value, rhs: &Value) -> bool {
         return false;
     }
 
-    match (&lhs.kind, &rhs.kind) {
-        (ValueKind::MetaType(lhs), ValueKind::MetaType(rhs)) => lhs == rhs,
-        (ValueKind::MetaFunc(lhs), ValueKind::MetaFunc(rhs)) => lhs == rhs,
-        (ValueKind::MetaArray(lhs), ValueKind::MetaArray(rhs)) => lhs.len() == rhs.len(),
-        (ValueKind::Pointer(_lhs_heap), ValueKind::Pointer(_rhs_heap)) => true,
-        (ValueKind::Func(lhs), ValueKind::Func(rhs)) => lhs == rhs,
-        (ValueKind::Scalar(lhs), ValueKind::Scalar(rhs)) => lhs == rhs,
-        (ValueKind::Tuple(lhs), ValueKind::Tuple(rhs)) => lhs.len() == rhs.len(),
-        (ValueKind::Array(lhs), ValueKind::Array(rhs)) => lhs.len() == rhs.len(),
-        (ValueKind::AdtAggregate(_), ValueKind::AdtAggregate(_)) => true,
-        (ValueKind::AdtVariant(lhs, _), ValueKind::AdtVariant(rhs, _)) => lhs == rhs,
-        _ => false,
-    }
+    match_pair!((&lhs.kind, &rhs.kind) => {
+        (ValueKind::MetaType(lhs), ValueKind::MetaType(rhs)) => {
+            lhs == rhs
+        }
+        (ValueKind::MetaFunc(lhs), ValueKind::MetaFunc(rhs)) => {
+            lhs == rhs
+        }
+        (ValueKind::MetaArray(lhs), ValueKind::MetaArray(rhs)) => {
+            lhs.len() == rhs.len()
+        }
+        (ValueKind::MetaString(lhs), ValueKind::MetaString(rhs)) => {
+            lhs == rhs
+        }
+        (ValueKind::Pointer(_lhs_heap), ValueKind::Pointer(_rhs_heap)) => {
+            true
+        }
+        (ValueKind::Func(lhs), ValueKind::Func(rhs)) => {
+            lhs == rhs
+        }
+        (ValueKind::Scalar(lhs), ValueKind::Scalar(rhs)) => {
+            lhs == rhs
+        }
+        (ValueKind::Tuple(lhs), ValueKind::Tuple(rhs)) => {
+            lhs.len() == rhs.len()
+        }
+        (ValueKind::Array(lhs), ValueKind::Array(rhs)) => {
+            lhs.len() == rhs.len()
+        }
+        (ValueKind::AdtAggregate(_), ValueKind::AdtAggregate(_)) => {
+            true
+        }
+        (ValueKind::AdtVariant(lhs, _), ValueKind::AdtVariant(rhs, _)) => {
+            lhs == rhs
+        }
+        _ => {
+            false
+        }
+    })
 }
 
 macro_rules! follow_node {
@@ -596,6 +629,7 @@ macro_rules! follow_node {
             }
             ValueKind::MetaType(_)
             | ValueKind::MetaFunc(_)
+            | ValueKind::MetaString(_)
             | ValueKind::Func(_)
             | ValueKind::Scalar(_) => {
                 // (nothing to follow)

@@ -135,7 +135,6 @@ pub enum ExprKind {
     Func(Obj<Func>),
     Intrinsic(Symbol),
     Error(ErrorGuaranteed),
-    Placeholder,
 }
 
 #[derive(Debug)]

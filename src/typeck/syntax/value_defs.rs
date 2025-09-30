@@ -4,7 +4,7 @@ use derive_where::derive_where;
 use index_vec::IndexVec;
 
 use crate::{
-    base::{ErrorGuaranteed, Session, arena::Obj},
+    base::{ErrorGuaranteed, Session, arena::Obj, syntax::Symbol},
     typeck::{
         analysis::TyCtxt,
         syntax::{ExprAdt, Func, ValueArena},
@@ -36,6 +36,9 @@ pub enum ValueKind {
 
     /// An array of values whose size is not part of its type.
     MetaArray(Vec<ValuePlace>),
+
+    /// A compile-time string.
+    MetaString(Symbol),
 
     /// A pointer to another value.
     Pointer(ValuePlace),
@@ -160,6 +163,7 @@ pub enum Ty {
     MetaTy,
     MetaFunc,
     MetaArray(Obj<Ty>),
+    MetaString,
     Pointer(Obj<Ty>),
     Func(TyList, Obj<Ty>),
     Scalar(ScalarKind),

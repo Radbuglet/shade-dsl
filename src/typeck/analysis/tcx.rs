@@ -12,8 +12,8 @@ use crate::{
     typeck::{
         analysis::IntrinsicResolver,
         syntax::{
-            AdtInstance, BycFunction, Func, FuncInstance, Generic, MetaFuncIntrinsic, Ty, TyList,
-            ValueArena, ValueInterner, ValuePlace,
+            AdtInstance, BycFunction, Func, FuncInstance, Generic, MetaFuncIntrinsic,
+            OwnGenericIdx, Ty, TyList, ValueArena, ValueInterner, ValuePlace,
         },
     },
     utils::hash::{FxHashMap, FxHashSet},
@@ -115,12 +115,15 @@ impl TyCtxt {
         self.ty_list_interner.intern(ty, &self.session)
     }
 
-    pub fn intern_fn_instance(
+    pub fn intern_fn_instance_with(
         &self,
         func: Obj<Func>,
         parent: Option<Obj<FuncInstance>>,
+        generics: IndexVec<OwnGenericIdx, ValuePlace>,
     ) -> Obj<FuncInstance> {
         let s = &self.session;
+
+        debug_assert_eq!(generics.len(), func.r(s).inner.generics.len());
 
         let parent = match (parent, func.r(&self.session).parent) {
             (Some(mut parent), Some(expected_parent)) => {
@@ -138,10 +141,18 @@ impl TyCtxt {
             FuncInstance {
                 func,
                 parent,
-                generics: IndexVec::new(),
+                generics,
             },
             &self.session,
         )
+    }
+
+    pub fn intern_fn_instance(
+        &self,
+        func: Obj<Func>,
+        parent: Option<Obj<FuncInstance>>,
+    ) -> Obj<FuncInstance> {
+        self.intern_fn_instance_with(func, parent, IndexVec::new())
     }
 
     pub fn queue_wf(&self, req: WfRequirement) {
