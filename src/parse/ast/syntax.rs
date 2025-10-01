@@ -143,11 +143,6 @@ pub enum AstExprKind {
     /// Can only be parsed in expression parsing contexts.
     FuncDef(Box<AstFuncDef>),
 
-    /// A symbol definition (e.g. `sym("this is my symbol")`).
-    ///
-    /// Can only be parsed in expression parsing contexts.
-    SymDef(Box<AstExpr>),
-
     /// An intrinsic fetch expression (e.g. `intrinsic("my_intrinsic")`).
     ///
     /// Can be parsed in both type and expression parsing contexts.
@@ -191,11 +186,18 @@ pub enum AstExprKind {
     /// parsing context of their parent.
     Call(Box<AstExpr>, Vec<AstExpr>),
 
-    /// Function instantiation (e.g. `Array.<u32, {8}>`).
+    /// Function instantiation (e.g. `Array.<u32, {8}>` or `Array.<<u32, {8}>>`).
     ///
     /// Can be parsed in both type and expression parsing contexts. The instantiation arguments are
     /// always parsed as types.
-    Instantiate(Box<AstExpr>, Vec<AstExpr>),
+    /// 
+    /// Usually, this expression is placed in its own constant context to allow for static typing.
+    /// The `<<...>>` syntax can be used to
+    Instantiate {
+        target: Box<AstExpr>,
+        generics: Vec<AstExpr>,
+        is_dynamic: bool,
+    },
 
     /// A named indexing operation (e.g. `foo.bar`).
     ///
@@ -262,14 +264,13 @@ impl AstExprKind {
             | AstExprKind::Continue
             | AstExprKind::Break(..)
             | AstExprKind::FuncDef(..)
-            | AstExprKind::SymDef(..)
             | AstExprKind::Intrinsic(..)
             | AstExprKind::Use(..)
             | AstExprKind::Unary(..)
             | AstExprKind::Bin(..)
             | AstExprKind::Assign(..)
             | AstExprKind::Index(..)
-            | AstExprKind::Instantiate(..)
+            | AstExprKind::Instantiate { .. }
             | AstExprKind::Call(..)
             | AstExprKind::NamedIndex(..)
             | AstExprKind::TypeTuple(..)

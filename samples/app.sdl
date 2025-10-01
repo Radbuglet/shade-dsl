@@ -1,17 +1,14 @@
-/*
-pub const whee = fn<T: Inner, V: T>(v: V) {
-    const Inner = T;
-};
-
-const woo = whee.<true, true>;
-*/
-
 const get_builtin_type = intrinsic("core.get_builtin_type");
 
 const bool = get_builtin_type("bool");
 const u32 = get_builtin_type("u32");
 const metatype = get_builtin_type("type");
 
-const whee = fn<T: metatype>(v: T) {};
+const whee = fn<T: metatype>(v: T) -> V {
+    const V = type((metatype,));
 
-const woo = whee.<u32>;
+    (T,)
+};
+
+const maz = whee.<bool>(faz);
+const faz = true;

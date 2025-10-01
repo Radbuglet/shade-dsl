@@ -171,7 +171,9 @@ impl<'a> LowerCtxt<'a> {
             }
             AstExprKind::AdtDef(adt_ast) => ExprKind::Adt(self.lower_adt(owner, adt_ast)),
             AstExprKind::New(ast_expr, items) => todo!(),
-            AstExprKind::Tuple(vec) => todo!(),
+            AstExprKind::Tuple(exprs) => {
+                ExprKind::NewTuple(self.lower_expr_vec(owner, owner_consts, exprs))
+            }
             AstExprKind::Array(ast_exprs) => todo!(),
             AstExprKind::If {
                 cond,
@@ -185,7 +187,6 @@ impl<'a> LowerCtxt<'a> {
             AstExprKind::Continue => todo!(),
             AstExprKind::Break(ast_expr) => todo!(),
             AstExprKind::FuncDef(def) => ExprKind::Func(self.lower_func(Some(owner), def)),
-            AstExprKind::SymDef(ast_expr) => todo!(),
             AstExprKind::Intrinsic(id) => ExprKind::Intrinsic(*id),
             AstExprKind::Use(token_str_lit) => todo!(),
             AstExprKind::Unary(kind, ast_expr) => todo!(),
@@ -200,16 +201,58 @@ impl<'a> LowerCtxt<'a> {
                 self.lower_expr(owner, owner_consts, callee),
                 self.lower_expr_vec(owner, owner_consts, args),
             ),
-            AstExprKind::Instantiate(target, generics) => {
-                // TODO: Put this into its own constant if it's not already.
+            AstExprKind::Instantiate {
+                target,
+                generics,
+                is_dynamic,
+            } => {
+                if !is_dynamic {
+                    let child = Obj::new(
+                        Func {
+                            parent: Some(owner),
+                            name: symbol!("<???>"), // TODO
+                            span: expr.span,
+                            inner: LateInit::uninit(),
+                        },
+                        self.session,
+                    );
 
-                ExprKind::Instantiate(
-                    self.lower_expr(owner, owner_consts, target),
-                    self.lower_expr_vec(owner, owner_consts, generics),
-                )
+                    let mut child_consts = Vec::new();
+
+                    let body = Obj::new(
+                        Expr {
+                            span: expr.span,
+                            kind: ExprKind::Instantiate(
+                                self.lower_expr(child, &mut child_consts, target),
+                                self.lower_expr_vec(child, &mut child_consts, generics),
+                            ),
+                        },
+                        self.session,
+                    );
+
+                    LateInit::init(
+                        &child.r(self.session).inner,
+                        FuncInner {
+                            generics: IndexVec::new(),
+                            consts: child_consts,
+                            params: None,
+                            return_type: None,
+                            body,
+                        },
+                    );
+
+                    ExprKind::Name(AnyName::Const(child))
+                } else {
+                    ExprKind::Instantiate(
+                        self.lower_expr(owner, owner_consts, target),
+                        self.lower_expr_vec(owner, owner_consts, generics),
+                    )
+                }
             }
             AstExprKind::NamedIndex(ast_expr, ident) => todo!(),
-            AstExprKind::TypeTuple(vec) => todo!(),
+            AstExprKind::TypeTuple(exprs) => {
+                ExprKind::NewTupleType(self.lower_expr_vec(owner, owner_consts, exprs))
+            }
             AstExprKind::TypeArray(ast_expr, ast_expr1) => todo!(),
             AstExprKind::TypePointer(mutability, ast_expr) => todo!(),
             AstExprKind::TypeFn(vec, ast_expr) => todo!(),

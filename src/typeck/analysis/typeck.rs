@@ -6,7 +6,8 @@ use crate::{
     typeck::{
         analysis::{WfRequirement, tcx::TyCtxt},
         syntax::{
-            AnyName, Expr, ExprKind, FuncInstance, Generic, ScalarKind, Ty, TyList, ValuePlace,
+            AdtInstance, AnyName, Expr, ExprKind, FuncInstance, Generic, ScalarKind, Ty, TyList,
+            ValuePlace,
         },
     },
 };
@@ -160,12 +161,25 @@ impl CheckCx<'_> {
                 }
                 AnyName::Local(local) => todo!(),
             },
-            ExprKind::Block(block) => todo!(),
+            ExprKind::Block(block) => {
+                for stmt in &block.r(s).stmts {
+                    self.check_expr(
+                        *stmt,
+                        Some(self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))),
+                    );
+                }
+
+                if let Some(last_expr) = block.r(s).last_expr {
+                    self.check_expr(last_expr, None)
+                } else {
+                    self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))
+                }
+            }
             ExprKind::Lit(kind) => match kind {
                 LiteralKind::BoolLit(_) => self.tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
                 LiteralKind::StrLit(_) => self.tcx.intern_ty(Ty::MetaString),
                 LiteralKind::CharLit(token_char_lit) => todo!(),
-                LiteralKind::NumLit(token_num_lit) => todo!(),
+                LiteralKind::NumLit(lit) => todo!(),
             },
             ExprKind::BinOp(bin_op_kind, obj, obj1) => todo!(),
             ExprKind::Call(callee, args) => {
@@ -187,8 +201,12 @@ impl CheckCx<'_> {
             }
             ExprKind::Destructure(obj, obj1) => todo!(),
             ExprKind::Match(expr_match) => todo!(),
-            ExprKind::Adt(_adt) => {
-                // WF checks are deferred until construction.
+            ExprKind::Adt(adt) => {
+                self.tcx.queue_wf(WfRequirement::ValidateAdt(AdtInstance {
+                    owner: self.instance,
+                    adt: *adt,
+                }));
+
                 self.tcx.intern_ty(Ty::MetaTy)
             }
             ExprKind::Func(func) => {

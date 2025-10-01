@@ -249,7 +249,7 @@ where
                     continue;
                 }
 
-                match import_int_normalize_ext(&curr) {
+                match import_int_normalize_ext(&successor) {
                     SccNode::Internal(internal) => {
                         let successor_idx = internal_nodes.len() as u32;
                         internal_nodes.push(internal);

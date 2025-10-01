@@ -102,7 +102,22 @@ impl<'a> BycBuilderCtxt<'a> {
                 }
                 AnyName::Local(obj) => todo!(),
             },
-            ExprKind::Block(obj) => todo!(),
+            ExprKind::Block(block) => {
+                for stmt in &block.r(s).stmts {
+                    let mode = self.lower_expr_maybe_place(stmt.r(s), depth);
+                    self.push([BycInstr::Pop(mode)], depth);
+                }
+
+                if let Some(last_expr) = block.r(s).last_expr {
+                    self.lower_expr_for_value(last_expr.r(s), depth);
+
+                    BycPopMode::PopAndFree
+                } else {
+                    self.push([BycInstr::NewTuple(0)], depth);
+
+                    BycPopMode::PopAndFree
+                }
+            }
             ExprKind::Lit(lit) => {
                 self.push(
                     [BycInstr::AllocConst(self.tcx.intern_from_scratch_arena(

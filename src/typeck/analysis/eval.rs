@@ -61,19 +61,17 @@ impl TyCtxt {
             let curr_ip = *next_ip;
             *next_ip += 1;
 
+            let curr_instr = &curr_byc.instructions[curr_ip];
+
             let expected_depth = (place_stack.len() as u32)
-                .checked_add_signed(curr_byc.instructions[curr_ip].depth_delta())
+                .checked_add_signed(curr_instr.depth_delta())
                 .unwrap();
 
-            match curr_byc.instructions[curr_ip] {
+            match *curr_instr {
                 BycInstr::Reserve => {
                     place_stack.push(arena.reserve());
                 }
                 BycInstr::AllocType(ty) => {
-                    if let Ty::Adt(instance) = ty.r(&self.session) {
-                        self.queue_wf(WfRequirement::ValidateAdt(*instance));
-                    }
-
                     place_stack.push(arena.alloc(Value {
                         ty: self.intern_ty(Ty::MetaTy),
                         kind: ValueKind::MetaType(ty),
@@ -209,7 +207,7 @@ impl TyCtxt {
                     });
 
                     // Do not drop because we transferred ownership.
-                    place_stack.reserve(place_stack.len() - args.len());
+                    place_stack.truncate(place_stack.len() - args.len());
                     place_stack.push(tuple_val);
                 }
                 BycInstr::NewTupleType(arg_no) => {
@@ -308,7 +306,14 @@ impl TyCtxt {
                 }
             }
 
-            debug_assert_eq!(place_stack.len() as u32, expected_depth);
+            if !matches!(curr_instr, BycInstr::CallStart(_)) {
+                debug_assert_eq!(
+                    place_stack.len() as u32,
+                    expected_depth,
+                    "bad stack handling for {:?}",
+                    curr_byc.instructions[curr_ip],
+                );
+            }
         }
 
         debug_assert_eq!(place_stack.len(), 1);

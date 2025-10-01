@@ -313,18 +313,6 @@ fn parse_expr_pratt_inner(
             );
         }
 
-        // Parse a `sym` expression
-        if match_kw(kw!("sym")).expect(p).is_some() {
-            let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
-                // Recovery strategy: do nothing
-                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
-            };
-
-            let ty = parse_expr_full(&mut p.enter(&block));
-
-            break 'seed build_expr(AstExprKind::SymDef(Box::new(ty)), p);
-        }
-
         // Parse a `use` expression
         if match_kw(kw!("use")).expect(p).is_some() {
             let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
@@ -753,10 +741,6 @@ fn parse_ty_pratt(p: P, min_bp: Bp) -> AstExpr {
             break 'seed build_expr(AstExprKind::TypeMeta(MetaTypeKind::Type), p);
         }
 
-        if match_kw(kw!("sym")).expect(p).is_some() {
-            break 'seed build_expr(AstExprKind::TypeMeta(MetaTypeKind::Sym), p);
-        }
-
         if match_kw(kw!("Self")).expect(p).is_some() {
             break 'seed build_expr(AstExprKind::TypeSelf, p);
         }
@@ -908,18 +892,37 @@ fn parse_common_expr_chains(p: P, mut lhs: AstExpr, min_bp: Bp) -> (AstExpr, boo
 
     // Match instantiations and named indexes
     if let Some(dot) = match_punct(punct!('.')).maybe_expect(p, expr_bp::POST_DOT.left >= min_bp) {
-        if match_punct(punct!('<')).expect(p).is_some() {
+        let mut is_dynamic = false;
+
+        if match_punct_seq(puncts!("<<"))
+            .expect(p)
+            .inspect(|_| {
+                is_dynamic = true;
+            })
+            .is_some()
+            || match_punct(punct!('<')).expect(p).is_some()
+        {
             let res = parse_delimited(
                 p,
                 &mut (),
                 |p, _| parse_ty(p),
                 |p, _| match_punct(punct!(',')).expect(p).is_some(),
-                |p, _| match_punct(punct!('>')).expect(p).is_some(),
+                |p, _| {
+                    if is_dynamic {
+                        match_punct_seq(puncts!(">>")).expect(p).is_some()
+                    } else {
+                        match_punct(punct!('>')).expect(p).is_some()
+                    }
+                },
             );
 
             lhs = AstExpr {
                 span: dot.span.to(p.prev_span()),
-                kind: AstExprKind::Instantiate(Box::new(lhs), res.elems),
+                kind: AstExprKind::Instantiate {
+                    target: Box::new(lhs),
+                    generics: res.elems,
+                    is_dynamic,
+                },
             };
         } else {
             let Some(name) = match_ident().expect(p) else {

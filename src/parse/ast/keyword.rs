@@ -87,7 +87,6 @@ define_keywords! {
     Return = "return",
     SelfUpper = "Self",
     Struct = "struct",
-    Sym = "sym",
     True = "true",
     Type = "type",
     Union = "union",
@@ -155,6 +154,8 @@ macro_rules! define_punct_seqs {
 }
 
 define_punct_seqs! {
+    Shl = '<' '<',
+    Shr = '>' '>',
     Arrow = '-' '>',
     WideArrow = '=' '>',
     LogicalEq = '=' '=',
