@@ -4,7 +4,7 @@ use crate::{
     base::{ErrorGuaranteed, arena::Obj},
     parse::ast::LiteralKind,
     typeck::{
-        analysis::tcx::TyCtxt,
+        analysis::{TypeCheckFacts, tcx::TyCtxt},
         syntax::{
             AdtInstance, AnyFuncValue, AnyMetaFuncValue, AnyName, BycBinOp, BycFunction, BycInstr,
             BycPopMode, Expr, ExprKind, FuncInstance, MetaFuncInstance, ScalarKind, Ty, Value,
@@ -21,13 +21,13 @@ impl TyCtxt {
         let s = &self.session;
 
         self.queries.build_bytecode.compute(instance, |_| {
-            self.type_check(instance)?;
-
+            let facts = self.type_check(instance)?;
             let func = &*instance.r(s).func.r(s).inner;
 
             let mut ctxt = BycBuilderCtxt {
                 tcx: self,
                 instance,
+                facts: facts.r(s),
                 instructions: Vec::new(),
             };
 
@@ -43,6 +43,7 @@ impl TyCtxt {
 struct BycBuilderCtxt<'a> {
     tcx: &'a TyCtxt,
     instance: Obj<FuncInstance>,
+    facts: &'a TypeCheckFacts,
     instructions: Vec<BycInstr>,
 }
 
@@ -170,6 +171,24 @@ impl<'a> BycBuilderCtxt<'a> {
                     )))],
                     depth,
                 );
+
+                BycPopMode::PopAndFree
+            }
+            ExprKind::NewTuple(fields) => {
+                for &field in fields {
+                    self.lower_expr_for_value(field.r(s), depth);
+                }
+
+                self.push([BycInstr::NewTuple(fields.len() as u32)], depth);
+
+                BycPopMode::PopAndFree
+            }
+            ExprKind::NewTupleType(fields) => {
+                for &field in fields {
+                    self.lower_expr_for_value(field.r(s), depth);
+                }
+
+                self.push([BycInstr::NewTupleType(fields.len() as u32)], depth);
 
                 BycPopMode::PopAndFree
             }

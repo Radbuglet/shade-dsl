@@ -10,7 +10,7 @@ use crate::{
         syntax::Symbol,
     },
     typeck::{
-        analysis::IntrinsicResolver,
+        analysis::{IntrinsicResolver, TypeCheckFacts},
         syntax::{
             AdtInstance, BycFunction, Func, FuncInstance, Generic, MetaFuncIntrinsic,
             OwnGenericIdx, Ty, TyList, ValueArena, ValueInterner, ValuePlace,
@@ -55,7 +55,7 @@ pub enum WfRequirement {
 #[derive(Debug, Default)]
 pub struct Queries {
     pub eval_paramless: Memo<Obj<FuncInstance>, ValuePlace>,
-    pub type_check: Memo<Obj<FuncInstance>, ()>,
+    pub type_check: Memo<Obj<FuncInstance>, Obj<TypeCheckFacts>>,
     pub build_bytecode: Memo<Obj<FuncInstance>, Obj<BycFunction>>,
     pub eval_intrinsic_meta_fn: Memo<(MetaFuncIntrinsic, Vec<ValuePlace>), ValuePlace>,
     pub instance_signature: Memo<Obj<FuncInstance>, (TyList, Option<Obj<Ty>>)>,

@@ -6,14 +6,16 @@ use crate::{
     typeck::{
         analysis::{WfRequirement, tcx::TyCtxt},
         syntax::{
-            AnyName, CheckTy, Expr, ExprKind, FuncInstance, Generic, ScalarKind, Ty, TyList,
-            ValuePlace,
+            AnyName, Expr, ExprKind, FuncInstance, Generic, ScalarKind, Ty, TyList, ValuePlace,
         },
     },
 };
 
 impl TyCtxt {
-    pub fn type_check(&self, instance: Obj<FuncInstance>) -> Result<(), ErrorGuaranteed> {
+    pub fn type_check(
+        &self,
+        instance: Obj<FuncInstance>,
+    ) -> Result<Obj<TypeCheckFacts>, ErrorGuaranteed> {
         let s = &self.session;
 
         self.queries.type_check.compute(instance, |_| {
@@ -49,7 +51,7 @@ impl TyCtxt {
                 return Err(err);
             }
 
-            Ok(())
+            Ok(Obj::new(cx.facts, s))
         })
     }
 
@@ -127,7 +129,12 @@ struct CheckCx<'a> {
 }
 
 impl CheckCx<'_> {
-    fn check_expr(&mut self, expr: Obj<Expr>, expected_ty: Option<Obj<Ty>>) -> CheckTy {
+    fn err(&mut self, err: ErrorGuaranteed) -> Obj<Ty> {
+        self.erroneous = Some(err);
+        self.tcx.intern_ty(Ty::Error(err))
+    }
+
+    fn check_expr(&mut self, expr: Obj<Expr>, expected_ty: Option<Obj<Ty>>) -> Obj<Ty> {
         let s = &self.tcx.session;
 
         let actual_ty = match &expr.r(s).kind {
@@ -135,38 +142,28 @@ impl CheckCx<'_> {
                 AnyName::Const(target) => {
                     let instance = self.tcx.intern_fn_instance(*target, Some(self.instance));
 
-                    let ty = match self.tcx.ty_of_paramless_fn_val(instance) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            self.erroneous = Some(err);
-                            return CheckTy::Unknown;
-                        }
-                    };
+                    let (Ok(ty) | Err(ty)) = self
+                        .tcx
+                        .ty_of_paramless_fn_val(instance)
+                        .map_err(|v| self.err(v));
 
-                    CheckTy::Regular(ty)
+                    ty
                 }
                 AnyName::Generic(ty) => {
-                    let value = match self
+                    match self
                         .tcx
                         .eval_generic_ensuring_conformance(*ty, self.instance)
                     {
-                        Ok(v) => v,
-                        Err(err) => {
-                            self.erroneous = Some(err);
-                            return CheckTy::Unknown;
-                        }
-                    };
-
-                    CheckTy::Regular(self.tcx.value_interner.read(value).ty)
+                        Ok(value) => self.tcx.value_interner.read(value).ty,
+                        Err(err) => self.err(err),
+                    }
                 }
                 AnyName::Local(local) => todo!(),
             },
             ExprKind::Block(block) => todo!(),
             ExprKind::Lit(kind) => match kind {
-                LiteralKind::BoolLit(_) => {
-                    CheckTy::Regular(self.tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)))
-                }
-                LiteralKind::StrLit(_) => CheckTy::Regular(self.tcx.intern_ty(Ty::MetaString)),
+                LiteralKind::BoolLit(_) => self.tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
+                LiteralKind::StrLit(_) => self.tcx.intern_ty(Ty::MetaString),
                 LiteralKind::CharLit(token_char_lit) => todo!(),
                 LiteralKind::NumLit(token_num_lit) => todo!(),
             },
@@ -174,11 +171,7 @@ impl CheckCx<'_> {
             ExprKind::Call(callee, args) => {
                 let callee = self.check_expr(*callee, None);
 
-                let (expected_args, expected_rv) = if let CheckTy::Regular(callee) = callee
-                    && let Ty::Func(args, rv) = callee.r(s)
-                {
-                    (args, rv)
-                } else {
+                let Ty::Func(expected_args, expected_rv) = callee.r(s) else {
                     todo!()
                 };
 
@@ -190,13 +183,13 @@ impl CheckCx<'_> {
                     self.check_expr(arg, Some(expected_ty));
                 }
 
-                CheckTy::Regular(*expected_rv)
+                *expected_rv
             }
             ExprKind::Destructure(obj, obj1) => todo!(),
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(_adt) => {
                 // WF checks are deferred until construction.
-                CheckTy::Regular(self.tcx.intern_ty(Ty::MetaTy))
+                self.tcx.intern_ty(Ty::MetaTy)
             }
             ExprKind::Func(func) => {
                 if func.r(s).inner.generics.is_empty() {
@@ -204,17 +197,12 @@ impl CheckCx<'_> {
 
                     self.tcx.queue_wf(WfRequirement::TypeCheck(instance));
 
-                    let ty = match self.tcx.instance_fn_ty(instance) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            self.erroneous = Some(e);
-                            return CheckTy::Unknown;
-                        }
-                    };
+                    let (Ok(ty) | Err(ty)) =
+                        self.tcx.instance_fn_ty(instance).map_err(|v| self.err(v));
 
-                    CheckTy::Regular(ty)
+                    ty
                 } else {
-                    CheckTy::Regular(self.tcx.intern_ty(Ty::MetaFunc))
+                    self.tcx.intern_ty(Ty::MetaFunc)
                 }
             }
             ExprKind::Instantiate(callee, args) => {
@@ -224,21 +212,35 @@ impl CheckCx<'_> {
                     self.check_expr(*arg, None);
                 }
 
-                CheckTy::Unknown
+                self.tcx.intern_ty(Ty::Unknown)
             }
             ExprKind::Intrinsic(name) => {
-                let intrinsic = self.tcx.resolve_intrinsic(*name).unwrap();
+                let Some(intrinsic) = self.tcx.resolve_intrinsic(*name) else {
+                    todo!();
+                };
 
-                CheckTy::Regular(self.tcx.value_interner.read(intrinsic).ty)
+                self.tcx.value_interner.read(intrinsic).ty
             }
-            ExprKind::Error(err) => {
-                self.erroneous = Some(*err);
-                CheckTy::Unknown
+            ExprKind::NewTuple(fields) => {
+                let tys = fields
+                    .iter()
+                    .map(|expr| self.check_expr(*expr, None))
+                    .collect::<Vec<_>>();
+
+                self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&tys)))
             }
+            ExprKind::NewTupleType(fields) => {
+                for &field in fields {
+                    self.check_expr(field, Some(self.tcx.intern_ty(Ty::MetaTy)));
+                }
+
+                self.tcx.intern_ty(Ty::MetaTy)
+            }
+            ExprKind::Error(err) => self.err(*err),
         };
 
         if let Some(expected_ty) = expected_ty
-            && actual_ty != CheckTy::Regular(expected_ty)
+            && actual_ty != expected_ty
         {
             todo!();
         }
@@ -251,5 +253,5 @@ impl CheckCx<'_> {
 
 #[derive(Debug, Default)]
 pub struct TypeCheckFacts {
-    pub expr_types: FxHashMap<Obj<Expr>, CheckTy>,
+    pub expr_types: FxHashMap<Obj<Expr>, Obj<Ty>>,
 }

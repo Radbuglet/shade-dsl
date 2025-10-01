@@ -6,8 +6,12 @@ pub const whee = fn<T: Inner, V: T>(v: V) {
 const woo = whee.<true, true>;
 */
 
-const bool = intrinsic("core.get_builtin_type")("bool");
+const get_builtin_type = intrinsic("core.get_builtin_type");
 
-const whee = fn<T: bool>(v: T) {};
+const bool = get_builtin_type("bool");
+const u32 = get_builtin_type("u32");
+const metatype = get_builtin_type("type");
 
-const woo = whee.<true>;
+const whee = fn<T: metatype>(v: T) {};
+
+const woo = whee.<u32>;

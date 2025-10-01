@@ -132,6 +132,8 @@ pub enum ExprKind {
     Destructure(Obj<Pat>, Obj<Expr>),
     Match(Box<ExprMatch>),
     Adt(Obj<ExprAdt>),
+    NewTuple(Vec<Obj<Expr>>),
+    NewTupleType(Vec<Obj<Expr>>),
     Func(Obj<Func>),
     Intrinsic(Symbol),
     Error(ErrorGuaranteed),

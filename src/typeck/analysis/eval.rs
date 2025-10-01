@@ -186,7 +186,7 @@ impl TyCtxt {
                         }
                     };
 
-                    for place in place_stack.drain((place_stack.len() - arg_count as usize - 2)..) {
+                    for place in place_stack.drain((place_stack.len() - arg_count as usize - 1)..) {
                         arena.free(place);
                     }
 
@@ -194,6 +194,50 @@ impl TyCtxt {
                 }
                 BycInstr::Return => {
                     call_stack.pop().unwrap();
+                }
+                BycInstr::NewTuple(fields) => {
+                    let args = &place_stack[(place_stack.len() - fields as usize)..];
+
+                    let tuple_ty = self
+                        .intern_tys(&args.iter().map(|v| arena.read(*v).ty).collect::<Vec<_>>());
+
+                    let tuple_ty = self.intern_ty(Ty::Tuple(tuple_ty));
+
+                    let tuple_val = arena.alloc(Value {
+                        ty: tuple_ty,
+                        kind: ValueKind::Tuple(args.to_vec()),
+                    });
+
+                    // Do not drop because we transferred ownership.
+                    place_stack.reserve(place_stack.len() - args.len());
+                    place_stack.push(tuple_val);
+                }
+                BycInstr::NewTupleType(arg_no) => {
+                    let args = &place_stack[(place_stack.len() - arg_no as usize)..];
+
+                    let args = self.intern_tys(
+                        &args
+                            .iter()
+                            .map(|field| {
+                                let ValueKind::MetaType(ty) = arena.read(*field).kind else {
+                                    unreachable!();
+                                };
+
+                                ty
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+
+                    let tuple_val = arena.alloc(Value {
+                        ty: self.intern_ty(Ty::MetaTy),
+                        kind: ValueKind::MetaType(self.intern_ty(Ty::Tuple(args))),
+                    });
+
+                    for place in place_stack.drain((place_stack.len() - arg_no as usize)..) {
+                        arena.free(place);
+                    }
+
+                    place_stack.push(tuple_val);
                 }
                 BycInstr::AdtVariantUnwrap(mode) => {
                     let place = place_stack.pop().unwrap();

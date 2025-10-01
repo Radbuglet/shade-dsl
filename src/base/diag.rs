@@ -16,7 +16,7 @@ use super::Session;
 
 // === Errors === //
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ErrorGuaranteed;
 

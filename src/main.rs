@@ -44,12 +44,23 @@ fn main() {
                                 tcx.intern_ty(Ty::MetaTy),
                             )),
                             kind: ValueKind::Func(AnyFuncValue::Intrinsic(FuncIntrinsic::new(
-                                move |tcx, arena, _args| {
+                                move |tcx, arena, args| {
+                                    let ValueKind::MetaString(str) = arena.read(args[0]).kind
+                                    else {
+                                        unreachable!()
+                                    };
+                                    let str = str.as_str(&tcx.session);
+
+                                    let ty = match str {
+                                        "bool" => tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
+                                        "u32" => tcx.intern_ty(Ty::Scalar(ScalarKind::U32)),
+                                        "type" => tcx.intern_ty(Ty::MetaTy),
+                                        _ => todo!(),
+                                    };
+
                                     Ok(arena.alloc(Value {
                                         ty: tcx.intern_ty(Ty::MetaTy),
-                                        kind: ValueKind::MetaType(
-                                            tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
-                                        ),
+                                        kind: ValueKind::MetaType(ty),
                                     }))
                                 },
                                 s,

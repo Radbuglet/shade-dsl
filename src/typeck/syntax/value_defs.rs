@@ -133,29 +133,6 @@ impl PartialEq for ValueScalar {
 
 // === Ty === //
 
-/// A superset of types for use in type-checking. Values never have these type—they are only ever a
-/// concept for type-checkers.
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub enum CheckTy {
-    Regular(Obj<Ty>),
-
-    /// The type of an integer literal whose actual type has yet to be inferred.
-    InferInt,
-
-    /// The type of a float literal whose actual type has yet to be inferred.
-    InferFloat,
-
-    /// The type of an expression is not known until evaluation time.
-    ///
-    /// Meta function instantiation, for example, will cause this type to be recorded.
-    ///
-    /// Functions without defined return values that return lexically unknown types will resolve to
-    /// the actual type of the value. For example, in `const MyVec = Vec.<u32>;`, `MyVec` will have
-    /// `MetaType` rather than `Unknown` because that's what the underlying value was at
-    /// evaluation time.
-    Unknown,
-}
-
 pub type TyList = Obj<[Obj<Ty>]>;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -170,6 +147,8 @@ pub enum Ty {
     Tuple(TyList),
     Array(Obj<Ty>, usize),
     Adt(AdtInstance),
+    Unknown,
+    Error(ErrorGuaranteed),
 }
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]

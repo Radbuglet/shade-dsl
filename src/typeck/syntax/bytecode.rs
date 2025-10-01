@@ -72,6 +72,14 @@ pub enum BycInstr {
     /// Returns to the caller.
     Return,
 
+    /// Pops the supplied number of values from the stack assuming ownership is being transferred to
+    /// us and produces a new tuple on the top of the stack.
+    NewTuple(u32),
+
+    /// Pops the supplied number of values from the stack using the `PopAndFree` pop mode and
+    /// produces a new tuple type on the top of the stack.
+    NewTupleType(u32),
+
     /// Pops the place at the top of the stack according to the pop mode and pushes the specified
     /// field inside the aggregate ADT onto the stack.
     AdtAggregateIndex(BycPopMode, u32),
@@ -109,6 +117,8 @@ impl BycInstr {
             BycInstr::CallCleanup(args) => -(args as i32) - 1,
             BycInstr::Instantiate(generics) => -(generics as i32),
             BycInstr::Return => 0,
+            BycInstr::NewTuple(fields) => -(fields as i32) + 1,
+            BycInstr::NewTupleType(fields) => -(fields as i32) + 1,
             BycInstr::AdtAggregateIndex(..) => 0,
             BycInstr::AdtVariantUnwrap(..) => 0,
             BycInstr::ShallowCopy => 0,

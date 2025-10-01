@@ -340,33 +340,56 @@ impl<'a> LowerCtxt<'a> {
 
         self.lower_block_consts(&func_consts, &ast.body, root_block_consts);
 
-        let func_return_type = ast.ret_ty.as_ref().map(|ret_ty| {
-            let ty_fn = Obj::new(
+        let func_return_type = match &ast.ret_ty {
+            Some(ret_ty) => {
+                let ty_fn = Obj::new(
+                    Func {
+                        parent: Some(func),
+                        name: symbol!("return type"),
+                        span: ret_ty.span,
+                        inner: LateInit::uninit(),
+                    },
+                    self.session,
+                );
+
+                let mut ty_consts = Vec::new();
+                let ty_body = self.lower_expr(ty_fn, &mut ty_consts, ret_ty);
+
+                LateInit::init(
+                    &ty_fn.r(self.session).inner,
+                    FuncInner {
+                        generics: IndexVec::new(),
+                        consts: ty_consts,
+                        params: None,
+                        return_type: None,
+                        body: ty_body,
+                    },
+                );
+
+                ty_fn
+            }
+            None => Obj::new(
                 Func {
                     parent: Some(func),
                     name: symbol!("return type"),
-                    span: ret_ty.span,
-                    inner: LateInit::uninit(),
+                    span: Span::DUMMY,
+                    inner: LateInit::new(FuncInner {
+                        generics: IndexVec::new(),
+                        consts: Vec::new(),
+                        params: None,
+                        return_type: None,
+                        body: Obj::new(
+                            Expr {
+                                span: Span::DUMMY,
+                                kind: ExprKind::NewTupleType(Vec::new()),
+                            },
+                            self.session,
+                        ),
+                    }),
                 },
                 self.session,
-            );
-
-            let mut ty_consts = Vec::new();
-            let ty_body = self.lower_expr(ty_fn, &mut ty_consts, ret_ty);
-
-            LateInit::init(
-                &ty_fn.r(self.session).inner,
-                FuncInner {
-                    generics: IndexVec::new(),
-                    consts: ty_consts,
-                    params: None,
-                    return_type: None,
-                    body: ty_body,
-                },
-            );
-
-            ty_fn
-        });
+            ),
+        };
 
         // Resolve the body
         let func_body = self.lower_block(
@@ -389,7 +412,7 @@ impl<'a> LowerCtxt<'a> {
                 generics: func_generics,
                 consts: func_consts,
                 params: func_params,
-                return_type: func_return_type,
+                return_type: Some(func_return_type),
                 body: func_body,
             },
         );
