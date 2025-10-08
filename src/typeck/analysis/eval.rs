@@ -2,11 +2,12 @@ use index_vec::IndexVec;
 
 use crate::{
     base::{ErrorGuaranteed, arena::Obj},
+    parse::ast::BinOpKind,
     typeck::{
         analysis::{TyCtxt, WfRequirement},
         syntax::{
-            AnyFuncValue, AnyMetaFuncValue, BycBinOp, BycFunction, BycInstr, CopyDepth,
-            FuncInstance, Ty, Value, ValueArena, ValueKind, ValuePlace, ValueScalar,
+            AnyFuncValue, AnyMetaFuncValue, BycDepth, BycFunction, BycInstr, BycInstrHandler,
+            CopyDepth, FuncInstance, Ty, Value, ValueArena, ValuePlace, ValueScalar, byc_instr,
         },
     },
 };
@@ -30,7 +31,7 @@ impl TyCtxt {
     ) -> Result<Obj<Ty>, ErrorGuaranteed> {
         let value = self.eval_paramless(instance)?;
 
-        Ok(self.value_interner.read(value).ty)
+        Ok(self.canonical_intern_value_type(value))
     }
 
     pub fn eval_paramless_for_meta_ty(
@@ -39,11 +40,11 @@ impl TyCtxt {
     ) -> Result<Obj<Ty>, ErrorGuaranteed> {
         let value = self.eval_paramless(instance)?;
 
-        let ValueKind::MetaType(ty) = self.value_interner.read(value).kind else {
+        let Value::MetaType(ty) = self.value_interner.read(value) else {
             todo!();
         };
 
-        Ok(ty)
+        Ok(*ty)
     }
 
     pub fn interpret(
@@ -53,271 +54,439 @@ impl TyCtxt {
         arena: &mut ValueArena,
     ) -> Result<ValuePlace, ErrorGuaranteed> {
         let s = &self.session;
-        let mut call_stack = Vec::from_iter([(root_func.r(s), 0usize)]);
-        let mut place_stack = args.to_vec();
 
-        while let Some((curr_byc, next_ip)) = call_stack.last_mut() {
+        let return_place = arena.reserve();
+
+        let place_stack = [return_place, ValuePlace::DANGLING]
+            .into_iter()
+            .chain(args.iter().map(|intern| {
+                arena.copy_from(Some(self.value_interner.arena()), *intern, CopyDepth::Deep)
+            }))
+            .collect::<Vec<_>>();
+
+        InterpretCx {
+            tcx: self,
+            arena,
+            call_stack: Vec::from_iter([(root_func.r(s), 0usize)]),
+            local_stack: Vec::new(),
+            place_stack,
+        }
+        .run()?;
+
+        Ok(return_place)
+    }
+}
+
+struct InterpretCx<'a> {
+    tcx: &'a TyCtxt,
+    arena: &'a mut ValueArena,
+    call_stack: Vec<(&'a BycFunction, usize)>,
+    local_stack: Vec<ValuePlace>,
+    place_stack: Vec<ValuePlace>,
+}
+
+impl InterpretCx<'_> {
+    pub fn run(&mut self) -> Result<(), ErrorGuaranteed> {
+        while let Some((curr_byc, next_ip)) = self.call_stack.last_mut() {
             let curr_byc = *curr_byc;
             let curr_ip = *next_ip;
             *next_ip += 1;
 
             let curr_instr = &curr_byc.instructions[curr_ip];
 
-            let expected_depth = (place_stack.len() as u32)
-                .checked_add_signed(curr_instr.depth_delta())
-                .unwrap();
+            let expected_depth = BycDepth {
+                local: self.local_stack.len() as i32,
+                place: self.place_stack.len() as i32,
+            } + curr_instr.depth_delta();
 
-            match *curr_instr {
-                BycInstr::Reserve => {
-                    place_stack.push(arena.reserve());
-                }
-                BycInstr::AllocType(ty) => {
-                    place_stack.push(arena.alloc(Value {
-                        ty: self.intern_ty(Ty::MetaTy),
-                        kind: ValueKind::MetaType(ty),
-                    }));
-                }
-                BycInstr::AllocConst(intern) => {
-                    place_stack.push(arena.copy_from(
-                        Some(self.value_interner.arena()),
-                        intern,
-                        CopyDepth::Deep,
-                    ));
-                }
-                BycInstr::Tee(idx) => {
-                    place_stack.push(place_stack[place_stack.len() - 1 - idx as usize]);
-                }
-                BycInstr::Pop(mode) => {
-                    let top = place_stack.pop().unwrap();
+            curr_instr.invoke(
+                &mut self.local_stack,
+                &mut self.place_stack,
+                &mut InterpretCxHandler {
+                    tcx: self.tcx,
+                    arena: &mut *self.arena,
+                    call_stack: &mut self.call_stack,
+                },
+            )?;
 
-                    if mode.needs_free() {
-                        arena.free(top);
-                    }
-                }
-                BycInstr::ConstEval(cst) => {
-                    place_stack.push(arena.copy_from(
-                        Some(self.value_interner.arena()),
-                        self.eval_paramless(cst)?,
-                        CopyDepth::Deep,
-                    ));
-                }
-                BycInstr::CallStart(arg_count) => {
-                    let callee_place = place_stack[place_stack.len() - arg_count as usize - 1];
-                    let callee = arena.read(callee_place);
-
-                    let ValueKind::Func(callee) = callee.kind else {
-                        unreachable!()
-                    };
-
-                    match callee {
-                        AnyFuncValue::Intrinsic(callee) => {
-                            place_stack.push(callee.invoke(
-                                self,
-                                arena,
-                                &place_stack[(place_stack.len() - arg_count as usize)..],
-                            )?);
-                        }
-                        AnyFuncValue::Instance(callee) => {
-                            call_stack.push((self.build_bytecode(callee)?.r(s), 0usize));
-                        }
-                    }
-                }
-                BycInstr::CallCleanup(arg_count) => {
-                    let ret_place = place_stack.pop().unwrap();
-
-                    for place in place_stack.drain((place_stack.len() - arg_count as usize - 1)..) {
-                        arena.free(place);
-                    }
-
-                    place_stack.push(ret_place);
-                }
-                BycInstr::Instantiate(arg_count) => {
-                    let target = place_stack[place_stack.len() - arg_count as usize - 1];
-                    let args = &place_stack[(place_stack.len() - arg_count as usize)..];
-
-                    let ValueKind::MetaFunc(target) = arena.read(target).kind else {
-                        unreachable!();
-                    };
-
-                    let args = args
-                        .iter()
-                        .map(|&v| self.value_interner.intern(arena, v))
-                        .collect::<IndexVec<_, _>>();
-
-                    let resolved = match target {
-                        AnyMetaFuncValue::Intrinsic(target) => {
-                            let intern =
-                                self.eval_intrinsic_meta_fn(target, &args.as_slice().raw)?;
-
-                            arena.copy_from(
-                                Some(self.value_interner.arena()),
-                                intern,
-                                CopyDepth::Deep,
-                            )
-                        }
-                        AnyMetaFuncValue::Instance(target) => {
-                            let expected_count = target.func.r(s).inner.generics.len();
-
-                            if expected_count != args.len() {
-                                todo!();
-                            }
-
-                            let instance =
-                                self.intern_fn_instance_with(target.func, target.parent, args);
-
-                            if target.func.r(s).inner.params.is_some() {
-                                self.queue_wf(WfRequirement::TypeCheck(instance));
-
-                                arena.alloc(Value {
-                                    ty: self.instance_fn_ty(instance)?,
-                                    kind: ValueKind::Func(AnyFuncValue::Instance(instance)),
-                                })
-                            } else {
-                                let intern = self.eval_paramless(instance)?;
-
-                                arena.copy_from(
-                                    Some(self.value_interner.arena()),
-                                    intern,
-                                    CopyDepth::Deep,
-                                )
-                            }
-                        }
-                    };
-
-                    for place in place_stack.drain((place_stack.len() - arg_count as usize - 1)..) {
-                        arena.free(place);
-                    }
-
-                    place_stack.push(resolved);
-                }
-                BycInstr::Return => {
-                    call_stack.pop().unwrap();
-                }
-                BycInstr::NewTuple(fields) => {
-                    let args = &place_stack[(place_stack.len() - fields as usize)..];
-
-                    let tuple_ty = self
-                        .intern_tys(&args.iter().map(|v| arena.read(*v).ty).collect::<Vec<_>>());
-
-                    let tuple_ty = self.intern_ty(Ty::Tuple(tuple_ty));
-
-                    let tuple_val = arena.alloc(Value {
-                        ty: tuple_ty,
-                        kind: ValueKind::Tuple(args.to_vec()),
-                    });
-
-                    // Do not drop because we transferred ownership.
-                    place_stack.truncate(place_stack.len() - args.len());
-                    place_stack.push(tuple_val);
-                }
-                BycInstr::NewTupleType(arg_no) => {
-                    let args = &place_stack[(place_stack.len() - arg_no as usize)..];
-
-                    let args = self.intern_tys(
-                        &args
-                            .iter()
-                            .map(|field| {
-                                let ValueKind::MetaType(ty) = arena.read(*field).kind else {
-                                    unreachable!();
-                                };
-
-                                ty
-                            })
-                            .collect::<Vec<_>>(),
-                    );
-
-                    let tuple_val = arena.alloc(Value {
-                        ty: self.intern_ty(Ty::MetaTy),
-                        kind: ValueKind::MetaType(self.intern_ty(Ty::Tuple(args))),
-                    });
-
-                    for place in place_stack.drain((place_stack.len() - arg_no as usize)..) {
-                        arena.free(place);
-                    }
-
-                    place_stack.push(tuple_val);
-                }
-                BycInstr::AdtVariantUnwrap(mode) => {
-                    let place = place_stack.pop().unwrap();
-                    let ValueKind::AdtVariant(_, inner) = arena.read(place).kind else {
-                        unreachable!()
-                    };
-
-                    if mode.needs_free() {
-                        arena.free(place);
-                    }
-
-                    place_stack.push(inner);
-                }
-                BycInstr::AdtAggregateIndex(mode, idx) => {
-                    let place = place_stack.pop().unwrap();
-                    let ValueKind::AdtAggregate(ref places) = arena.read(place).kind else {
-                        unreachable!()
-                    };
-
-                    place_stack.push(places[idx as usize]);
-
-                    if mode.needs_free() {
-                        arena.free(place);
-                    }
-                }
-                BycInstr::ShallowCopy => {
-                    let to_copy = place_stack.pop().unwrap();
-                    let copied = arena.copy(to_copy, CopyDepth::Shallow);
-                    place_stack.push(copied);
-                }
-                BycInstr::BinOp(op, rhs_mode, lhs_mode) => {
-                    let rhs_place = place_stack.pop().unwrap();
-                    let lhs_place = place_stack.pop().unwrap();
-
-                    match op {
-                        BycBinOp::ShallowAssign => {
-                            arena.assign(rhs_place, lhs_place);
-                        }
-                        BycBinOp::Scalar(op) => {
-                            todo!()
-                        }
-                    }
-
-                    if rhs_mode.needs_free() {
-                        arena.free(rhs_place);
-                    }
-
-                    if lhs_mode.needs_free() {
-                        arena.free(lhs_place);
-                    }
-                }
-                BycInstr::Jump(addr) => {
-                    *next_ip = addr;
-                }
-                BycInstr::JumpOtherwise(mode, addr) => {
-                    let place = place_stack.pop().unwrap();
-                    let ValueKind::Scalar(ValueScalar::Bool(value)) = arena.read(place).kind else {
-                        unreachable!();
-                    };
-
-                    if !value {
-                        *next_ip = addr;
-                    }
-
-                    if mode.needs_free() {
-                        arena.free(place);
-                    }
-                }
-            }
-
-            if !matches!(curr_instr, BycInstr::CallStart(_)) {
+            if !matches!(curr_instr, BycInstr::Call(_)) {
                 debug_assert_eq!(
-                    place_stack.len() as u32,
                     expected_depth,
+                    BycDepth {
+                        local: self.local_stack.len() as i32,
+                        place: self.place_stack.len() as i32,
+                    },
                     "bad stack handling for {:?}",
                     curr_byc.instructions[curr_ip],
                 );
             }
         }
 
-        debug_assert_eq!(place_stack.len(), 1);
+        Ok(())
+    }
+}
 
-        Ok(place_stack.pop().unwrap())
+struct InterpretCxHandler<'tcx, 'a> {
+    tcx: &'tcx TyCtxt,
+    arena: &'a mut ValueArena,
+    call_stack: &'a mut Vec<(&'tcx BycFunction, usize)>,
+}
+
+impl InterpretCxHandler<'_, '_> {
+    fn set_next_ip(&mut self, addr: usize) {
+        self.call_stack.last_mut().unwrap().1 = addr;
+    }
+}
+
+#[allow(clippy::needless_lifetimes)]
+impl BycInstrHandler for InterpretCxHandler<'_, '_> {
+    fn allocate<'a>(
+        &mut self,
+        _instr: &'a byc_instr::Allocate,
+    ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
+        Ok([self.arena.reserve()])
+    }
+
+    fn deallocate<'a>(
+        &mut self,
+        _instr: &'a byc_instr::Deallocate,
+        to_free: &'a [ValuePlace],
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        for &place in to_free {
+            self.arena.free(place);
+        }
+
+        Ok([])
+    }
+
+    fn reference<'a>(
+        &mut self,
+        _instr: &'a byc_instr::Reference,
+        _ignore: &'a [ValuePlace],
+        target: ValuePlace,
+    ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
+        Ok([target])
+    }
+
+    fn tee<'a>(
+        &mut self,
+        _instr: &'a byc_instr::Tee,
+        _ignore: &'a [ValuePlace],
+        target: ValuePlace,
+    ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
+        Ok([target])
+    }
+
+    fn fold<'a>(
+        &mut self,
+        _instr: &'a byc_instr::Fold,
+        top: ValuePlace,
+        _drop: &'a [ValuePlace],
+    ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
+        Ok([top])
+    }
+
+    fn forget<'a>(
+        &mut self,
+        _instr: &'a byc_instr::Forget,
+        _ignore: &'a [ValuePlace],
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        Ok([])
+    }
+
+    fn assign_empty_tuple_value<'a>(
+        &mut self,
+        instr: &'a byc_instr::AssignEmptyTupleValue,
+        target: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        self.arena.init_tuple(target, instr.fields);
+
+        Ok([])
+    }
+
+    fn assign_type_literal<'a>(
+        &mut self,
+        instr: &'a byc_instr::AssignTypeLiteral,
+        target: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        self.arena.write_terminal(target, Value::MetaType(instr.ty));
+
+        Ok([])
+    }
+
+    fn assign_const<'a>(
+        &mut self,
+        instr: &'a byc_instr::AssignConst,
+        target: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        let temp = self.arena.copy_from(
+            Some(self.tcx.value_interner.arena()),
+            instr.intern,
+            CopyDepth::Deep,
+        );
+
+        self.arena.assign(temp, target);
+        self.arena.free(temp);
+
+        Ok([])
+    }
+
+    fn assign_const_expr<'a>(
+        &mut self,
+        instr: &'a byc_instr::AssignConstExpr,
+        target: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        let intern = self.tcx.eval_paramless(instr.func)?;
+
+        let temp = self.arena.copy_from(
+            Some(self.tcx.value_interner.arena()),
+            intern,
+            CopyDepth::Deep,
+        );
+
+        self.arena.assign(temp, target);
+        self.arena.free(temp);
+
+        Ok([])
+    }
+
+    fn assign_tuple_type<'a>(
+        &mut self,
+        _instr: &'a byc_instr::AssignTupleType,
+        fields: &'a [ValuePlace],
+        assign_to: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        let ty = self.tcx.intern_tys(
+            &fields
+                .iter()
+                .rev()
+                .map(|place| {
+                    let Value::MetaType(ty) = self.arena.read(*place) else {
+                        unreachable!()
+                    };
+
+                    *ty
+                })
+                .collect::<Vec<_>>(),
+        );
+        let ty = self.tcx.intern_ty(Ty::Tuple(ty));
+
+        self.arena.write_terminal(assign_to, Value::MetaType(ty));
+
+        Ok([])
+    }
+
+    fn assign_copy_lhs_then_rhs<'a>(
+        &mut self,
+        _instr: &'a byc_instr::AssignCopyLhsThenRhs,
+        lhs: ValuePlace,
+        rhs: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        self.arena.assign(rhs, lhs);
+
+        Ok([])
+    }
+
+    fn assign_copy_rhs_then_lhs<'a>(
+        &mut self,
+        _instr: &'a byc_instr::AssignCopyRhsThenLhs,
+        rhs: ValuePlace,
+        lhs: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        self.arena.assign(rhs, lhs);
+
+        Ok([])
+    }
+
+    fn call<'a>(
+        &mut self,
+        _instr: &'a byc_instr::Call,
+        args: &'a [ValuePlace],
+        callee: ValuePlace,
+        return_to: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        let callee = self.arena.read(callee);
+
+        let Value::Func(callee) = callee else {
+            unreachable!()
+        };
+
+        match *callee {
+            AnyFuncValue::Intrinsic(callee) => {
+                let temp = callee.invoke(
+                    self.tcx,
+                    self.arena,
+                    &args.iter().copied().rev().collect::<Vec<_>>(),
+                )?;
+
+                self.arena.assign(temp, return_to);
+                self.arena.free(temp);
+            }
+            AnyFuncValue::Instance(callee) => {
+                self.call_stack.push((
+                    self.tcx.build_bytecode(callee)?.r(&self.tcx.session),
+                    0usize,
+                ));
+            }
+        }
+
+        Ok([])
+    }
+
+    fn instantiate<'a>(
+        &mut self,
+        _instr: &'a byc_instr::Instantiate,
+        args: &'a [ValuePlace],
+        target: ValuePlace,
+        write_to: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        let Value::MetaFunc(target) = self.arena.read(target) else {
+            unreachable!();
+        };
+
+        let args = args
+            .iter()
+            .map(|&v| self.tcx.value_interner.intern(self.arena, v))
+            .collect::<IndexVec<_, _>>();
+
+        let temp = match target {
+            AnyMetaFuncValue::Intrinsic(target) => {
+                let intern = self
+                    .tcx
+                    .eval_intrinsic_meta_fn(*target, &args.as_slice().raw)?;
+
+                self.arena.copy_from(
+                    Some(self.tcx.value_interner.arena()),
+                    intern,
+                    CopyDepth::Deep,
+                )
+            }
+            AnyMetaFuncValue::Instance(target) => {
+                let expected_count = target.func.r(&self.tcx.session).inner.generics.len();
+
+                if expected_count != args.len() {
+                    todo!();
+                }
+
+                let instance = self
+                    .tcx
+                    .intern_fn_instance_with(target.func, target.parent, args);
+
+                if target.func.r(&self.tcx.session).inner.params.is_some() {
+                    self.tcx.queue_wf(WfRequirement::TypeCheck(instance));
+
+                    self.arena
+                        .alloc(Value::Func(AnyFuncValue::Instance(instance)))
+                } else {
+                    let intern = self.tcx.eval_paramless(instance)?;
+
+                    self.arena.copy_from(
+                        Some(self.tcx.value_interner.arena()),
+                        intern,
+                        CopyDepth::Deep,
+                    )
+                }
+            }
+        };
+
+        self.arena.assign(temp, write_to);
+        self.arena.free(temp);
+
+        Ok([])
+    }
+
+    fn return_<'a>(
+        &mut self,
+        _instr: &'a byc_instr::Return,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        self.call_stack.pop().unwrap();
+
+        Ok([])
+    }
+
+    fn adt_aggregate_index<'a>(
+        &mut self,
+        instr: &'a byc_instr::AdtAggregateIndex,
+        target: ValuePlace,
+    ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
+        let Value::AdtAggregate { def: _, fields } = self.arena.read(target) else {
+            unreachable!();
+        };
+
+        Ok([fields[instr.idx as usize]])
+    }
+
+    fn tuple_index<'a>(
+        &mut self,
+        instr: &'a byc_instr::TupleIndex,
+        target: ValuePlace,
+    ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
+        let Value::Tuple(fields) = self.arena.read(target) else {
+            unreachable!();
+        };
+
+        Ok([fields[instr.idx as usize]])
+    }
+
+    fn adt_variant_unwrap<'a>(
+        &mut self,
+        _instr: &'a byc_instr::AdtVariantUnwrap,
+        target: ValuePlace,
+    ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
+        let Value::AdtVariant {
+            def: _,
+            variant: _,
+            inner,
+        } = self.arena.read(target)
+        else {
+            unreachable!();
+        };
+
+        Ok([*inner])
+    }
+
+    fn bin_op<'a>(
+        &mut self,
+        instr: &'a byc_instr::BinOp,
+        rhs: ValuePlace,
+        lhs: ValuePlace,
+        assign_to: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        match instr.op {
+            BinOpKind::Add => todo!(),
+            BinOpKind::Sub => todo!(),
+            BinOpKind::Mul => todo!(),
+            BinOpKind::Div => todo!(),
+            BinOpKind::Mod => todo!(),
+            BinOpKind::Pow => todo!(),
+            BinOpKind::BitAnd => todo!(),
+            BinOpKind::BitOr => todo!(),
+            BinOpKind::BitXor => todo!(),
+            BinOpKind::LogicalAnd => todo!(),
+            BinOpKind::LogicalOr => todo!(),
+            BinOpKind::Eq => todo!(),
+        }
+    }
+
+    fn jump<'a>(&mut self, instr: &'a byc_instr::Jump) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        self.set_next_ip(instr.addr);
+
+        Ok([])
+    }
+
+    fn jump_otherwise<'a>(
+        &mut self,
+        instr: &'a byc_instr::JumpOtherwise,
+        scrutinee: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        let Value::Scalar(ValueScalar::Bool(value)) = self.arena.read(scrutinee) else {
+            unreachable!();
+        };
+
+        if !value {
+            self.set_next_ip(instr.addr);
+        }
+
+        Ok([])
     }
 }

@@ -13,7 +13,7 @@ use crate::{
     symbol,
     typeck::syntax::{
         AnyName, Block, Expr, ExprAdt, ExprAdtField, ExprAdtMember, ExprKind, Func, FuncInner,
-        FuncParam, Generic, Local, OwnGenericIdx, Pat, PatKind,
+        FuncParam, Generic, Local, OwnGenericIdx, Pat, PatKind, Stmt,
     },
 };
 
@@ -543,19 +543,40 @@ impl<'a> LowerCtxt<'a> {
         for stmt in &block.stmts {
             match &stmt.kind {
                 AstStmtKind::Expr(expr) => {
-                    stmts.push(self.lower_expr(owner, owner_consts, expr));
+                    stmts.push(Stmt::Expr(self.lower_expr(owner, owner_consts, expr)));
                 }
                 AstStmtKind::Let { binding, init } => {
                     let init = self.lower_expr(owner, owner_consts, init);
                     let pat = self.lower_pat_defining_locals(owner, binding);
 
-                    stmts.push(Obj::new(
+                    fn push_live(pat: Obj<Pat>, stmts: &mut Vec<Stmt>, s: &Session) {
+                        match pat.r(s).kind {
+                            PatKind::Hole => {
+                                // (no-op)
+                            }
+                            PatKind::Name(local) => {
+                                stmts.push(Stmt::Live(local));
+                            }
+                            PatKind::Tuple(ref children) => {
+                                for child in children {
+                                    push_live(*child, stmts, s);
+                                }
+                            }
+                            PatKind::Error(_) => {
+                                // (no-op)
+                            }
+                        }
+                    }
+
+                    push_live(pat, &mut stmts, self.session);
+
+                    stmts.push(Stmt::Expr(Obj::new(
                         Expr {
                             span: stmt.span,
                             kind: ExprKind::Destructure(pat, init),
                         },
                         self.session,
-                    ));
+                    )));
                 }
                 _ => {}
             }

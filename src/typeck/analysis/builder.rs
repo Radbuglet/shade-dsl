@@ -6,11 +6,12 @@ use crate::{
     typeck::{
         analysis::{TypeCheckFacts, tcx::TyCtxt},
         syntax::{
-            AdtInstance, AnyFuncValue, AnyMetaFuncValue, AnyName, BycBinOp, BycFunction, BycInstr,
-            BycPopMode, Expr, ExprKind, FuncInstance, MetaFuncInstance, ScalarKind, Ty, Value,
-            ValueKind, ValueScalar,
+            AdtInstance, AnyFuncValue, AnyMetaFuncValue, AnyName, BycDepth, BycFunction, BycInstr,
+            Expr, ExprKind, FuncInstance, Local, MetaFuncInstance, Pat, PatKind, Stmt, Ty, Value,
+            ValueScalar, byc_instr,
         },
     },
+    utils::hash::FxHashMap,
 };
 
 impl TyCtxt {
@@ -28,12 +29,21 @@ impl TyCtxt {
                 tcx: self,
                 instance,
                 facts: facts.r(s),
+                locals: FxHashMap::default(),
                 instructions: Vec::new(),
+                depth: BycDepth::ZERO,
             };
 
-            let mut depth = 0;
-            ctxt.lower_expr_for_value(func.body.r(s), &mut depth);
-            ctxt.push([BycInstr::Return], &mut depth);
+            ctxt.scope_locals(|ctxt| {
+                ctxt.push(byc_instr::Tee {
+                    at: func.params.as_ref().map_or(0, |v| v.len() as u32) + 1,
+                });
+                ctxt.lower_expr(ExprLowerMode::Operand, func.body.r(s));
+                ctxt.push(byc_instr::Forget { count: 1 });
+                ctxt.push(byc_instr::Return {});
+            });
+
+            debug_assert_eq!(ctxt.depth, BycDepth::ZERO);
 
             Ok(ctxt.finish())
         })
@@ -44,51 +54,93 @@ struct BycBuilderCtxt<'a> {
     tcx: &'a TyCtxt,
     instance: Obj<FuncInstance>,
     facts: &'a TypeCheckFacts,
+    locals: FxHashMap<Obj<Local>, u32>,
     instructions: Vec<BycInstr>,
+    depth: BycDepth,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+enum ExprLowerMode {
+    /// Lower the expression to a place pushed to the top of the **place stack**.
+    Place,
+
+    /// Lower the expression as an assignment to the extant place on the top of the **place stack**.
+    Operand,
 }
 
 impl<'a> BycBuilderCtxt<'a> {
-    fn push(&mut self, instructions: impl IntoIterator<Item = BycInstr>, depth: &mut u32) {
-        self.instructions
-            .extend(instructions.into_iter().inspect(|instr| {
-                *depth = depth.checked_add_signed(instr.depth_delta()).unwrap();
-            }));
+    fn push(&mut self, instr: impl Into<BycInstr>) {
+        let instr = instr.into();
+        self.depth += instr.depth_delta();
+        self.instructions.push(instr);
     }
 
-    fn lower_expr_for_value(&mut self, expr: &Expr, depth: &mut u32) {
-        let mode = self.lower_expr_maybe_place(expr, depth);
+    fn scope_locals(&mut self, f: impl FnOnce(&mut Self)) {
+        let orig_locals = self.depth.local;
+        f(self);
 
-        if !mode.needs_free() {
-            self.push([BycInstr::ShallowCopy], depth);
+        if let Some(count) = (self.depth.local as u32).checked_sub(orig_locals as u32)
+            && count != 0
+        {
+            self.push(byc_instr::Deallocate { count });
         }
     }
 
-    /// Lowers an expression such that, once the sequence of instructions complete, a place pointing
-    /// to the result of the expression. Returns whether the value needs to be freed by the
-    /// consumer (i.e. whether it's a temporary or a place owned by a local).
-    #[must_use]
-    fn lower_expr_maybe_place(&mut self, expr: &Expr, depth: &mut u32) -> BycPopMode {
-        let old_depth = *depth;
-        let mode = self.lower_expr_maybe_place_inner(expr, depth);
-        debug_assert_eq!(
-            *depth,
-            old_depth + 1,
-            "the stack was broken by...\n{expr:#?}\nexpected just one place to be pushed to the stack but got {}",
-            (*depth as i32) - (old_depth as i32),
-        );
-        mode
+    fn adapt_place(&mut self, expected_mode: ExprLowerMode, f: impl FnOnce(&mut Self)) {
+        match expected_mode {
+            ExprLowerMode::Place => {
+                f(self);
+            }
+            ExprLowerMode::Operand => {
+                self.push(byc_instr::Allocate {});
+                self.push(byc_instr::Reference { at: 0 });
+                f(self);
+                self.push(byc_instr::AssignCopyRhsThenLhs {});
+                self.push(byc_instr::Forget { count: 1 });
+            }
+        }
     }
 
-    fn lower_expr_maybe_place_inner(&mut self, expr: &Expr, depth: &mut u32) -> BycPopMode {
+    fn adapt_operand(&mut self, expected_mode: ExprLowerMode, f: impl FnOnce(&mut Self)) {
+        match expected_mode {
+            ExprLowerMode::Place => {
+                self.push(byc_instr::Allocate {});
+                self.push(byc_instr::Reference { at: 0 });
+                f(self);
+            }
+            ExprLowerMode::Operand => {
+                f(self);
+            }
+        }
+    }
+
+    fn lower_expr(&mut self, expected_mode: ExprLowerMode, expr: &Expr) {
+        let old_depth = self.depth.place;
+        self.lower_expr_inner(expected_mode, expr);
+
+        let expected_delta = match expected_mode {
+            ExprLowerMode::Place => 1,
+            ExprLowerMode::Operand => 0,
+        };
+
+        debug_assert_eq!(
+            self.depth.place,
+            old_depth + expected_delta,
+            "stack broken while lowering with mode {expected_mode:?} (dt = {expected_delta})...\n{expr:#?}"
+        );
+    }
+
+    fn lower_expr_inner(&mut self, expected_mode: ExprLowerMode, expr: &Expr) {
         let s = &self.tcx.session;
 
         match &expr.kind {
             ExprKind::Name(name) => match name {
                 AnyName::Const(cst) => {
                     let cst = self.tcx.intern_fn_instance(*cst, Some(self.instance));
-                    self.push([BycInstr::ConstEval(cst)], depth);
 
-                    BycPopMode::PopAndFree
+                    self.adapt_operand(expected_mode, |this| {
+                        this.push(byc_instr::AssignConstExpr { func: cst });
+                    });
                 }
                 AnyName::Generic(generic) => {
                     let cst = self
@@ -96,154 +148,194 @@ impl<'a> BycBuilderCtxt<'a> {
                         .eval_generic_ensuring_conformance(*generic, self.instance)
                         .unwrap();
 
-                    self.push([BycInstr::AllocConst(cst)], depth);
-
-                    BycPopMode::PopAndFree
+                    self.adapt_operand(expected_mode, |this| {
+                        this.push(byc_instr::AssignConst { intern: cst });
+                    });
                 }
-                AnyName::Local(obj) => todo!(),
+                AnyName::Local(local) => {
+                    self.adapt_place(expected_mode, |this| {
+                        this.push(byc_instr::Reference {
+                            at: this.depth.local as u32 - this.locals[local],
+                        });
+                    });
+                }
             },
             ExprKind::Block(block) => {
-                for stmt in &block.r(s).stmts {
-                    let mode = self.lower_expr_maybe_place(stmt.r(s), depth);
-                    self.push([BycInstr::Pop(mode)], depth);
-                }
+                self.scope_locals(|this| {
+                    for stmt in &block.r(s).stmts {
+                        match stmt {
+                            Stmt::Live(local) => {
+                                this.push(byc_instr::Allocate {});
+                                this.locals.insert(*local, this.depth.local as u32);
+                            }
+                            Stmt::Expr(expr) => {
+                                this.scope_locals(|this| {
+                                    this.lower_expr(ExprLowerMode::Place, expr.r(s));
+                                    this.push(byc_instr::Forget { count: 1 });
+                                });
+                            }
+                        }
+                    }
 
-                if let Some(last_expr) = block.r(s).last_expr {
-                    self.lower_expr_for_value(last_expr.r(s), depth);
-
-                    BycPopMode::PopAndFree
-                } else {
-                    self.push([BycInstr::NewTuple(0)], depth);
-
-                    BycPopMode::PopAndFree
-                }
+                    if let Some(last_expr) = block.r(s).last_expr {
+                        this.lower_expr(expected_mode, last_expr.r(s))
+                    } else {
+                        this.adapt_operand(expected_mode, |this| {
+                            this.push(byc_instr::AssignEmptyTupleValue { fields: 0 });
+                        });
+                    }
+                });
             }
             ExprKind::Lit(lit) => {
-                self.push(
-                    [BycInstr::AllocConst(self.tcx.intern_from_scratch_arena(
-                        |arena| match lit {
-                            LiteralKind::BoolLit(v) => arena.alloc(Value {
-                                ty: self.tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
-                                kind: ValueKind::Scalar(ValueScalar::Bool(*v)),
-                            }),
-                            LiteralKind::StrLit(str) => arena.alloc(Value {
-                                ty: self.tcx.intern_ty(Ty::MetaString),
-                                kind: ValueKind::MetaString(str.value),
-                            }),
+                self.adapt_operand(expected_mode, |this| {
+                    this.push(byc_instr::AssignConst {
+                        intern: self.tcx.intern_from_scratch_arena(|arena| match lit {
+                            LiteralKind::BoolLit(v) => {
+                                arena.alloc(Value::Scalar(ValueScalar::Bool(*v)))
+                            }
+                            LiteralKind::StrLit(str) => arena.alloc(Value::MetaString(str.value)),
                             LiteralKind::CharLit(token_char_lit) => todo!(),
                             LiteralKind::NumLit(token_num_lit) => todo!(),
-                        },
-                    ))],
-                    depth,
-                );
-
-                BycPopMode::PopAndFree
+                        }),
+                    });
+                });
             }
             ExprKind::Intrinsic(id) => {
                 let intern = self.tcx.resolve_intrinsic(*id).unwrap();
 
-                self.push([BycInstr::AllocConst(intern)], depth);
-
-                BycPopMode::PopAndFree
+                self.adapt_operand(expected_mode, |this| {
+                    this.push(byc_instr::AssignConst { intern });
+                });
             }
             ExprKind::BinOp(op, lhs, rhs) => {
-                let rhs_mode = self.lower_expr_maybe_place(rhs.r(s), depth);
-                let lhs_mode = self.lower_expr_maybe_place(lhs.r(s), depth);
+                self.lower_expr(ExprLowerMode::Place, rhs.r(s));
+                self.lower_expr(ExprLowerMode::Place, lhs.r(s));
 
-                self.push(
-                    [BycInstr::BinOp(BycBinOp::Scalar(*op), rhs_mode, lhs_mode)],
-                    depth,
-                );
-
-                BycPopMode::PopAndFree
+                self.adapt_operand(expected_mode, |this| {
+                    this.push(byc_instr::BinOp { op: *op });
+                });
             }
             ExprKind::Call(callee, args) => {
-                self.lower_expr_for_value(callee.r(s), depth);
+                self.adapt_operand(expected_mode, |this| {
+                    this.lower_expr(ExprLowerMode::Place, callee.r(s));
 
-                for &arg in args {
-                    self.lower_expr_for_value(arg.r(s), depth);
-                }
+                    for &arg in args {
+                        this.lower_expr(ExprLowerMode::Place, arg.r(s));
+                    }
 
-                self.push(
-                    [
-                        BycInstr::CallStart(args.len() as u32),
-                        BycInstr::CallCleanup(args.len() as u32),
-                    ],
-                    depth,
-                );
-
-                BycPopMode::PopAndFree
+                    this.push(byc_instr::Call {
+                        args: args.len() as u32,
+                    });
+                    this.push(byc_instr::Forget {
+                        count: args.len() as u32 + 1,
+                    });
+                });
             }
-            ExprKind::Destructure(obj, obj1) => todo!(),
+            ExprKind::Destructure(pat, rhs) => {
+                self.lower_expr(ExprLowerMode::Place, rhs.r(s));
+                self.lower_pat_assigns(pat.r(s));
+
+                self.adapt_operand(expected_mode, |this| {
+                    this.push(byc_instr::AssignEmptyTupleValue { fields: 0 });
+                });
+            }
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(adt) => {
-                self.push(
-                    [BycInstr::AllocType(self.tcx.intern_ty(Ty::Adt(
-                        AdtInstance {
-                            owner: self.instance,
+                self.adapt_operand(expected_mode, |this| {
+                    this.push(byc_instr::AssignTypeLiteral {
+                        ty: this.tcx.intern_ty(Ty::Adt(AdtInstance {
+                            owner: this.instance,
                             adt: *adt,
-                        },
-                    )))],
-                    depth,
-                );
-
-                BycPopMode::PopAndFree
+                        })),
+                    });
+                });
             }
             ExprKind::NewTuple(fields) => {
-                for &field in fields {
-                    self.lower_expr_for_value(field.r(s), depth);
-                }
+                self.adapt_operand(expected_mode, |this| {
+                    this.push(byc_instr::AssignEmptyTupleValue {
+                        fields: fields.len() as u32,
+                    });
 
-                self.push([BycInstr::NewTuple(fields.len() as u32)], depth);
-
-                BycPopMode::PopAndFree
+                    for (idx, field) in fields.iter().enumerate() {
+                        this.push(byc_instr::Tee { at: 0 });
+                        this.push(byc_instr::TupleIndex { idx: idx as u32 });
+                        this.lower_expr(ExprLowerMode::Operand, field.r(s));
+                        this.push(byc_instr::Forget { count: 1 });
+                    }
+                });
             }
             ExprKind::NewTupleType(fields) => {
-                for &field in fields {
-                    self.lower_expr_for_value(field.r(s), depth);
-                }
+                self.adapt_operand(expected_mode, |this| {
+                    for &field in fields {
+                        this.lower_expr(ExprLowerMode::Place, field.r(s));
+                    }
 
-                self.push([BycInstr::NewTupleType(fields.len() as u32)], depth);
-
-                BycPopMode::PopAndFree
+                    this.push(byc_instr::AssignTupleType {
+                        fields: fields.len() as u32,
+                    });
+                });
             }
             ExprKind::Func(func) => {
                 let value = if func.r(s).inner.generics.is_empty() {
                     let instance = self.tcx.intern_fn_instance(*func, Some(self.instance));
-                    Value {
-                        ty: self.tcx.instance_fn_ty(instance).unwrap(),
-                        kind: ValueKind::Func(AnyFuncValue::Instance(instance)),
-                    }
+
+                    Value::Func(AnyFuncValue::Instance(instance))
                 } else {
-                    Value {
-                        ty: self.tcx.intern_ty(Ty::MetaFunc),
-                        kind: ValueKind::MetaFunc(AnyMetaFuncValue::Instance(MetaFuncInstance {
-                            func: *func,
-                            parent: Some(self.instance),
-                        })),
-                    }
+                    Value::MetaFunc(AnyMetaFuncValue::Instance(MetaFuncInstance {
+                        func: *func,
+                        parent: Some(self.instance),
+                    }))
                 };
 
                 let value = self
                     .tcx
                     .intern_from_scratch_arena(|arena| arena.alloc(value));
 
-                self.push([BycInstr::AllocConst(value)], depth);
-
-                BycPopMode::PopAndFree
+                self.adapt_operand(expected_mode, |this| {
+                    this.push(byc_instr::AssignConst { intern: value });
+                });
             }
             ExprKind::Instantiate(target, generics) => {
-                self.lower_expr_for_value(target.r(s), depth);
+                self.adapt_operand(expected_mode, |this| {
+                    this.lower_expr(ExprLowerMode::Place, target.r(s));
 
-                for generic in generics {
-                    self.lower_expr_for_value(generic.r(s), depth);
-                }
+                    for generic in generics {
+                        this.lower_expr(ExprLowerMode::Place, generic.r(s));
+                    }
 
-                self.push([BycInstr::Instantiate(generics.len() as u32)], depth);
-
-                BycPopMode::PopAndFree
+                    this.push(byc_instr::Instantiate {
+                        args: generics.len() as u32,
+                    });
+                });
             }
             ExprKind::Error(_) => unreachable!(),
+        }
+    }
+
+    // Input: the top of the stack points to the place to which we're writing and it must be popped
+    //  off by the time the emitted code finishes.
+    fn lower_pat_assigns(&mut self, pat: &Pat) {
+        match &pat.kind {
+            PatKind::Hole => {
+                self.push(byc_instr::Forget { count: 1 });
+            }
+            PatKind::Name(local) => {
+                self.push(byc_instr::Reference {
+                    at: self.depth.local as u32 - self.locals[local],
+                });
+                self.push(byc_instr::AssignCopyLhsThenRhs {});
+                self.push(byc_instr::Forget { count: 1 });
+            }
+            PatKind::Tuple(tup) => {
+                for (idx, pat) in tup.iter().enumerate() {
+                    self.push(byc_instr::Tee { at: 0 });
+                    self.push(byc_instr::TupleIndex { idx: idx as u32 });
+                    self.lower_pat_assigns(pat.r(&self.tcx.session));
+                }
+
+                self.push(byc_instr::Forget { count: 1 });
+            }
+            PatKind::Error(_) => unreachable!(),
         }
     }
 

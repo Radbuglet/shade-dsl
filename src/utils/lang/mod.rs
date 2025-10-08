@@ -6,3 +6,6 @@ pub use extension::*;
 
 mod match_pair;
 pub use match_pair::*;
+
+mod stack_ops;
+pub use stack_ops::*;

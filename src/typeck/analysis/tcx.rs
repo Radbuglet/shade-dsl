@@ -59,6 +59,7 @@ pub struct Queries {
     pub build_bytecode: Memo<Obj<FuncInstance>, Obj<BycFunction>>,
     pub eval_intrinsic_meta_fn: Memo<(MetaFuncIntrinsic, Vec<ValuePlace>), ValuePlace>,
     pub instance_signature: Memo<Obj<FuncInstance>, (TyList, Option<Obj<Ty>>)>,
+    pub canonical_intern_ty: Memo<ValuePlace, Obj<Ty>>,
 }
 
 impl Deref for TyCtxt {

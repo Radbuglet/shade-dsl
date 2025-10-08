@@ -142,8 +142,14 @@ pub enum ExprKind {
 #[derive(Debug)]
 pub struct Block {
     pub span: Span,
-    pub stmts: Vec<Obj<Expr>>,
+    pub stmts: Vec<Stmt>,
     pub last_expr: Option<Obj<Expr>>,
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum Stmt {
+    Expr(Obj<Expr>),
+    Live(Obj<Local>),
 }
 
 #[derive(Debug)]

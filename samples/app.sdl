@@ -7,7 +7,14 @@ const metatype = get_builtin_type("type");
 const whee = fn<T: metatype>(v: T) -> V {
     const V = type((metatype,));
 
-    (T,)
+    let foo = type(());
+    // let bar = foo;
+
+    // let (baz, maz) = (foo, bar);
+    // let baz_ = maz;
+    // let maz_ = baz_;
+
+    (type(()),)
 };
 
 const maz = whee.<bool>(faz);

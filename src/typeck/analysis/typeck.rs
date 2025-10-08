@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use hashbrown::hash_map;
 
 use crate::{
     base::{ErrorGuaranteed, arena::Obj},
@@ -6,10 +6,11 @@ use crate::{
     typeck::{
         analysis::{WfRequirement, tcx::TyCtxt},
         syntax::{
-            AdtInstance, AnyName, Expr, ExprKind, FuncInstance, Generic, ScalarKind, Ty, TyList,
-            ValuePlace,
+            AdtInstance, AnyName, Expr, ExprKind, FuncInstance, Generic, Local, Pat, PatKind,
+            ScalarKind, Stmt, Ty, TyList, ValuePlace, canonical_value_type,
         },
     },
+    utils::hash::FxHashMap,
 };
 
 impl TyCtxt {
@@ -35,16 +36,22 @@ impl TyCtxt {
             }
 
             // Determine the function's signature.
-            let (args, expected_ret) = self.instance_signature(instance)?;
+            let (expected_args, expected_ret) = self.instance_signature(instance)?;
 
             // Type-check the body with all expectations.
             let mut cx = CheckCx {
                 tcx: self,
                 instance,
-                args: args.r(s),
+                args: expected_args.r(s),
                 erroneous: None,
                 facts: TypeCheckFacts::default(),
             };
+
+            if let Some(params) = &func.params {
+                for (param, expected_arg) in params.iter().zip(expected_args.r(s)) {
+                    cx.check_pat(param.binding, *expected_arg);
+                }
+            }
 
             cx.check_expr(func.body, expected_ret);
 
@@ -108,7 +115,7 @@ impl TyCtxt {
         }
 
         let actual_value = instance.generics[generic.idx];
-        let actual_ty = self.value_interner.read(actual_value).ty;
+        let actual_ty = self.canonical_intern_value_type(actual_value);
 
         let expected_ty = self
             .eval_paramless_for_meta_ty(self.intern_fn_instance(generic.ty, Some(instance_obj)))?;
@@ -118,6 +125,15 @@ impl TyCtxt {
         }
 
         Ok(actual_value)
+    }
+
+    pub fn canonical_intern_value_type(&self, ptr: ValuePlace) -> Obj<Ty> {
+        self.queries
+            .canonical_intern_ty
+            .compute(ptr, |_| {
+                Ok(canonical_value_type(self, self.value_interner.arena(), ptr))
+            })
+            .unwrap()
     }
 }
 
@@ -133,6 +149,42 @@ impl CheckCx<'_> {
     fn err(&mut self, err: ErrorGuaranteed) -> Obj<Ty> {
         self.erroneous = Some(err);
         self.tcx.intern_ty(Ty::Error(err))
+    }
+
+    fn check_pat(&mut self, pat: Obj<Pat>, ty: Obj<Ty>) {
+        let s = &self.tcx.session;
+
+        match &pat.r(s).kind {
+            PatKind::Hole => {
+                // (trivially satisfied)
+            }
+            PatKind::Name(local) => match self.facts.local_types.entry(*local) {
+                hash_map::Entry::Occupied(entry) => {
+                    if *entry.get() != ty {
+                        todo!()
+                    }
+                }
+                hash_map::Entry::Vacant(entry) => {
+                    entry.insert(ty);
+                }
+            },
+            PatKind::Tuple(pat) => {
+                let Ty::Tuple(ty) = ty.r(s) else {
+                    todo!();
+                };
+
+                if pat.len() != ty.r(s).len() {
+                    todo!();
+                }
+
+                for (&pat, &ty) in pat.iter().zip(ty.r(s)) {
+                    self.check_pat(pat, ty);
+                }
+            }
+            PatKind::Error(err) => {
+                self.erroneous = Some(*err);
+            }
+        }
     }
 
     fn check_expr(&mut self, expr: Obj<Expr>, expected_ty: Option<Obj<Ty>>) -> Obj<Ty> {
@@ -155,18 +207,31 @@ impl CheckCx<'_> {
                         .tcx
                         .eval_generic_ensuring_conformance(*ty, self.instance)
                     {
-                        Ok(value) => self.tcx.value_interner.read(value).ty,
+                        Ok(value) => self.tcx.canonical_intern_value_type(value),
                         Err(err) => self.err(err),
                     }
                 }
-                AnyName::Local(local) => todo!(),
+                AnyName::Local(local) => {
+                    let Some(ty) = self.facts.local_types.get(local) else {
+                        todo!();
+                    };
+
+                    *ty
+                }
             },
             ExprKind::Block(block) => {
                 for stmt in &block.r(s).stmts {
-                    self.check_expr(
-                        *stmt,
-                        Some(self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))),
-                    );
+                    match stmt {
+                        Stmt::Live(_) => {
+                            // (nothing to do)
+                        }
+                        Stmt::Expr(expr) => {
+                            self.check_expr(
+                                *expr,
+                                Some(self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))),
+                            );
+                        }
+                    }
                 }
 
                 if let Some(last_expr) = block.r(s).last_expr {
@@ -199,10 +264,20 @@ impl CheckCx<'_> {
 
                 *expected_rv
             }
-            ExprKind::Destructure(obj, obj1) => todo!(),
+            ExprKind::Destructure(pat, init) => {
+                let init_ty = self.check_expr(*init, None);
+                self.check_pat(*pat, init_ty);
+
+                self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))
+            }
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(adt) => {
                 self.tcx.queue_wf(WfRequirement::ValidateAdt(AdtInstance {
+                    owner: self.instance,
+                    adt: *adt,
+                }));
+
+                let type_represented = self.tcx.intern_ty(Ty::Adt(AdtInstance {
                     owner: self.instance,
                     adt: *adt,
                 }));
@@ -237,7 +312,7 @@ impl CheckCx<'_> {
                     todo!();
                 };
 
-                self.tcx.value_interner.read(intrinsic).ty
+                self.tcx.canonical_intern_value_type(intrinsic)
             }
             ExprKind::NewTuple(fields) => {
                 let tys = fields
@@ -272,4 +347,5 @@ impl CheckCx<'_> {
 #[derive(Debug, Default)]
 pub struct TypeCheckFacts {
     pub expr_types: FxHashMap<Obj<Expr>, Obj<Ty>>,
+    pub local_types: FxHashMap<Obj<Local>, Obj<Ty>>,
 }

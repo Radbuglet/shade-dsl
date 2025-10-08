@@ -9,6 +9,3 @@ pub use value_defs::*;
 
 mod value_alloc;
 pub use value_alloc::*;
-
-mod value_ops;
-pub use value_ops::*;

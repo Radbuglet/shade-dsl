@@ -15,10 +15,13 @@ use crate::{
         analysis::{
             IsoSccPortrait, LabelledDiGraph, LabelledSuccessor, SccNode, portrait_keys, tarjan,
         },
-        arena::LateInit,
+        arena::{LateInit, Obj},
     },
     match_pair,
-    typeck::syntax::{Value, ValueKind, ValuePlace},
+    typeck::{
+        analysis::TyCtxt,
+        syntax::{AnyFuncValue, ScalarKind, Ty, Value, ValuePlace, ValueScalar},
+    },
     utils::hash::{FxHashMap, FxHashSet, FxHasher, hash_map},
 };
 
@@ -115,7 +118,7 @@ impl ValueArena {
                 continue;
             };
 
-            if matches!(value.kind, ValueKind::Pointer(_)) {
+            if matches!(value, Value::Pointer(_)) {
                 // (do not follow)
                 continue;
             }
@@ -139,24 +142,31 @@ impl ValueArena {
         self.arena[ptr.0].as_ref().expect("place never initialized")
     }
 
-    pub fn write(&mut self, ptr: ValuePlace, value: Value) {
+    pub fn write_unchecked(&mut self, ptr: ValuePlace, value: Value) {
         self.arena[ptr.0] = Some(value);
     }
 
-    pub fn mutate(&mut self, ptr: ValuePlace) -> &mut Value {
-        self.arena[ptr.0].as_mut().expect("place never initialized")
+    #[expect(clippy::diverging_sub_expression)]
+    pub fn write_terminal(&mut self, ptr: ValuePlace, value: Value) {
+        #[cfg(debug_assertions)]
+        cbit::cbit!(for _ in follow_node_ref(&value) {
+            panic!("value is not terminal");
+        });
+
+        self.write_unchecked(ptr, value);
     }
 
     pub fn assign(&mut self, from: ValuePlace, to: ValuePlace) {
         let mut stack = vec![(from, to)];
 
         while let Some((from_handle, to_handle)) = stack.pop() {
-            let (Some(Some(from)), Some(to)) = self.arena.get2_mut(from_handle.0, to_handle.0)
-            else {
+            let (Some(from), Some(to)) = self.arena.get2_mut(from_handle.0, to_handle.0) else {
                 unreachable!()
             };
 
-            let from = &*from;
+            let Some(from) = &*from else {
+                continue;
+            };
 
             let Some(to) = to else {
                 self.copy_from_with_initial_root(
@@ -168,42 +178,48 @@ impl ValueArena {
                 continue;
             };
 
-            debug_assert_eq!(from.ty, to.ty);
-
-            match_pair!((&from.kind, &mut to.kind) => {
+            match_pair!((from, to) => {
                 // External references are interned so terminal copies are okay.
-                (ValueKind::MetaType(from), ValueKind::MetaType(to)) => {
+                (Value::MetaType(from), Value::MetaType(to)) => {
                     *to = *from;
                 }
-                (ValueKind::MetaFunc(from), ValueKind::MetaFunc(to)) => {
+                (Value::MetaFunc(from), Value::MetaFunc(to)) => {
                     *to = *from;
                 }
-                (ValueKind::MetaString(from), ValueKind::MetaString(to)) => {
+                (Value::MetaString(from), Value::MetaString(to)) => {
                     *to = *from;
                 }
-                (ValueKind::Func(from), ValueKind::Func(to)) => {
+                (Value::Func(from), Value::Func(to)) => {
                     *to = *from;
                 }
 
                 // Pointers are raw pointers. Just copy the address.
-                (ValueKind::Pointer(from), ValueKind::Pointer(to)) => {
+                (Value::Pointer(from), Value::Pointer(to)) => {
                     *to = *from;
                 }
 
                 // These are naturally terminal.
-                (ValueKind::Scalar(from), ValueKind::Scalar(to)) => {
+                (Value::Scalar(from), Value::Scalar(to)) => {
                     *to = *from;
                 }
 
                 // Here are the actually interesting cases.
-                (ValueKind::Tuple(from), ValueKind::Tuple(to))
-                | (ValueKind::Array(from), ValueKind::Array(to))
-                | (ValueKind::AdtAggregate(from), ValueKind::AdtAggregate(to)) => {
+                (Value::Tuple(from), Value::Tuple(to))
+                | (Value::Array(from), Value::Array(to)) => {
                     for (&from, &mut to) in from.iter().zip(to) {
                         stack.push((from, to));
                     }
                 }
-                (ValueKind::MetaArray(from), ValueKind::MetaArray(to)) => {
+                (
+                    Value::AdtAggregate { def: from_def, fields: from },
+                    Value::AdtAggregate { def: to_def, fields: to },
+                ) => {
+                    debug_assert_eq!(from_def, to_def);
+                    for (&from, &mut to) in from.iter().zip(to) {
+                        stack.push((from, to));
+                    }
+                }
+                (Value::MetaArray(from), Value::MetaArray(to)) => {
                     if from.len() == to.len() {
                         for (&from, &mut to) in from.iter().zip(to) {
                             stack.push((from, to));
@@ -220,9 +236,7 @@ impl ValueArena {
                             *elem = self.copy(*elem, CopyDepth::Shallow);
                         }
 
-                        let ValueKind::MetaArray(to) =
-                            &mut self.arena[to_handle.0].as_mut().unwrap().kind
-                        else {
+                        let Some(Value::MetaArray(to)) = &mut self.arena[to_handle.0] else {
                             unreachable!()
                         };
 
@@ -230,8 +244,8 @@ impl ValueArena {
                     }
                 }
                 (
-                    ValueKind::AdtVariant(from_variant, from_pointee),
-                    ValueKind::AdtVariant(to_variant, to_pointee),
+                    Value::AdtVariant { def: from_def, variant: from_variant, inner: from_pointee },
+                    Value::AdtVariant { def: to_def, variant: to_variant, inner: to_pointee },
                 ) => {
                     if from_variant == to_variant {
                         stack.push((*from_pointee, *to_pointee));
@@ -245,9 +259,7 @@ impl ValueArena {
 
                         let new_to_pointee = self.copy(from_pointee, CopyDepth::Shallow);
 
-                        let ValueKind::Pointer(to_pointee) =
-                            &mut self.arena[to_handle.0].as_mut().unwrap().kind
-                        else {
+                        let Some(Value::Pointer(to_pointee)) = &mut self.arena[to_handle.0] else {
                             unreachable!()
                         };
 
@@ -291,7 +303,7 @@ impl ValueArena {
                 .map_or_else(|| self.read(from), |other| other.read(from))
                 .clone();
 
-            if depth.is_deep() || !matches!(value.kind, ValueKind::Pointer(_)) {
+            if depth.is_deep() || !matches!(value, Value::Pointer(_)) {
                 cbit::cbit!(for edge in follow_node_mut(&mut value) {
                     let edge_from = *edge;
                     *edge = *mapping.entry(edge_from).or_insert_with(|| {
@@ -302,24 +314,23 @@ impl ValueArena {
                 });
             }
 
-            self.write(to, value);
+            self.write_unchecked(to, value);
         }
     }
-}
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub enum CopyDepth {
-    Deep,
-    Shallow,
-}
+    pub fn init_tuple(&mut self, ptr: ValuePlace, fields: u32) {
+        if let Some(existing) = &self.arena[ptr.0] {
+            let Value::Tuple(existing) = existing else {
+                unreachable!();
+            };
 
-impl CopyDepth {
-    pub fn is_deep(self) -> bool {
-        matches!(self, Self::Deep)
-    }
+            assert_eq!(existing.len(), fields as usize);
+            return;
+        }
 
-    pub fn is_shallow(self) -> bool {
-        matches!(self, Self::Shallow)
+        let inner = Value::Tuple((0..fields).map(|_| self.reserve()).collect());
+
+        self.write_unchecked(ptr, inner);
     }
 }
 
@@ -340,6 +351,22 @@ impl LabelledDiGraph for ValueArena {
     ) -> ControlFlow<B> {
         let _ = f;
         follow_node_ref(self.read(node), |node| f(LabelledSuccessor::Node(node)))
+    }
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum CopyDepth {
+    Deep,
+    Shallow,
+}
+
+impl CopyDepth {
+    pub fn is_deep(self) -> bool {
+        matches!(self, Self::Deep)
+    }
+
+    pub fn is_shallow(self) -> bool {
+        matches!(self, Self::Shallow)
     }
 }
 
@@ -526,84 +553,89 @@ impl ValueInterner {
 
 // === Value Introspection === //
 
-fn hash_value_terminal(value: &Value, state: &mut impl hash::Hasher) {
-    value.ty.hash(state);
+pub fn hash_value_terminal(value: &Value, state: &mut impl hash::Hasher) {
+    mem::discriminant(value).hash(state);
 
-    mem::discriminant(&value.kind).hash(state);
-
-    match &value.kind {
-        ValueKind::MetaType(ty) => ty.hash(state),
-        ValueKind::MetaFunc(func) => {
+    match value {
+        Value::MetaType(ty) => ty.hash(state),
+        Value::MetaFunc(func) => {
             func.hash(state);
         }
-        ValueKind::MetaArray(list) => {
+        Value::MetaArray(list) => {
             list.len().hash(state);
         }
-        ValueKind::MetaString(sym) => {
+        Value::MetaString(sym) => {
             sym.hash(state);
         }
-        ValueKind::Pointer(_) => {
+        Value::Pointer(_) => {
             // (nothing)
         }
-        ValueKind::Func(func) => {
+        Value::Func(func) => {
             func.hash(state);
         }
-        ValueKind::Scalar(scalar) => {
+        Value::Scalar(scalar) => {
             scalar.hash(state);
         }
-        ValueKind::Tuple(list) => {
+        Value::Tuple(list) => {
             state.write_usize(list.len());
         }
-        ValueKind::Array(list) => {
+        Value::Array(list) => {
             state.write_usize(list.len());
         }
-        ValueKind::AdtAggregate(_) => {
-            // (nothing)
+        Value::AdtAggregate { def, fields: _ } => {
+            def.hash(state);
         }
-        ValueKind::AdtVariant(id, _) => {
+        Value::AdtVariant {
+            def,
+            variant: id,
+            inner: _,
+        } => {
+            def.hash(state);
             id.hash(state);
         }
     }
 }
 
-fn eq_value_terminal(lhs: &Value, rhs: &Value) -> bool {
-    if lhs.ty != rhs.ty {
-        return false;
-    }
-
-    match_pair!((&lhs.kind, &rhs.kind) => {
-        (ValueKind::MetaType(lhs), ValueKind::MetaType(rhs)) => {
+pub fn eq_value_terminal(lhs: &Value, rhs: &Value) -> bool {
+    match_pair!((lhs, rhs) => {
+        (Value::MetaType(lhs), Value::MetaType(rhs)) => {
             lhs == rhs
         }
-        (ValueKind::MetaFunc(lhs), ValueKind::MetaFunc(rhs)) => {
+        (Value::MetaFunc(lhs), Value::MetaFunc(rhs)) => {
             lhs == rhs
         }
-        (ValueKind::MetaArray(lhs), ValueKind::MetaArray(rhs)) => {
+        (Value::MetaArray(lhs), Value::MetaArray(rhs)) => {
             lhs.len() == rhs.len()
         }
-        (ValueKind::MetaString(lhs), ValueKind::MetaString(rhs)) => {
+        (Value::MetaString(lhs), Value::MetaString(rhs)) => {
             lhs == rhs
         }
-        (ValueKind::Pointer(_lhs_heap), ValueKind::Pointer(_rhs_heap)) => {
+        (Value::Pointer(_lhs_heap), Value::Pointer(_rhs_heap)) => {
             true
         }
-        (ValueKind::Func(lhs), ValueKind::Func(rhs)) => {
+        (Value::Func(lhs), Value::Func(rhs)) => {
             lhs == rhs
         }
-        (ValueKind::Scalar(lhs), ValueKind::Scalar(rhs)) => {
+        (Value::Scalar(lhs), Value::Scalar(rhs)) => {
             lhs == rhs
         }
-        (ValueKind::Tuple(lhs), ValueKind::Tuple(rhs)) => {
+        (Value::Tuple(lhs), Value::Tuple(rhs)) => {
             lhs.len() == rhs.len()
         }
-        (ValueKind::Array(lhs), ValueKind::Array(rhs)) => {
+        (Value::Array(lhs), Value::Array(rhs)) => {
             lhs.len() == rhs.len()
         }
-        (ValueKind::AdtAggregate(_), ValueKind::AdtAggregate(_)) => {
-            true
+        (
+            Value::AdtAggregate { def: lhs_def, fields: _ },
+            Value::AdtAggregate { def: rhs_def, fields: _ },
+        ) => {
+            lhs_def == rhs_def
         }
-        (ValueKind::AdtVariant(lhs, _), ValueKind::AdtVariant(rhs, _)) => {
-            lhs == rhs
+        (
+            Value::AdtVariant { def: lhs_def, variant: lhs_variant, inner: _ },
+            Value::AdtVariant { def: rhs_def, variant: rhs_variant, inner: _ },
+        ) => {
+            lhs_def == rhs_def && lhs_variant == rhs_variant
         }
         _ => {
             false
@@ -616,22 +648,30 @@ macro_rules! follow_node {
         let mut f = $f;
 
         match $value {
-            ValueKind::Tuple(values)
-            | ValueKind::Array(values)
-            | ValueKind::MetaArray(values)
-            | ValueKind::AdtAggregate(values) => {
+            Value::Tuple(values)
+            | Value::Array(values)
+            | Value::MetaArray(values)
+            | Value::AdtAggregate {
+                def: _,
+                fields: values,
+            } => {
                 for value in values {
                     f(value)?;
                 }
             }
-            ValueKind::Pointer(value) | ValueKind::AdtVariant(_, value) => {
+            Value::Pointer(value)
+            | Value::AdtVariant {
+                def: _,
+                variant: _,
+                inner: value,
+            } => {
                 f(value)?;
             }
-            ValueKind::MetaType(_)
-            | ValueKind::MetaFunc(_)
-            | ValueKind::MetaString(_)
-            | ValueKind::Func(_)
-            | ValueKind::Scalar(_) => {
+            Value::MetaType(_)
+            | Value::MetaFunc(_)
+            | Value::MetaString(_)
+            | Value::Func(_)
+            | Value::Scalar(_) => {
                 // (nothing to follow)
             }
         }
@@ -644,12 +684,89 @@ pub fn follow_node_ref<B>(
     value: &Value,
     mut f: impl FnMut(ValuePlace) -> ControlFlow<B>,
 ) -> ControlFlow<B> {
-    follow_node!(&value.kind, |v: &ValuePlace| f(*v))
+    follow_node!(value, |v: &ValuePlace| f(*v))
 }
 
 pub fn follow_node_mut<B>(
     value: &mut Value,
     f: impl FnMut(&mut ValuePlace) -> ControlFlow<B>,
 ) -> ControlFlow<B> {
-    follow_node!(&mut value.kind, f)
+    follow_node!(value, f)
+}
+
+pub fn canonical_value_type(tcx: &TyCtxt, arena: &impl ValueArenaLike, ptr: ValuePlace) -> Obj<Ty> {
+    let mut visit_set = FxHashSet::default();
+
+    fn inner(
+        tcx: &TyCtxt,
+        arena: &impl ValueArenaLike,
+        visit_set: &mut FxHashSet<ValuePlace>,
+        ptr: ValuePlace,
+    ) -> Obj<Ty> {
+        if !visit_set.insert(ptr) {
+            // In case someone abuses magic to get a recursive type. This should not trigger in the
+            // general case.
+            return tcx.intern_ty(Ty::Unknown);
+        }
+
+        match arena.read(ptr) {
+            Value::MetaType(_) => tcx.intern_ty(Ty::MetaTy),
+            Value::MetaFunc(_) => tcx.intern_ty(Ty::MetaFunc),
+            Value::MetaArray(values) => {
+                tcx.intern_ty(Ty::MetaArray(if let Some(ptr) = values.first() {
+                    inner(tcx, arena, visit_set, *ptr)
+                } else {
+                    tcx.intern_ty(Ty::Never)
+                }))
+            }
+            Value::MetaString(_) => tcx.intern_ty(Ty::MetaString),
+            Value::Pointer(ptr) => tcx.intern_ty(Ty::Pointer(inner(tcx, arena, visit_set, *ptr))),
+            Value::Func(func) => match func {
+                AnyFuncValue::Intrinsic(instance) => instance.fn_ty(&tcx.session),
+                AnyFuncValue::Instance(instance) => tcx.instance_fn_ty(*instance).unwrap(),
+            },
+            Value::Scalar(scalar) => tcx.intern_ty(Ty::Scalar(match scalar {
+                ValueScalar::Bool(_) => ScalarKind::Bool,
+                ValueScalar::Char(_) => ScalarKind::Char,
+                ValueScalar::U8(_) => ScalarKind::U8,
+                ValueScalar::I8(_) => ScalarKind::I8,
+                ValueScalar::U16(_) => ScalarKind::U16,
+                ValueScalar::I16(_) => ScalarKind::I16,
+                ValueScalar::U32(_) => ScalarKind::U32,
+                ValueScalar::I32(_) => ScalarKind::I32,
+                ValueScalar::U64(_) => ScalarKind::U64,
+                ValueScalar::I64(_) => ScalarKind::I64,
+                ValueScalar::U128(_) => ScalarKind::U128,
+                ValueScalar::I128(_) => ScalarKind::I128,
+                ValueScalar::F32(_) => ScalarKind::F32,
+                ValueScalar::F64(_) => ScalarKind::F64,
+                ValueScalar::USize(_) => ScalarKind::USize,
+                ValueScalar::ISize(_) => ScalarKind::ISize,
+            })),
+            Value::Tuple(fields) => tcx.intern_ty(Ty::Tuple(
+                tcx.intern_tys(
+                    &fields
+                        .iter()
+                        .map(|ptr| inner(tcx, arena, visit_set, *ptr))
+                        .collect::<Vec<_>>(),
+                ),
+            )),
+            Value::Array(values) => tcx.intern_ty(Ty::Array(
+                if let Some(ptr) = values.first() {
+                    inner(tcx, arena, visit_set, *ptr)
+                } else {
+                    tcx.intern_ty(Ty::Never)
+                },
+                values.len(),
+            )),
+            Value::AdtAggregate { def, fields: _ }
+            | Value::AdtVariant {
+                def,
+                variant: _,
+                inner: _,
+            } => tcx.intern_ty(Ty::Adt(*def)),
+        }
+    }
+
+    inner(tcx, arena, &mut visit_set, ptr)
 }
