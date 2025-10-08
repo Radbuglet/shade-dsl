@@ -53,6 +53,8 @@ impl fmt::Debug for ValuePlace {
             let arena = unsafe { arena.as_ref() };
 
             f.write_str(": ")?;
+
+            // FIXME: This doesn't handle mixed arenas (e.g. value and intern) very well.
             arena.read(*self).fmt(f)?;
         }
 

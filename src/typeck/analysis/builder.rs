@@ -92,11 +92,8 @@ impl<'a> BycBuilderCtxt<'a> {
                 f(self);
             }
             ExprLowerMode::Operand => {
-                self.push(byc_instr::Allocate {});
-                self.push(byc_instr::Reference { at: 0 });
                 f(self);
                 self.push(byc_instr::AssignCopyRhsThenLhs {});
-                self.push(byc_instr::Forget { count: 1 });
             }
         }
     }

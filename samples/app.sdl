@@ -8,13 +8,13 @@ const whee = fn<T: metatype>(v: T) -> V {
     const V = type((metatype,));
 
     let foo = type(());
-    // let bar = foo;
+    let bar = foo;
 
-    // let (baz, maz) = (foo, bar);
-    // let baz_ = maz;
-    // let maz_ = baz_;
+    let (baz, maz) = (foo, bar);
+    let baz_ = maz;
+    let maz_ = baz_;
 
-    (type(()),)
+    (maz_,)
 };
 
 const maz = whee.<bool>(faz);
