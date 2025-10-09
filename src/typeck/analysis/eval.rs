@@ -259,7 +259,6 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         let ty = self.tcx.intern_tys(
             &fields
                 .iter()
-                .rev()
                 .map(|place| {
                     let Value::MetaType(ty) = self.arena.read(*place) else {
                         unreachable!()

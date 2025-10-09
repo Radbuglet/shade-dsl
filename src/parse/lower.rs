@@ -13,7 +13,7 @@ use crate::{
     symbol,
     typeck::syntax::{
         AnyName, Block, Expr, ExprAdt, ExprAdtField, ExprAdtMember, ExprKind, Func, FuncInner,
-        FuncParam, Generic, Local, OwnGenericIdx, Pat, PatKind, Stmt,
+        FuncParam, Generic, Local, OwnGenericIdx, Pat, PatKind, Stmt, visit_named_places,
     },
 };
 
@@ -549,26 +549,9 @@ impl<'a> LowerCtxt<'a> {
                     let init = self.lower_expr(owner, owner_consts, init);
                     let pat = self.lower_pat_defining_locals(owner, binding);
 
-                    fn push_live(pat: Obj<Pat>, stmts: &mut Vec<Stmt>, s: &Session) {
-                        match pat.r(s).kind {
-                            PatKind::Hole => {
-                                // (no-op)
-                            }
-                            PatKind::Name(local) => {
-                                stmts.push(Stmt::Live(local));
-                            }
-                            PatKind::Tuple(ref children) => {
-                                for child in children {
-                                    push_live(*child, stmts, s);
-                                }
-                            }
-                            PatKind::Error(_) => {
-                                // (no-op)
-                            }
-                        }
-                    }
-
-                    push_live(pat, &mut stmts, self.session);
+                    cbit::cbit!(for local in visit_named_places(pat, &self.session) {
+                        stmts.push(Stmt::Live(local));
+                    });
 
                     stmts.push(Stmt::Expr(Obj::new(
                         Expr {

@@ -335,7 +335,10 @@ impl CheckCx<'_> {
         if let Some(expected_ty) = expected_ty
             && actual_ty != expected_ty
         {
-            todo!();
+            todo!(
+                "type mismatch at {} in {expr:#?}: {expected_ty:#?}, {actual_ty:#?}",
+                expr.r(s).span
+            );
         }
 
         self.facts.expr_types.insert(expr, actual_ty);

@@ -685,9 +685,7 @@ fn parse_ty_pratt(p: P, min_bp: Bp) -> AstExpr {
 
         // Parse a parenthesis or tuple type constructor.
         if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
-            let res = parse_comma_group(&mut p.enter(&paren), |p| {
-                parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
-            });
+            let res = parse_comma_group(&mut p.enter(&paren), parse_ty);
 
             break 'seed build_expr(
                 match res.into_singleton() {

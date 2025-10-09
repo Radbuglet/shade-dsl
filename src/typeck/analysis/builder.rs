@@ -8,7 +8,7 @@ use crate::{
         syntax::{
             AdtInstance, AnyFuncValue, AnyMetaFuncValue, AnyName, BycDepth, BycFunction, BycInstr,
             Expr, ExprKind, FuncInstance, Local, MetaFuncInstance, Pat, PatKind, Stmt, Ty, Value,
-            ValueScalar, byc_instr,
+            ValueScalar, byc_instr, visit_named_places,
         },
     },
     utils::hash::FxHashMap,
@@ -35,10 +35,24 @@ impl TyCtxt {
             };
 
             ctxt.scope_locals(|ctxt| {
+                let params = func.params.as_ref().map_or(&[][..], |v| v.as_slice());
+
+                for (arg_idx, arg) in params.iter().enumerate() {
+                    cbit::cbit!(
+                        for local in visit_named_places(arg.binding, &self.session) {
+                            ctxt.push(byc_instr::Allocate {});
+                            ctxt.locals.insert(local, ctxt.depth.local as u32);
+                        }
+                    );
+
+                    ctxt.push(byc_instr::Tee { at: arg_idx as u32 });
+                    ctxt.lower_pat_assigns(arg.binding.r(s));
+                }
+
                 ctxt.push(byc_instr::Tee {
-                    at: func.params.as_ref().map_or(0, |v| v.len() as u32) + 1,
+                    at: params.len() as u32 + 1,
                 });
-                ctxt.lower_expr(ExprLowerMode::Operand, func.body.r(s));
+                ctxt.lower_expr_for_operand(func.body.r(s));
                 ctxt.push(byc_instr::Forget { count: 1 });
                 ctxt.push(byc_instr::Return {});
             });
@@ -111,20 +125,29 @@ impl<'a> BycBuilderCtxt<'a> {
         }
     }
 
-    fn lower_expr(&mut self, expected_mode: ExprLowerMode, expr: &Expr) {
+    fn lower_expr_for_direct(&mut self, expr: &Expr) {
         let old_depth = self.depth.place;
-        self.lower_expr_inner(expected_mode, expr);
-
-        let expected_delta = match expected_mode {
-            ExprLowerMode::Place => 1,
-            ExprLowerMode::Operand => 0,
-        };
-
+        self.lower_expr_inner(ExprLowerMode::Place, expr);
         debug_assert_eq!(
             self.depth.place,
-            old_depth + expected_delta,
-            "stack broken while lowering with mode {expected_mode:?} (dt = {expected_delta})...\n{expr:#?}"
+            old_depth + 1,
+            "stack broken while lowering for operand (dt = 1)...\n{expr:#?}"
         );
+    }
+
+    fn lower_expr_for_operand(&mut self, expr: &Expr) {
+        let old_depth = self.depth.place;
+        self.lower_expr_inner(ExprLowerMode::Operand, expr);
+        debug_assert_eq!(
+            self.depth.place, old_depth,
+            "stack broken while lowering for operand (dt = 0)...\n{expr:#?}"
+        );
+    }
+
+    fn lower_expr_for_copy(&mut self, expr: &Expr) {
+        self.push(byc_instr::Allocate {});
+        self.push(byc_instr::Reference { at: 0 });
+        self.lower_expr_for_operand(expr);
     }
 
     fn lower_expr_inner(&mut self, expected_mode: ExprLowerMode, expr: &Expr) {
@@ -167,7 +190,7 @@ impl<'a> BycBuilderCtxt<'a> {
                             }
                             Stmt::Expr(expr) => {
                                 this.scope_locals(|this| {
-                                    this.lower_expr(ExprLowerMode::Place, expr.r(s));
+                                    this.lower_expr_for_direct(expr.r(s));
                                     this.push(byc_instr::Forget { count: 1 });
                                 });
                             }
@@ -175,7 +198,10 @@ impl<'a> BycBuilderCtxt<'a> {
                     }
 
                     if let Some(last_expr) = block.r(s).last_expr {
-                        this.lower_expr(expected_mode, last_expr.r(s))
+                        match expected_mode {
+                            ExprLowerMode::Place => this.lower_expr_for_direct(last_expr.r(s)),
+                            ExprLowerMode::Operand => this.lower_expr_for_operand(last_expr.r(s)),
+                        }
                     } else {
                         this.adapt_operand(expected_mode, |this| {
                             this.push(byc_instr::AssignEmptyTupleValue { fields: 0 });
@@ -205,8 +231,8 @@ impl<'a> BycBuilderCtxt<'a> {
                 });
             }
             ExprKind::BinOp(op, lhs, rhs) => {
-                self.lower_expr(ExprLowerMode::Place, rhs.r(s));
-                self.lower_expr(ExprLowerMode::Place, lhs.r(s));
+                self.lower_expr_for_direct(rhs.r(s));
+                self.lower_expr_for_direct(lhs.r(s));
 
                 self.adapt_operand(expected_mode, |this| {
                     this.push(byc_instr::BinOp { op: *op });
@@ -214,10 +240,10 @@ impl<'a> BycBuilderCtxt<'a> {
             }
             ExprKind::Call(callee, args) => {
                 self.adapt_operand(expected_mode, |this| {
-                    this.lower_expr(ExprLowerMode::Place, callee.r(s));
+                    this.lower_expr_for_direct(callee.r(s));
 
                     for &arg in args {
-                        this.lower_expr(ExprLowerMode::Place, arg.r(s));
+                        this.lower_expr_for_copy(arg.r(s));
                     }
 
                     this.push(byc_instr::Call {
@@ -229,7 +255,7 @@ impl<'a> BycBuilderCtxt<'a> {
                 });
             }
             ExprKind::Destructure(pat, rhs) => {
-                self.lower_expr(ExprLowerMode::Place, rhs.r(s));
+                self.lower_expr_for_direct(rhs.r(s));
                 self.lower_pat_assigns(pat.r(s));
 
                 self.adapt_operand(expected_mode, |this| {
@@ -256,7 +282,7 @@ impl<'a> BycBuilderCtxt<'a> {
                     for (idx, field) in fields.iter().enumerate() {
                         this.push(byc_instr::Tee { at: 0 });
                         this.push(byc_instr::TupleIndex { idx: idx as u32 });
-                        this.lower_expr(ExprLowerMode::Operand, field.r(s));
+                        this.lower_expr_for_operand(field.r(s));
                         this.push(byc_instr::Forget { count: 1 });
                     }
                 });
@@ -264,7 +290,7 @@ impl<'a> BycBuilderCtxt<'a> {
             ExprKind::NewTupleType(fields) => {
                 self.adapt_operand(expected_mode, |this| {
                     for &field in fields {
-                        this.lower_expr(ExprLowerMode::Place, field.r(s));
+                        this.lower_expr_for_direct(field.r(s));
                     }
 
                     this.push(byc_instr::AssignTupleType {
@@ -294,10 +320,10 @@ impl<'a> BycBuilderCtxt<'a> {
             }
             ExprKind::Instantiate(target, generics) => {
                 self.adapt_operand(expected_mode, |this| {
-                    this.lower_expr(ExprLowerMode::Place, target.r(s));
+                    this.lower_expr_for_direct(target.r(s));
 
                     for generic in generics {
-                        this.lower_expr(ExprLowerMode::Place, generic.r(s));
+                        this.lower_expr_for_direct(generic.r(s));
                     }
 
                     this.push(byc_instr::Instantiate {
