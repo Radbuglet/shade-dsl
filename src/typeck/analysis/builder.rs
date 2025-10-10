@@ -262,6 +262,15 @@ impl<'a> BycBuilderCtxt<'a> {
                     this.push(byc_instr::AssignEmptyTupleValue { fields: 0 });
                 });
             }
+            ExprKind::Assign(lhs, rhs) => {
+                self.lower_expr_for_direct(lhs.r(s));
+                self.lower_expr_for_operand(rhs.r(s));
+                self.push(byc_instr::Forget { count: 1 });
+
+                self.adapt_operand(expected_mode, |this| {
+                    this.push(byc_instr::AssignEmptyTupleValue { fields: 0 });
+                });
+            }
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(adt) => {
                 self.adapt_operand(expected_mode, |this| {

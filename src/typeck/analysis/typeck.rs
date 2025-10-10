@@ -2,7 +2,7 @@ use hashbrown::hash_map;
 
 use crate::{
     base::{ErrorGuaranteed, arena::Obj},
-    parse::ast::LiteralKind,
+    parse::ast::{LiteralKind, Mutability},
     typeck::{
         analysis::{WfRequirement, tcx::TyCtxt},
         syntax::{
@@ -270,6 +270,18 @@ impl CheckCx<'_> {
 
                 self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))
             }
+            ExprKind::Assign(lhs, rhs) => {
+                let muta = self.check_place_mutability(*lhs);
+
+                if muta.is_not() {
+                    todo!("not mutable");
+                }
+
+                let lhs_ty = self.check_expr(*lhs, None);
+                self.check_expr(*rhs, Some(lhs_ty));
+
+                self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))
+            }
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(adt) => {
                 self.tcx.queue_wf(WfRequirement::ValidateAdt(AdtInstance {
@@ -344,6 +356,16 @@ impl CheckCx<'_> {
         self.facts.expr_types.insert(expr, actual_ty);
 
         actual_ty
+    }
+
+    fn check_place_mutability(&mut self, expr: Obj<Expr>) -> Mutability {
+        let s = &self.tcx.session;
+
+        match &expr.r(s).kind {
+            ExprKind::Name(AnyName::Local(local)) => local.r(s).muta,
+            ExprKind::Error(_) => Mutability::Mut,
+            _ => todo!("cannot assign"),
+        }
     }
 }
 

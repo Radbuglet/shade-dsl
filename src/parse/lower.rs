@@ -195,7 +195,10 @@ impl<'a> LowerCtxt<'a> {
                 self.lower_expr(owner, owner_consts, lhs),
                 self.lower_expr(owner, owner_consts, rhs),
             ),
-            AstExprKind::Assign(ast_expr, ast_expr1) => todo!(),
+            AstExprKind::Assign(lhs, rhs) => ExprKind::Assign(
+                self.lower_expr(owner, owner_consts, lhs),
+                self.lower_expr(owner, owner_consts, rhs),
+            ),
             AstExprKind::Index(ast_expr, ast_expr1) => todo!(),
             AstExprKind::Call(callee, args) => ExprKind::Call(
                 self.lower_expr(owner, owner_consts, callee),

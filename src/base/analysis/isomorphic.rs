@@ -306,7 +306,6 @@ where
         mut hash_internal_data: impl FnMut(&NInt, &mut H),
         hasher: &mut H,
     ) {
-        // TODO: Use `write_length_prefix` once it stabilizes.
         hasher.write_usize(self.internal_nodes.len());
 
         for elem in &self.internal_nodes {

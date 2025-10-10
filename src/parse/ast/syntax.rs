@@ -424,6 +424,16 @@ pub enum Mutability {
     Mut,
 }
 
+impl Mutability {
+    pub fn is_not(self) -> bool {
+        matches!(self, Mutability::Not)
+    }
+
+    pub fn is_mut(self) -> bool {
+        matches!(self, Mutability::Mut)
+    }
+}
+
 // === Binding Powers === //
 
 pub mod expr_bp {

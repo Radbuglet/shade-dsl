@@ -4,18 +4,14 @@ const bool = get_builtin_type("bool");
 const u32 = get_builtin_type("u32");
 const metatype = get_builtin_type("type");
 
-const whee = fn<T: metatype>((v, v2): (T, T)) -> V {
-    const V = type(((metatype,), T));
+const whee = {
+    let mut foo = u32;
 
-    let foo = type(());
-    let bar = foo;
+    foo = bool;
 
-    let (baz, maz) = (foo, bar);
-    let baz_ = maz;
-    let maz_ = baz_;
-
-    ((maz_,), v)
+    foo
 };
 
-const maz = whee.<bool>((faz, faz));
-const faz = true;
+const waz = fn(v: whee) -> whee { v };
+
+const faz = waz(true);

@@ -130,6 +130,7 @@ pub enum ExprKind {
     Call(Obj<Expr>, Vec<Obj<Expr>>),
     Instantiate(Obj<Expr>, Vec<Obj<Expr>>),
     Destructure(Obj<Pat>, Obj<Expr>),
+    Assign(Obj<Expr>, Obj<Expr>),
     Match(Box<ExprMatch>),
     Adt(Obj<ExprAdt>),
     NewTuple(Vec<Obj<Expr>>),
