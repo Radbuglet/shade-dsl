@@ -1,11 +1,19 @@
-const get_builtin_type = intrinsic("core.get_builtin_type");
+const builtins = mod {
+    const get_builtin_type = intrinsic("core.get_builtin_type");
 
-const bool = get_builtin_type("bool");
-const u32 = get_builtin_type("u32");
-const metatype = get_builtin_type("type");
+    pub const bool = get_builtin_type("bool");
+    pub const u32 = get_builtin_type("u32");
+    pub const metatype = get_builtin_type("type");
+};
 
-const whee = fn<T: metatype>(v: T) -> T {
+const Vec = fn<T: builtins.metatype> -> builtins.metatype {
+    struct {
+        pub const Elem = T;
+    }
+};
+
+const whee = fn<T: builtins.metatype>(v: T) -> Vec.<T>.Elem {
     v
 };
 
-const woo = whee.<bool>(true);
+const woo = whee.<builtins.bool>(true);

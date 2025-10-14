@@ -4,7 +4,7 @@ use crate::{
     base::{ErrorGuaranteed, arena::Obj},
     parse::ast::LiteralKind,
     typeck::{
-        analysis::{TypeCheckFacts, tcx::TyCtxt},
+        analysis::{IndexKind, TypeCheckFacts, tcx::TyCtxt},
         syntax::{
             AdtInstance, AnyFuncValue, AnyMetaFuncValue, AnyName, BycDepth, BycFunction, BycInstr,
             Expr, ExprKind, FuncInstance, Local, MetaFuncInstance, Pat, PatKind, Stmt, Ty,
@@ -286,9 +286,18 @@ impl<'a> BycBuilderCtxt<'a> {
                     // (tuples are initialized at reservation time)
                 });
             }
-            ExprKind::NamedIndex(lhs, name) => {
-                todo!();
-            }
+            ExprKind::NamedIndex(lhs, _name) => match self.facts.index_exprs[&expr] {
+                IndexKind::AdtField(_) => todo!(),
+                IndexKind::TupleField(_) => todo!(),
+                IndexKind::ConstMember(inst) => {
+                    self.lower_expr_for_direct(*lhs);
+                    self.push(byc_instr::Forget { count: 1 });
+
+                    self.adapt_operand(expr_ty, expected_mode, |this| {
+                        this.push(byc_instr::AssignConstExpr { func: inst });
+                    });
+                }
+            },
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(adt) => {
                 self.adapt_operand(expr_ty, expected_mode, |this| {
