@@ -27,11 +27,24 @@ impl TyCtxt {
         })
     }
 
-    pub fn ty_of_paramless_fn_val(
+    pub fn eval_paramless_unwrap_any(
+        &self,
+        instance: Obj<FuncInstance>,
+    ) -> Result<ValuePlace, ErrorGuaranteed> {
+        let mut out = self.eval_paramless(instance)?;
+
+        while let ValueKind::MetaAny(Some(curr)) = self.value_interner.read(out).kind {
+            out = curr;
+        }
+
+        Ok(out)
+    }
+
+    pub fn tagged_ty_for_eval_paramless_unwrap_any(
         &self,
         instance: Obj<FuncInstance>,
     ) -> Result<TaggedTy, ErrorGuaranteed> {
-        let value = self.eval_paramless(instance)?;
+        let value = self.eval_paramless_unwrap_any(instance)?;
 
         Ok(self.tagged_ty_from_intern(value))
     }
@@ -242,7 +255,7 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         instr: &'a byc_instr::AssignConstExpr,
         target: ValuePlace,
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
-        let intern = self.tcx.eval_paramless(instr.func)?;
+        let intern = self.tcx.eval_paramless_unwrap_any(instr.func)?;
 
         let temp = self.arena.copy_from(
             Some(self.tcx.value_interner.arena()),
@@ -398,6 +411,10 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
                 }
             }
         };
+
+        let write_to = self
+            .arena
+            .write_meta_any_some(write_to, self.arena.read(temp).ty);
 
         self.arena.assign(temp, write_to);
         self.arena.free(temp);

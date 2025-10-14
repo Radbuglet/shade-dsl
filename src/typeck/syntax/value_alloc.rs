@@ -225,7 +225,7 @@ impl ValueArena {
         &self.arena[ptr.0]
     }
 
-    pub fn mutate_unchecked(&mut self, ptr: ValuePlace) -> &mut Value {
+    fn mutate_unchecked(&mut self, ptr: ValuePlace) -> &mut Value {
         &mut self.arena[ptr.0]
     }
 
@@ -253,6 +253,92 @@ impl ValueArena {
         self.mutate_unchecked(ptr).kind = value;
     }
 
+    pub fn write_meta_any_some(&mut self, ptr: ValuePlace, ty: Obj<Ty>) -> ValuePlace {
+        let ValueKind::MetaAny(inner) = self.read(ptr).kind else {
+            unreachable!();
+        };
+
+        if let Some(inner) = inner {
+            if self.read(inner).ty == ty {
+                // (trivial case)
+                return inner;
+            }
+
+            self.free(inner);
+        }
+
+        let new_inner = self.reserve(ty);
+
+        let ValueKind::MetaAny(inner) = &mut self.mutate_unchecked(ptr).kind else {
+            unreachable!();
+        };
+
+        *inner = Some(new_inner);
+
+        new_inner
+    }
+
+    pub fn write_meta_any_none(&mut self, ptr: ValuePlace) {
+        let ValueKind::MetaAny(place) = &mut self.mutate_unchecked(ptr).kind else {
+            unreachable!();
+        };
+
+        if let Some(inner) = *place {
+            *place = None;
+            self.free(inner);
+        }
+    }
+
+    pub fn write_adt_variant_some(&mut self, ptr: ValuePlace, new_variant: u32) -> ValuePlace {
+        let Value { ty, kind } = self.read(ptr);
+
+        let ValueKind::AdtVariant(inner) = *kind else {
+            unreachable!();
+        };
+
+        let Ty::Adt(ty) = *ty.r(&self.tcx.session) else {
+            unreachable!()
+        };
+
+        if let Some((variant, inner)) = inner {
+            if variant == new_variant {
+                // (trivial case)
+                return inner;
+            }
+
+            self.free(inner);
+        }
+
+        let inner_ty = self
+            .tcx
+            .eval_paramless_for_meta_ty(self.tcx.intern_fn_instance(
+                ty.adt.r(&self.tcx.session).fields[new_variant as usize].ty,
+                Some(ty.owner),
+            ))
+            .unwrap();
+
+        let new_inner = self.reserve(inner_ty);
+
+        let ValueKind::AdtVariant(inner) = &mut self.mutate_unchecked(ptr).kind else {
+            unreachable!();
+        };
+
+        *inner = Some((new_variant, new_inner));
+
+        new_inner
+    }
+
+    pub fn write_adt_variant_none(&mut self, ptr: ValuePlace) {
+        let ValueKind::AdtVariant(place) = &mut self.mutate_unchecked(ptr).kind else {
+            unreachable!();
+        };
+
+        if let Some((_variant, inner)) = *place {
+            *place = None;
+            self.free(inner);
+        }
+    }
+
     pub fn alloc_terminal(&mut self, ty: Obj<Ty>, value: ValueKind) -> ValuePlace {
         let place = self.reserve(ty);
         self.write_terminal(place, value);
@@ -263,120 +349,79 @@ impl ValueArena {
         let mut stack = vec![(from, to)];
 
         while let Some((from_handle, to_handle)) = stack.pop() {
-            let (Some(from), Some(to)) = self.arena.get2_mut(from_handle.0, to_handle.0) else {
-                unreachable!()
-            };
+            let from = self.read(from_handle);
+            let to = self.read(to_handle);
 
             debug_assert_eq!(from.ty, to.ty);
 
-            match_pair!((&from.kind, &mut to.kind) => {
-                // External references are interned so terminal copies are okay.
-                (ValueKind::MetaType(from), ValueKind::MetaType(to)) => {
-                    *to = *from;
-                }
-                (ValueKind::MetaFunc(from), ValueKind::MetaFunc(to)) => {
-                    *to = *from;
-                }
-                (ValueKind::MetaString(from), ValueKind::MetaString(to)) => {
-                    *to = *from;
-                }
-                (ValueKind::Func(from), ValueKind::Func(to)) => {
-                    *to = *from;
-                }
-
-                // Pointers are raw pointers. Just copy the address.
-                (ValueKind::Pointer(from), ValueKind::Pointer(to)) => {
-                    *to = *from;
-                }
-
-                // These are naturally terminal.
-                (ValueKind::Scalar(from), ValueKind::Scalar(to)) => {
-                    *to = *from;
+            match_pair!((&from.kind, &to.kind) => {
+                // Here are the simple terminal types
+                (ValueKind::MetaType(_), ValueKind::MetaType(_))
+                | (ValueKind::MetaFunc(_), ValueKind::MetaFunc(_))
+                | (ValueKind::MetaString(_), ValueKind::MetaString(_))
+                | (ValueKind::Func(_), ValueKind::Func(_))
+                | (ValueKind::Pointer(_), ValueKind::Pointer(_))
+                | (ValueKind::Scalar(_), ValueKind::Scalar(_))
+                | (ValueKind::Placeholder, ValueKind::Placeholder) => {
+                    self.write_terminal(to_handle, from.kind.clone());
                 }
 
                 // Here are the simple aggregate cases.
                 (ValueKind::Tuple(from), ValueKind::Tuple(to))
-                | (ValueKind::Array(from), ValueKind::Array(to)) => {
-                    for (&from, &mut to) in from.iter().zip(to) {
-                        stack.push((from, to));
-                    }
-                }
-                (ValueKind::AdtAggregate(from), ValueKind::AdtAggregate(to)) => {
-                    for (&from, &mut to) in from.iter().zip(to) {
+                | (ValueKind::Array(from), ValueKind::Array(to))
+                | (ValueKind::AdtAggregate(from), ValueKind::AdtAggregate(to)) => {
+                    for (&from, &to) in from.iter().zip(to) {
                         stack.push((from, to));
                     }
                 }
 
-                // And here are the awful variant cases.
+                // And here are the variant cases.
                 (ValueKind::MetaArray(from), ValueKind::MetaArray(to)) => {
-                    if from.len() == to.len() {
-                        for (&from, &mut to) in from.iter().zip(to) {
+                    todo!();
+                    // if from.len() == to.len() {
+                    //     for (&from, &to) in from.iter().zip(to) {
+                    //         stack.push((from, to));
+                    //     }
+                    // } else {
+                    //     let old_to = mem::take(to);
+                    //     let mut new_to = from.clone();
+                    //
+                    //     for place in old_to {
+                    //         self.free(place);
+                    //     }
+                    //
+                    //     for elem in &mut new_to {
+                    //         *elem = self.copy(*elem, CopyDepth::Shallow);
+                    //     }
+                    //
+                    //     let ValueKind::MetaArray(to) = &mut self.arena[to_handle.0].kind else {
+                    //         unreachable!()
+                    //     };
+                    //
+                    //     *to = new_to;
+                    // }
+                }
+                (ValueKind::MetaAny(from), ValueKind::MetaAny(_)) => {
+                    match *from {
+                        Some(from) => {
+                            let to = self.write_meta_any_some(to_handle, self.read(from).ty);
                             stack.push((from, to));
-                        }
-                    } else {
-                        let old_to = mem::take(to);
-                        let mut new_to = from.clone();
-
-                        for place in old_to {
-                            self.free(place);
-                        }
-
-                        for elem in &mut new_to {
-                            *elem = self.copy(*elem, CopyDepth::Shallow);
-                        }
-
-                        let ValueKind::MetaArray(to) = &mut self.arena[to_handle.0].kind else {
-                            unreachable!()
-                        };
-
-                        *to = new_to;
+                        },
+                        None => {
+                            self.write_meta_any_none(to_handle);
+                        },
                     }
                 }
-                (ValueKind::MetaAny(from), ValueKind::MetaAny(to)) => {
-                    todo!()
-                }
-                (
-                    ValueKind::AdtVariant(from),
-                    ValueKind::AdtVariant(to),
-                ) => {
-                    match (*from, *to) {
-                        (Some((from_variant, from_pointee)), Some((to_variant, to_pointee))) => {
-                            if from_variant == to_variant  {
-                                stack.push((from_pointee, to_pointee));
-                            } else {
-                                self.free(to_pointee);
-
-                                let new_pointee = self.copy(from_pointee, CopyDepth::Shallow);
-
-                                let (ValueKind::AdtVariant(Some((to_variant, to_pointee)))) = &mut self.mutate_unchecked(to_handle).kind else {
-                                    unreachable!();
-                                };
-
-                                *to_variant = from_variant;
-                                *to_pointee = new_pointee;
-                            }
-                        }
-                        (None, Some((_, to_pointee))) => {
-                            *to = None;
-                            self.free(to_pointee);
-                        }
-                        (Some((from_variant, from_pointee)), None) => {
-                            let new_pointee = self.copy(from_pointee, CopyDepth::Shallow);
-
-                            let (ValueKind::AdtVariant(Some((to_variant, to_pointee)))) = &mut self.mutate_unchecked(to_handle).kind else {
-                                unreachable!();
-                            };
-
-                            *to_variant = from_variant;
-                            *to_pointee = new_pointee;
-                        }
-                        (None, None) => {
-                            // (no-op)
-                        }
+                (ValueKind::AdtVariant(from), ValueKind::AdtVariant(_)) => {
+                     match *from {
+                        Some((from_variant, from)) => {
+                            let to = self.write_adt_variant_some(to_handle, from_variant);
+                            stack.push((from, to));
+                        },
+                        None => {
+                            self.write_adt_variant_none(to_handle);
+                        },
                     }
-                }
-                (ValueKind::Placeholder, ValueKind::Placeholder) => {
-                    // (no-op)
                 }
                 _ => {
                     unreachable!()

@@ -42,7 +42,6 @@ impl TyCtxt {
             let mut cx = CheckCx {
                 tcx: self,
                 instance,
-                args: expected_args.r(s),
                 erroneous: None,
                 facts: TypeCheckFacts {
                     expr_types: FxHashMap::default(),
@@ -136,7 +135,6 @@ impl TyCtxt {
 struct CheckCx<'a> {
     tcx: &'a TyCtxt,
     instance: Obj<FuncInstance>,
-    args: &'a [Obj<Ty>],
     facts: TypeCheckFacts,
     erroneous: Option<ErrorGuaranteed>,
 }
@@ -212,7 +210,7 @@ impl CheckCx<'_> {
 
                     let (Ok(ty) | Err(ty)) = self
                         .tcx
-                        .ty_of_paramless_fn_val(instance)
+                        .tagged_ty_for_eval_paramless_unwrap_any(instance)
                         .map_err(|v| TaggedTy::untagged(self.err(v)));
 
                     ty
@@ -335,7 +333,7 @@ impl CheckCx<'_> {
 
                         let ty = self
                             .tcx
-                            .ty_of_paramless_fn_val(member)
+                            .tagged_ty_for_eval_paramless_unwrap_any(member)
                             .unwrap_or_else(|err| TaggedTy::untagged(self.err(err)));
 
                         (IndexKind::ConstMember(member), ty)

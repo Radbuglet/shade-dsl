@@ -4,23 +4,16 @@ macro_rules! match_pair {
         $(($lhs:pat, $rhs:pat $(,)?) $(| ($lhs_alt:pat, $rhs_alt:pat $(,)?))* => { $($body:tt)* } $(,)? )*
         _ => { $($fallback:tt)* }
     }) => {{
-        let tuple = $tuple;
-
         #[allow(unused)]
         if 0u32 != 0u32 {
-            let (lhs, rhs) = tuple;
-
-            match lhs {
-                $($lhs $(| $lhs_alt)* => {})*
-            }
-
-            match rhs {
-                $($rhs $(| $rhs_alt)* => {})*
+            match $tuple {
+                $(($lhs, _) $(| ($lhs_alt, _))* => {})*
+                $((_, $rhs) $(| (_, $rhs_alt))* => {})*
             }
 
             loop {}
         } else {
-            match tuple {
+            match $tuple {
                 $(($lhs, $rhs) $(| ($lhs_alt, $rhs_alt))* => { $($body)* },)*
                 _ => { $($fallback)* },
             }
