@@ -252,7 +252,9 @@ impl<'a> LowerCtxt<'a> {
                     )
                 }
             }
-            AstExprKind::NamedIndex(ast_expr, ident) => todo!(),
+            AstExprKind::NamedIndex(lhs, name) => {
+                ExprKind::NamedIndex(self.lower_expr(owner, owner_consts, lhs), name.text)
+            }
             AstExprKind::TypeTuple(exprs) => {
                 ExprKind::NewTupleType(self.lower_expr_vec(owner, owner_consts, exprs))
             }

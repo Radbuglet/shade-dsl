@@ -25,27 +25,36 @@ impl ValuePlace {
 // === Values === //
 
 #[derive(Debug, Clone)]
-pub enum Value {
+pub struct Value {
+    pub ty: Obj<Ty>,
+    pub kind: ValueKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum ValueKind {
     /// A value representing a type.
-    MetaType(Obj<Ty>),
+    MetaType(Option<Obj<Ty>>),
 
     /// A value representing an uninstantiated function.
-    MetaFunc(AnyMetaFuncValue),
+    MetaFunc(Option<AnyMetaFuncValue>),
 
     /// An array of values whose size is not part of its type.
     MetaArray(Vec<ValuePlace>),
 
     /// A compile-time string.
-    MetaString(Symbol),
+    MetaString(Option<Symbol>),
+
+    /// Any value.
+    MetaAny(Option<ValuePlace>),
 
     /// A pointer to another value.
-    Pointer(ValuePlace),
+    Pointer(Option<ValuePlace>),
 
     /// A value representing an instantiated function.
-    Func(AnyFuncValue),
+    Func(Option<AnyFuncValue>),
 
     /// A value representing a scalar.
-    Scalar(ValueScalar),
+    Scalar(Option<ValueScalar>),
 
     /// A value representing a tuple.
     Tuple(Vec<ValuePlace>),
@@ -54,17 +63,12 @@ pub enum Value {
     Array(Vec<ValuePlace>),
 
     /// A value representing a user-defined aggregate ADT.
-    AdtAggregate {
-        def: AdtInstance,
-        fields: Vec<ValuePlace>,
-    },
+    AdtAggregate(Vec<ValuePlace>),
 
     /// A value representing a user-defined variant ADT.
-    AdtVariant {
-        def: AdtInstance,
-        variant: u32,
-        inner: ValuePlace,
-    },
+    AdtVariant(Option<(u32, ValuePlace)>),
+
+    Placeholder,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -146,6 +150,7 @@ pub enum Ty {
     MetaFunc,
     MetaArray(Obj<Ty>),
     MetaString,
+    MetaAny,
     Pointer(Obj<Ty>),
     Func(TyList, Obj<Ty>),
     Scalar(ScalarKind),
@@ -153,7 +158,6 @@ pub enum Ty {
     Array(Obj<Ty>, usize),
     Adt(AdtInstance),
     Never,
-    Unknown,
     Error(ErrorGuaranteed),
 }
 
@@ -175,6 +179,31 @@ pub enum ScalarKind {
     F64,
     USize,
     ISize,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct TaggedTy {
+    pub ty: Obj<Ty>,
+    pub tag: TyTag,
+}
+
+impl TaggedTy {
+    pub fn new(ty: Obj<Ty>, tag: TyTag) -> Self {
+        Self { ty, tag }
+    }
+
+    pub fn untagged(ty: Obj<Ty>) -> Self {
+        Self {
+            ty,
+            tag: TyTag::Nothing,
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum TyTag {
+    Nothing,
+    MetaTyKnown(Obj<Ty>),
 }
 
 // === Instance === //
@@ -272,8 +301,6 @@ pub struct FuncIntrinsic {
 struct FuncIntrinsicInner {
     _location: &'static Location<'static>,
 
-    fn_ty: Obj<Ty>,
-
     #[derive_where(skip)]
     #[expect(clippy::type_complexity)]
     invoke:
@@ -282,7 +309,7 @@ struct FuncIntrinsicInner {
 
 impl FuncIntrinsic {
     #[track_caller]
-    pub fn new<F>(fn_ty: Obj<Ty>, f: F, s: &Session) -> Self
+    pub fn new<F>(f: F, s: &Session) -> Self
     where
         F: Fn(&TyCtxt, &mut ValueArena, &[ValuePlace]) -> Result<ValuePlace, ErrorGuaranteed>,
         F: 'static,
@@ -291,16 +318,11 @@ impl FuncIntrinsic {
             inner: Obj::new(
                 FuncIntrinsicInner {
                     _location: Location::caller(),
-                    fn_ty,
                     invoke: Box::new(f),
                 },
                 s,
             ),
         }
-    }
-
-    pub fn fn_ty(&self, s: &Session) -> Obj<Ty> {
-        self.inner.r(s).fn_ty
     }
 
     pub fn invoke(

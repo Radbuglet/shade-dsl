@@ -7,11 +7,13 @@ use crate::{
         analysis::{TyCtxt, WfRequirement},
         syntax::{
             AnyFuncValue, AnyMetaFuncValue, BycDepth, BycFunction, BycInstr, BycInstrHandler,
-            CopyDepth, FuncInstance, Ty, Value, ValueArena, ValuePlace, ValueScalar, byc_instr,
+            CopyDepth, FuncInstance, TaggedTy, Ty, TyTag, ValueArena, ValueKind, ValuePlace,
+            ValueScalar, byc_instr,
         },
     },
 };
 
+// TODO: Improve type error diagnostics since type-punning can cause them.
 impl TyCtxt {
     pub fn eval_paramless(
         &self,
@@ -19,7 +21,7 @@ impl TyCtxt {
     ) -> Result<ValuePlace, ErrorGuaranteed> {
         self.queries.eval_paramless.compute(instance, |_| {
             let bytecode = self.build_bytecode(instance)?;
-            let mut arena = ValueArena::default();
+            let mut arena = ValueArena::new(self.clone());
             let root = self.interpret(bytecode, &[], &mut arena)?;
             Ok(self.value_interner.intern(&arena, root))
         })
@@ -28,10 +30,22 @@ impl TyCtxt {
     pub fn ty_of_paramless_fn_val(
         &self,
         instance: Obj<FuncInstance>,
-    ) -> Result<Obj<Ty>, ErrorGuaranteed> {
+    ) -> Result<TaggedTy, ErrorGuaranteed> {
         let value = self.eval_paramless(instance)?;
 
-        Ok(self.canonical_intern_value_type(value))
+        Ok(self.tagged_ty_from_intern(value))
+    }
+
+    pub fn tagged_ty_from_intern(&self, intern: ValuePlace) -> TaggedTy {
+        let intern = self.value_interner.read(intern);
+
+        TaggedTy {
+            ty: intern.ty,
+            tag: match &intern.kind {
+                ValueKind::MetaType(Some(ty)) => TyTag::MetaTyKnown(*ty),
+                _ => TyTag::Nothing,
+            },
+        }
     }
 
     pub fn eval_paramless_for_meta_ty(
@@ -40,11 +54,11 @@ impl TyCtxt {
     ) -> Result<Obj<Ty>, ErrorGuaranteed> {
         let value = self.eval_paramless(instance)?;
 
-        let Value::MetaType(ty) = self.value_interner.read(value) else {
+        let ValueKind::MetaType(Some(ty)) = self.value_interner.read(value).kind else {
             todo!();
         };
 
-        Ok(*ty)
+        Ok(ty)
     }
 
     pub fn interpret(
@@ -55,7 +69,8 @@ impl TyCtxt {
     ) -> Result<ValuePlace, ErrorGuaranteed> {
         let s = &self.session;
 
-        let return_place = arena.reserve();
+        let facts = self.type_check(root_func.r(s).instance).unwrap().r(s);
+        let return_place = arena.reserve(facts.return_ty);
 
         let place_stack = [return_place, ValuePlace::DANGLING]
             .into_iter()
@@ -142,9 +157,9 @@ impl InterpretCxHandler<'_, '_> {
 impl BycInstrHandler for InterpretCxHandler<'_, '_> {
     fn allocate<'a>(
         &mut self,
-        _instr: &'a byc_instr::Allocate,
+        instr: &'a byc_instr::Allocate,
     ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
-        Ok([self.arena.reserve()])
+        Ok([self.arena.reserve(instr.ty)])
     }
 
     fn deallocate<'a>(
@@ -194,22 +209,13 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         Ok([])
     }
 
-    fn assign_empty_tuple_value<'a>(
-        &mut self,
-        instr: &'a byc_instr::AssignEmptyTupleValue,
-        target: ValuePlace,
-    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
-        self.arena.init_tuple(target, instr.fields);
-
-        Ok([])
-    }
-
     fn assign_type_literal<'a>(
         &mut self,
         instr: &'a byc_instr::AssignTypeLiteral,
         target: ValuePlace,
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
-        self.arena.write_terminal(target, Value::MetaType(instr.ty));
+        self.arena
+            .write_terminal(target, ValueKind::MetaType(Some(instr.ty)));
 
         Ok([])
     }
@@ -260,17 +266,18 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
             &fields
                 .iter()
                 .map(|place| {
-                    let Value::MetaType(ty) = self.arena.read(*place) else {
+                    let ValueKind::MetaType(Some(ty)) = self.arena.read(*place).kind else {
                         unreachable!()
                     };
 
-                    *ty
+                    ty
                 })
                 .collect::<Vec<_>>(),
         );
         let ty = self.tcx.intern_ty(Ty::Tuple(ty));
 
-        self.arena.write_terminal(assign_to, Value::MetaType(ty));
+        self.arena
+            .write_terminal(assign_to, ValueKind::MetaType(Some(ty)));
 
         Ok([])
     }
@@ -306,11 +313,11 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
         let callee = self.arena.read(callee);
 
-        let Value::Func(callee) = callee else {
+        let ValueKind::Func(Some(callee)) = callee.kind else {
             unreachable!()
         };
 
-        match *callee {
+        match callee {
             AnyFuncValue::Intrinsic(callee) => {
                 let temp = callee.invoke(
                     self.tcx,
@@ -339,7 +346,7 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         target: ValuePlace,
         write_to: ValuePlace,
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
-        let Value::MetaFunc(target) = self.arena.read(target) else {
+        let ValueKind::MetaFunc(Some(target)) = self.arena.read(target).kind else {
             unreachable!();
         };
 
@@ -352,7 +359,7 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
             AnyMetaFuncValue::Intrinsic(target) => {
                 let intern = self
                     .tcx
-                    .eval_intrinsic_meta_fn(*target, &args.as_slice().raw)?;
+                    .eval_intrinsic_meta_fn(target, &args.as_slice().raw)?;
 
                 self.arena.copy_from(
                     Some(self.tcx.value_interner.arena()),
@@ -374,8 +381,12 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
                 if target.func.r(&self.tcx.session).inner.params.is_some() {
                     self.tcx.queue_wf(WfRequirement::TypeCheck(instance));
 
-                    self.arena
-                        .alloc(Value::Func(AnyFuncValue::Instance(instance)))
+                    let temp = self.arena.reserve(self.tcx.instance_fn_ty(instance)?);
+                    self.arena.write_terminal(
+                        temp,
+                        ValueKind::Func(Some(AnyFuncValue::Instance(instance))),
+                    );
+                    temp
                 } else {
                     let intern = self.tcx.eval_paramless(instance)?;
 
@@ -408,7 +419,7 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         instr: &'a byc_instr::AdtAggregateIndex,
         target: ValuePlace,
     ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
-        let Value::AdtAggregate { def: _, fields } = self.arena.read(target) else {
+        let ValueKind::AdtAggregate(fields) = &self.arena.read(target).kind else {
             unreachable!();
         };
 
@@ -420,7 +431,7 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         instr: &'a byc_instr::TupleIndex,
         target: ValuePlace,
     ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
-        let Value::Tuple(fields) = self.arena.read(target) else {
+        let ValueKind::Tuple(fields) = &self.arena.read(target).kind else {
             unreachable!();
         };
 
@@ -432,16 +443,11 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         _instr: &'a byc_instr::AdtVariantUnwrap,
         target: ValuePlace,
     ) -> Result<[ValuePlace; 1], ErrorGuaranteed> {
-        let Value::AdtVariant {
-            def: _,
-            variant: _,
-            inner,
-        } = self.arena.read(target)
-        else {
+        let ValueKind::AdtVariant(Some((_variant, inner))) = self.arena.read(target).kind else {
             unreachable!();
         };
 
-        Ok([*inner])
+        Ok([inner])
     }
 
     fn bin_op<'a>(
@@ -478,7 +484,8 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         instr: &'a byc_instr::JumpOtherwise,
         scrutinee: ValuePlace,
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
-        let Value::Scalar(ValueScalar::Bool(value)) = self.arena.read(scrutinee) else {
+        let ValueKind::Scalar(Some(ValueScalar::Bool(value))) = self.arena.read(scrutinee).kind
+        else {
             unreachable!();
         };
 

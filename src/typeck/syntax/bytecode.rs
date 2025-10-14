@@ -32,7 +32,7 @@ pub struct BycFunction {
 
 define_bytecode! {
     /// Allocates a new local.
-    Allocate {} => allocate() -> local;
+    Allocate { ty: Obj<Ty> } => allocate() -> local;
 
     /// Frees a specified number of locals.
     Deallocate { count: u32 } => deallocate(to_free: pop local[*count]);
@@ -48,9 +48,6 @@ define_bytecode! {
 
     /// Pops the specified number of places from the **place stack**.
     Forget { count: u32 } => forget(_ignore: pop place[*count]);
-
-    /// Assigns a tuple with a specified number of uninitialized fields.
-    AssignEmptyTupleValue { fields: u32 } => assign_empty_tuple_value(target: peek place);
 
     /// Pops the top of the **place stack** and assigns a `MetaType` to it.
     AssignTypeLiteral { ty: Obj<Ty> } => assign_type_literal(target: peek place);

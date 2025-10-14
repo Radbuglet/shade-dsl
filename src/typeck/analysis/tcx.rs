@@ -91,7 +91,7 @@ impl TyCtxt {
         &self,
         f: impl FnOnce(&mut ValueArena) -> Result<ValuePlace, E>,
     ) -> Result<ValuePlace, E> {
-        let mut arena = ValueArena::default();
+        let mut arena = ValueArena::new(self.clone());
         let root = f(&mut arena)?;
         Ok(self.value_interner.intern(&arena, root))
     }
