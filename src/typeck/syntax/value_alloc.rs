@@ -21,7 +21,7 @@ use crate::{
     parse::ast::AdtKind,
     typeck::{
         analysis::TyCtxt,
-        syntax::{Ty, Value, ValueKind, ValuePlace},
+        syntax::{AnyFuncValue, FuncIntrinsic, Ty, Value, ValueKind, ValuePlace},
     },
     utils::hash::{FxHashMap, FxHashSet, FxHasher, hash_map},
 };
@@ -38,6 +38,22 @@ thread_local! {
 
 pub trait ValueArenaLike {
     fn read(&self, ptr: ValuePlace) -> &Value;
+
+    fn read_ty(&self, tcx: &TyCtxt, ptr: ValuePlace) -> Option<Obj<Ty>> {
+        let Value { ty, kind } = self.read(ptr);
+
+        match kind {
+            ValueKind::FixedMetaType => {
+                let Ty::FixedMetaTy(ty) = ty.r(&tcx.session) else {
+                    unreachable!()
+                };
+
+                Some(*ty)
+            }
+            ValueKind::DynMetaType(ty) => *ty,
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl fmt::Debug for ValuePlace {
@@ -136,12 +152,14 @@ impl ValueArena {
         while let Some(place) = stack.pop() {
             self.mutate_unchecked(place).kind = match self.read(place).ty.r(s) {
                 // Value-like
-                Ty::MetaTy => ValueKind::MetaType(None),
+                Ty::FixedMetaTy(..) => ValueKind::FixedMetaType,
+                Ty::DynMetaTy => ValueKind::DynMetaType(None),
                 Ty::MetaFunc => ValueKind::MetaFunc(None),
                 Ty::MetaArray(..) => ValueKind::MetaArray(Vec::new()),
                 Ty::MetaString => ValueKind::MetaString(None),
                 Ty::Pointer(..) => ValueKind::Pointer(None),
-                Ty::Func(..) => ValueKind::Func(None),
+                Ty::FixedFunc(..) => ValueKind::FixedFunc,
+                Ty::DynFunc(..) => ValueKind::DynFunc(None),
                 Ty::Scalar(..) => ValueKind::Scalar(None),
                 Ty::MetaAny => ValueKind::MetaAny(None),
                 Ty::Never => ValueKind::Placeholder,
@@ -184,7 +202,7 @@ impl ValueArena {
                             .map(|field| {
                                 let (Ok(ty) | Err(ty)) = self
                                     .tcx
-                                    .eval_paramless_for_meta_ty(
+                                    .eval_paramless_for_returned_ty(
                                         self.tcx.intern_fn_instance(field.ty, Some(adt.owner)),
                                     )
                                     .map_err(|e| self.tcx.intern_ty(Ty::Error(e)));
@@ -311,7 +329,7 @@ impl ValueArena {
 
         let inner_ty = self
             .tcx
-            .eval_paramless_for_meta_ty(self.tcx.intern_fn_instance(
+            .eval_paramless_for_returned_ty(self.tcx.intern_fn_instance(
                 ty.adt.r(&self.tcx.session).fields[new_variant as usize].ty,
                 Some(ty.owner),
             ))
@@ -356,10 +374,12 @@ impl ValueArena {
 
             match_pair!((&from.kind, &to.kind) => {
                 // Here are the simple terminal types
-                (ValueKind::MetaType(_), ValueKind::MetaType(_))
+                (ValueKind::FixedMetaType, ValueKind::FixedMetaType)
+                | (ValueKind::DynMetaType(_), ValueKind::DynMetaType(_))
                 | (ValueKind::MetaFunc(_), ValueKind::MetaFunc(_))
                 | (ValueKind::MetaString(_), ValueKind::MetaString(_))
-                | (ValueKind::Func(_), ValueKind::Func(_))
+                | (ValueKind::FixedFunc, ValueKind::FixedFunc)
+                | (ValueKind::DynFunc(_), ValueKind::DynFunc(_))
                 | (ValueKind::Pointer(_), ValueKind::Pointer(_))
                 | (ValueKind::Scalar(_), ValueKind::Scalar(_))
                 | (ValueKind::Placeholder, ValueKind::Placeholder) => {
@@ -474,6 +494,16 @@ impl ValueArena {
 
             *self.mutate_unchecked(to) = value;
         }
+    }
+}
+
+impl ValueArena {
+    pub fn alloc_intrinsic_fn(&mut self, f: FuncIntrinsic) -> ValuePlace {
+        self.alloc_terminal(
+            self.tcx
+                .intern_ty(Ty::FixedFunc(AnyFuncValue::Intrinsic(f))),
+            ValueKind::FixedFunc,
+        )
     }
 }
 
@@ -704,7 +734,10 @@ pub fn hash_value_terminal(value: &Value, state: &mut impl hash::Hasher) {
     mem::discriminant(&value.kind).hash(state);
 
     match &value.kind {
-        ValueKind::MetaType(ty) => ty.hash(state),
+        ValueKind::FixedMetaType => {
+            // (nothing)
+        }
+        ValueKind::DynMetaType(ty) => ty.hash(state),
         ValueKind::MetaFunc(func) => {
             func.hash(state);
         }
@@ -720,7 +753,10 @@ pub fn hash_value_terminal(value: &Value, state: &mut impl hash::Hasher) {
         ValueKind::MetaAny(_) => {
             // (nothing)
         }
-        ValueKind::Func(func) => {
+        ValueKind::FixedFunc => {
+            // (nothing)
+        }
+        ValueKind::DynFunc(func) => {
             func.hash(state);
         }
         ValueKind::Scalar(scalar) => {
@@ -751,7 +787,10 @@ pub fn eq_value_terminal(lhs: &Value, rhs: &Value) -> bool {
     }
 
     match_pair!((&lhs.kind, &rhs.kind) => {
-        (ValueKind::MetaType(lhs), ValueKind::MetaType(rhs)) => {
+        (ValueKind::FixedMetaType, ValueKind::FixedMetaType) => {
+            true
+        }
+        (ValueKind::DynMetaType(lhs), ValueKind::DynMetaType(rhs)) => {
             lhs == rhs
         }
         (ValueKind::MetaFunc(lhs), ValueKind::MetaFunc(rhs)) => {
@@ -769,7 +808,10 @@ pub fn eq_value_terminal(lhs: &Value, rhs: &Value) -> bool {
         (ValueKind::Pointer(_lhs_heap), ValueKind::Pointer(_rhs_heap)) => {
             true
         }
-        (ValueKind::Func(lhs), ValueKind::Func(rhs)) => {
+        (ValueKind::FixedFunc, ValueKind::FixedFunc) => {
+            true
+        }
+        (ValueKind::DynFunc(lhs), ValueKind::DynFunc(rhs)) => {
             lhs == rhs
         }
         (ValueKind::Scalar(lhs), ValueKind::Scalar(rhs)) => {
@@ -830,10 +872,12 @@ macro_rules! follow_node {
             ValueKind::Pointer(None) | ValueKind::MetaAny(None) | ValueKind::AdtVariant(None) => {
                 // (nothing to follow, uninit)
             }
-            ValueKind::MetaType(_)
+            ValueKind::FixedMetaType
+            | ValueKind::DynMetaType(_)
             | ValueKind::MetaFunc(_)
             | ValueKind::MetaString(_)
-            | ValueKind::Func(_)
+            | ValueKind::FixedFunc
+            | ValueKind::DynFunc(_)
             | ValueKind::Scalar(_)
             | ValueKind::Placeholder => {
                 // (nothing to follow)

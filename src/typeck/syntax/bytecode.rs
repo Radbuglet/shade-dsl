@@ -16,7 +16,10 @@ use std::ops::{Add, AddAssign, Sub, SubAssign};
 use crate::{
     base::{ErrorGuaranteed, arena::Obj},
     parse::ast::BinOpKind,
-    typeck::syntax::{FuncInstance, Ty, ValuePlace},
+    typeck::{
+        analysis::TyCoercion,
+        syntax::{AnyFuncValue, FuncInstance, Ty, ValuePlace},
+    },
     utils::lang::StackConsumer,
 };
 
@@ -49,8 +52,8 @@ define_bytecode! {
     /// Pops the specified number of places from the **place stack**.
     Forget { count: u32 } => forget(_ignore: pop place[*count]);
 
-    /// Pops the top of the **place stack** and assigns a `MetaType` to it.
-    AssignTypeLiteral { ty: Obj<Ty> } => assign_type_literal(target: peek place);
+    // TODO
+    Coerce { coercion: TyCoercion } => coerce(src: pop place, dst: peek place);
 
     /// Pops the top of the **place stack** and assigns a deep clone of a constant interned value.
     AssignConst { intern: ValuePlace } => assign_const(target: peek place);
@@ -73,9 +76,14 @@ define_bytecode! {
     /// assignment respectively.
     AssignCopyLhsThenRhs { } => assign_copy_lhs_then_rhs(lhs: pop place, rhs: peek place);
 
+    // TODO
+    CallFixed { callee: AnyFuncValue, args: u32 } => call_fixed(
+        args: peek place[*args], callee: peek place, return_to: peek place
+    );
+
     /// Calls the function with the specified number of arguments. It is the **caller**'s
     /// responsibility clean up the **place stack** after the callee returns by calling `Forget`.
-    Call { args: u32 } => call(args: peek place[*args], callee: peek place, return_to: peek place);
+    CallDyn { args: u32 } => call_dyn(args: peek place[*args], callee: peek place, return_to: peek place);
 
     /// Instantiates the function with the specified number of generics.
     Instantiate { args: u32 } => instantiate(

@@ -32,8 +32,11 @@ pub struct Value {
 
 #[derive(Debug, Clone)]
 pub enum ValueKind {
-    /// A value representing a type.
-    MetaType(Option<Obj<Ty>>),
+    /// A value representing a type defined entirely by the type of the value.
+    FixedMetaType,
+
+    /// A value representing a type where the specific type is type-erased.
+    DynMetaType(Option<Obj<Ty>>),
 
     /// A value representing an uninstantiated function.
     MetaFunc(Option<AnyMetaFuncValue>),
@@ -50,8 +53,11 @@ pub enum ValueKind {
     /// A pointer to another value.
     Pointer(Option<ValuePlace>),
 
-    /// A value representing an instantiated function.
-    Func(Option<AnyFuncValue>),
+    /// A value representing an instantiated function defined entirely by the type of the value.
+    FixedFunc,
+
+    /// A value representing an instantiated function whose specific implementation is type-erased.
+    DynFunc(Option<AnyFuncValue>),
 
     /// A value representing a scalar.
     Scalar(Option<ValueScalar>),
@@ -146,13 +152,15 @@ pub type TyList = Obj<[Obj<Ty>]>;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub enum Ty {
-    MetaTy,
+    FixedMetaTy(Obj<Ty>),
+    DynMetaTy,
     MetaFunc,
     MetaArray(Obj<Ty>),
     MetaString,
     MetaAny,
     Pointer(Obj<Ty>),
-    Func(TyList, Obj<Ty>),
+    FixedFunc(AnyFuncValue),
+    DynFunc(TyList, Obj<Ty>),
     Scalar(ScalarKind),
     Tuple(TyList),
     Array(Obj<Ty>, usize),
@@ -179,31 +187,6 @@ pub enum ScalarKind {
     F64,
     USize,
     ISize,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct TaggedTy {
-    pub ty: Obj<Ty>,
-    pub tag: TyTag,
-}
-
-impl TaggedTy {
-    pub fn new(ty: Obj<Ty>, tag: TyTag) -> Self {
-        Self { ty, tag }
-    }
-
-    pub fn untagged(ty: Obj<Ty>) -> Self {
-        Self {
-            ty,
-            tag: TyTag::Nothing,
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum TyTag {
-    Nothing,
-    MetaTyKnown(Obj<Ty>),
 }
 
 // === Instance === //
@@ -301,6 +284,9 @@ pub struct FuncIntrinsic {
 struct FuncIntrinsicInner {
     _location: &'static Location<'static>,
 
+    arg_tys: TyList,
+    rv_ty: Obj<Ty>,
+
     #[derive_where(skip)]
     #[expect(clippy::type_complexity)]
     invoke:
@@ -309,7 +295,7 @@ struct FuncIntrinsicInner {
 
 impl FuncIntrinsic {
     #[track_caller]
-    pub fn new<F>(f: F, s: &Session) -> Self
+    pub fn new<F>(arg_tys: TyList, rv_ty: Obj<Ty>, f: F, s: &Session) -> Self
     where
         F: Fn(&TyCtxt, &mut ValueArena, &[ValuePlace]) -> Result<ValuePlace, ErrorGuaranteed>,
         F: 'static,
@@ -318,11 +304,19 @@ impl FuncIntrinsic {
             inner: Obj::new(
                 FuncIntrinsicInner {
                     _location: Location::caller(),
+                    arg_tys,
+                    rv_ty,
                     invoke: Box::new(f),
                 },
                 s,
             ),
         }
+    }
+
+    pub fn signature(&self, tcx: &TyCtxt) -> (TyList, Obj<Ty>) {
+        let inner = self.inner.r(&tcx.session);
+
+        (inner.arg_tys, inner.rv_ty)
     }
 
     pub fn invoke(

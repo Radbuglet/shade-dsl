@@ -6,8 +6,9 @@ use crate::{
     typeck::{
         analysis::{WfRequirement, tcx::TyCtxt},
         syntax::{
-            AdtInstance, AnyName, Expr, ExprKind, FuncInstance, Generic, Local, Pat, PatKind,
-            ScalarKind, Stmt, TaggedTy, Ty, TyList, TyTag, ValuePlace,
+            AdtInstance, AnyFuncValue, AnyName, Expr, ExprKind, FuncInstance, Generic, Local, Pat,
+            PatKind, ScalarKind, Stmt, Ty, TyList, ValueArena, ValueArenaLike, ValueKind,
+            ValuePlace,
         },
     },
     utils::hash::FxHashMap,
@@ -44,9 +45,11 @@ impl TyCtxt {
                 instance,
                 erroneous: None,
                 facts: TypeCheckFacts {
-                    expr_types: FxHashMap::default(),
+                    expr_types_pre_coerce: FxHashMap::default(),
                     local_types: FxHashMap::default(),
                     index_exprs: FxHashMap::default(),
+                    call_exprs: FxHashMap::default(),
+                    coercions: FxHashMap::default(),
                     return_ty: self.intern_ty(Ty::Never), // (placeholder)
                 },
             };
@@ -57,7 +60,7 @@ impl TyCtxt {
                 }
             }
 
-            cx.facts.return_ty = cx.check_expr(func.body, expected_ret).ty;
+            cx.facts.return_ty = cx.check_expr(func.body, expected_ret);
 
             if let Some(err) = cx.erroneous {
                 return Err(err);
@@ -67,9 +70,17 @@ impl TyCtxt {
         })
     }
 
-    pub fn instance_fn_ty(&self, instance: Obj<FuncInstance>) -> Result<Obj<Ty>, ErrorGuaranteed> {
-        let (args, ret_ty) = self.instance_signature(instance)?;
-        Ok(self.intern_ty(Ty::Func(args, ret_ty.unwrap())))
+    pub fn any_func_value_signature(
+        &self,
+        func: AnyFuncValue,
+    ) -> Result<(TyList, Option<Obj<Ty>>), ErrorGuaranteed> {
+        match func {
+            AnyFuncValue::Intrinsic(intrinsic) => {
+                let (args, rv) = intrinsic.signature(self);
+                Ok((args, Some(rv)))
+            }
+            AnyFuncValue::Instance(instance) => self.instance_signature(instance),
+        }
     }
 
     pub fn instance_signature(
@@ -85,24 +96,25 @@ impl TyCtxt {
 
             if let Some(args) = &func.params {
                 for arg in args {
-                    arg_tys.push(self.eval_paramless_for_meta_ty(
+                    arg_tys.push(self.eval_paramless_for_returned_ty(
                         self.intern_fn_instance(arg.ty, Some(instance)),
                     )?);
                 }
             }
 
-            let ret_ty = match func.return_type {
-                Some(ty) => Some(
-                    self.eval_paramless_for_meta_ty(self.intern_fn_instance(ty, Some(instance)))?,
-                ),
-                None => None,
-            };
+            let ret_ty =
+                match func.return_type {
+                    Some(ty) => Some(self.eval_paramless_for_returned_ty(
+                        self.intern_fn_instance(ty, Some(instance)),
+                    )?),
+                    None => None,
+                };
 
             Ok((Obj::new_slice(&arg_tys, s), ret_ty))
         })
     }
 
-    pub fn eval_generic_ensuring_conformance(
+    pub fn eval_generic_ensuring_conformance_no_reveal(
         &self,
         generic: Obj<Generic>,
         instance: Obj<FuncInstance>,
@@ -121,14 +133,146 @@ impl TyCtxt {
         let actual_value = instance.generics[generic.idx];
         let actual_ty = self.value_interner.read(actual_value).ty;
 
-        let expected_ty = self
-            .eval_paramless_for_meta_ty(self.intern_fn_instance(generic.ty, Some(instance_obj)))?;
+        let expected_ty = self.eval_paramless_for_returned_ty(
+            self.intern_fn_instance(generic.ty, Some(instance_obj)),
+        )?;
 
-        if expected_ty != actual_ty {
-            todo!();
-        }
+        let actual_value = match self.match_tys_with_coerce(actual_ty, expected_ty) {
+            Ok(coercion) => self.apply_coercion_on_intern(coercion, actual_value),
+            Err(_) => todo!(),
+        };
 
         Ok(actual_value)
+    }
+
+    pub fn eval_generic_ensuring_conformance_with_reveal(
+        &self,
+        generic: Obj<Generic>,
+        instance: Obj<FuncInstance>,
+    ) -> Result<ValuePlace, ErrorGuaranteed> {
+        self.eval_generic_ensuring_conformance_no_reveal(generic, instance)
+            .map(|v| self.reveal_rich_value(v))
+    }
+
+    pub fn match_tys_with_coerce(
+        &self,
+        src: Obj<Ty>,
+        target: Obj<Ty>,
+    ) -> Result<Option<TyCoercion>, IncompatibleTypes> {
+        let s = &self.session;
+
+        if src == target {
+            return Ok(None);
+        }
+
+        match (*src.r(s), *target.r(s)) {
+            (Ty::FixedFunc(func), Ty::DynFunc(expected_args, expected_rv)) => {
+                let Ok((actual_args, actual_rv)) = self.any_func_value_signature(func) else {
+                    // The function could have any signature.
+                    return Ok(None);
+                };
+
+                let actual_rv = actual_rv.unwrap();
+
+                // Coercion and sub-typing are two different concepts. Coercion is an implicit
+                // operation introduced during type-checking while sub-typing is the actual
+                // operation used to determine type compatibility.
+                //
+                // In Rust, it is valid to coerce `fn() {my_func}` to `fn()` but it is not valid to
+                // coerce `fn(fn() {my_func})` to `fn(fn())` because the function signatures are
+                // checked using sub-typing rather than coercion...
+                //
+                // ```rust
+                // fn main() {
+                //     let f = helper(my_func);
+                //     let mut g = helper(my_func as fn());
+                //
+                //     g = f;
+                // }
+                //
+                // fn my_func() {}
+                //
+                // fn helper<T>(f: T) -> fn(T) {
+                //     todo!()
+                // }
+                // ```
+                //
+                // ```
+                // error[E0308]: mismatched types
+                //  --> src/main.rs:5:9
+                //   |
+                // 5 |     g = f;
+                //   |         ^ expected fn pointer, found fn item
+                //   |
+                //   = note: expected fn pointer `fn(fn())`
+                //              found fn pointer `fn(fn() {my_func})`
+                // ```
+                //
+                // Since we don't have sub-typing in this language (lol no regions), we just check
+                // for exact type equality.
+                if expected_args != actual_args {
+                    return Err(IncompatibleTypes);
+                }
+
+                if expected_rv != actual_rv {
+                    return Err(IncompatibleTypes);
+                }
+
+                Ok(Some(TyCoercion {
+                    out_ty: target,
+                    kind: TyCoercionKind::FixedFuncToDyn(func),
+                }))
+            }
+            (Ty::FixedMetaTy(ty), Ty::DynMetaTy) => Ok(Some(TyCoercion {
+                out_ty: target,
+                kind: TyCoercionKind::FixedMetaTypeToDyn(ty),
+            })),
+            _ => Err(IncompatibleTypes),
+        }
+    }
+
+    pub fn apply_coercion_on_intern(
+        &self,
+        coercion: Option<TyCoercion>,
+        intern: ValuePlace,
+    ) -> ValuePlace {
+        let Some(coercion) = coercion else {
+            return intern;
+        };
+
+        self.intern_from_scratch_arena(|dst_arena| {
+            let dst_place = dst_arena.reserve(coercion.out_ty);
+
+            self.apply_coercion(
+                coercion.kind,
+                Some(self.value_interner.arena()),
+                intern,
+                dst_arena,
+                dst_place,
+            );
+
+            dst_place
+        })
+    }
+
+    pub fn apply_coercion(
+        &self,
+        coercion: TyCoercionKind,
+        src_arena: Option<&impl ValueArenaLike>,
+        src_place: ValuePlace,
+        dst_arena: &mut ValueArena,
+        dst_place: ValuePlace,
+    ) {
+        _ = (src_arena, src_place);
+
+        match coercion {
+            TyCoercionKind::FixedFuncToDyn(fv) => {
+                dst_arena.write_terminal(dst_place, ValueKind::DynFunc(Some(fv)));
+            }
+            TyCoercionKind::FixedMetaTypeToDyn(ty) => {
+                dst_arena.write_terminal(dst_place, ValueKind::DynMetaType(Some(ty)));
+            }
+        }
     }
 }
 
@@ -181,26 +325,34 @@ impl CheckCx<'_> {
         }
     }
 
-    fn check_expr(&mut self, expr: Obj<Expr>, expected_ty: Option<Obj<Ty>>) -> TaggedTy {
+    fn check_expr(&mut self, expr: Obj<Expr>, expected_ty: Option<Obj<Ty>>) -> Obj<Ty> {
         let s = &self.tcx.session;
 
         let actual_ty = self.check_expr_inner(expr);
 
-        if let Some(expected_ty) = expected_ty
-            && actual_ty.ty != expected_ty
-        {
-            todo!(
-                "type mismatch at {} in {expr:#?}: {expected_ty:#?}, {actual_ty:#?}",
-                expr.r(s).span
-            );
+        if let Some(expected_ty) = expected_ty {
+            match self.tcx.match_tys_with_coerce(actual_ty, expected_ty) {
+                Ok(Some(coercion)) => {
+                    self.facts.coercions.insert(expr, coercion);
+                }
+                Ok(None) => {
+                    // (empty)
+                }
+                Err(_) => {
+                    todo!(
+                        "type mismatch at {} in {expr:#?}: {expected_ty:#?}, {actual_ty:#?}",
+                        expr.r(s).span
+                    );
+                }
+            }
         }
 
-        self.facts.expr_types.insert(expr, actual_ty.ty);
+        self.facts.expr_types_pre_coerce.insert(expr, actual_ty);
 
-        actual_ty
+        expected_ty.unwrap_or(actual_ty)
     }
 
-    fn check_expr_inner(&mut self, expr: Obj<Expr>) -> TaggedTy {
+    fn check_expr_inner(&mut self, expr: Obj<Expr>) -> Obj<Ty> {
         let s = &self.tcx.session;
 
         match &expr.r(s).kind {
@@ -208,20 +360,18 @@ impl CheckCx<'_> {
                 AnyName::Const(target) => {
                     let instance = self.tcx.intern_fn_instance(*target, Some(self.instance));
 
-                    let (Ok(ty) | Err(ty)) = self
-                        .tcx
-                        .tagged_ty_for_eval_paramless_unwrap_any(instance)
-                        .map_err(|v| TaggedTy::untagged(self.err(v)));
-
-                    ty
+                    match self.tcx.eval_paramless_reveal_rich(instance) {
+                        Ok(intern) => self.tcx.type_of_intern(intern),
+                        Err(err) => self.err(err),
+                    }
                 }
                 AnyName::Generic(ty) => {
                     match self
                         .tcx
-                        .eval_generic_ensuring_conformance(*ty, self.instance)
+                        .eval_generic_ensuring_conformance_with_reveal(*ty, self.instance)
                     {
-                        Ok(value) => self.tcx.tagged_ty_from_intern(value),
-                        Err(err) => TaggedTy::untagged(self.err(err)),
+                        Ok(value) => self.tcx.type_of_intern(value),
+                        Err(err) => self.err(err),
                     }
                 }
                 AnyName::Local(local) => {
@@ -229,7 +379,7 @@ impl CheckCx<'_> {
                         todo!();
                     };
 
-                    TaggedTy::untagged(*ty)
+                    *ty
                 }
             },
             ExprKind::Block(block) => {
@@ -250,14 +400,12 @@ impl CheckCx<'_> {
                 if let Some(last_expr) = block.r(s).last_expr {
                     self.check_expr(last_expr, None)
                 } else {
-                    TaggedTy::untagged(self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[]))))
+                    self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))
                 }
             }
             ExprKind::Lit(kind) => match kind {
-                LiteralKind::BoolLit(_) => {
-                    TaggedTy::untagged(self.tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)))
-                }
-                LiteralKind::StrLit(_) => TaggedTy::untagged(self.tcx.intern_ty(Ty::MetaString)),
+                LiteralKind::BoolLit(_) => self.tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
+                LiteralKind::StrLit(_) => self.tcx.intern_ty(Ty::MetaString),
                 LiteralKind::CharLit(token_char_lit) => todo!(),
                 LiteralKind::NumLit(lit) => todo!(),
             },
@@ -265,9 +413,27 @@ impl CheckCx<'_> {
             ExprKind::Call(callee, args) => {
                 let callee = self.check_expr(*callee, None);
 
-                let Ty::Func(expected_args, expected_rv) = callee.ty.r(s) else {
-                    todo!()
+                let (expected_args, expected_rv, kind) = match callee.r(s) {
+                    Ty::DynFunc(expected_args, expected_rv) => {
+                        (*expected_args, *expected_rv, CallExprKind::Dynamic)
+                    }
+                    Ty::FixedFunc(func) => {
+                        let (expected_args, expected_rv) =
+                            match self.tcx.any_func_value_signature(*func) {
+                                Ok(v) => v,
+                                Err(err) => return self.err(err),
+                            };
+
+                        (
+                            expected_args,
+                            expected_rv.unwrap(),
+                            CallExprKind::Fixed(*func),
+                        )
+                    }
+                    _ => todo!(),
                 };
+
+                self.facts.call_exprs.insert(expr, kind);
 
                 if args.len() != expected_args.r(s).len() {
                     todo!()
@@ -277,13 +443,13 @@ impl CheckCx<'_> {
                     self.check_expr(arg, Some(expected_ty));
                 }
 
-                TaggedTy::untagged(*expected_rv)
+                expected_rv
             }
             ExprKind::Destructure(pat, init) => {
-                let init_ty = self.check_expr(*init, None).ty;
+                let init_ty = self.check_expr(*init, None);
                 self.check_pat(*pat, init_ty);
 
-                TaggedTy::untagged(self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[]))))
+                self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))
             }
             ExprKind::Assign(lhs, rhs) => {
                 let muta = self.check_place_mutability(*lhs);
@@ -293,15 +459,15 @@ impl CheckCx<'_> {
                 }
 
                 let lhs_ty = self.check_expr(*lhs, None);
-                self.check_expr(*rhs, Some(lhs_ty.ty));
+                self.check_expr(*rhs, Some(lhs_ty));
 
-                TaggedTy::untagged(self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[]))))
+                self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))
             }
             ExprKind::NamedIndex(lhs, name) => {
                 let lhs_ty = self.check_expr(*lhs, None);
 
-                let (index_kind, index_result) = match (lhs_ty.ty.r(s), lhs_ty.tag) {
-                    (Ty::MetaTy, TyTag::MetaTyKnown(ty)) => {
+                let (index_kind, index_result) = match lhs_ty.r(s) {
+                    Ty::FixedMetaTy(ty) => {
                         let Ty::Adt(adt) = ty.r(s) else {
                             todo!();
                         };
@@ -331,12 +497,15 @@ impl CheckCx<'_> {
 
                         let member = self.tcx.intern_fn_instance(member.init, Some(adt.owner));
 
-                        let ty = self
-                            .tcx
-                            .tagged_ty_for_eval_paramless_unwrap_any(member)
-                            .unwrap_or_else(|err| TaggedTy::untagged(self.err(err)));
-
-                        (IndexKind::ConstMember(member), ty)
+                        match self.tcx.eval_paramless_reveal_rich(member) {
+                            Ok(value) => (
+                                IndexExprKind::ConstMember(value),
+                                self.tcx.type_of_intern(value),
+                            ),
+                            Err(err) => {
+                                return self.err(err);
+                            }
+                        }
                     }
                     // Ty::Pointer(obj) => todo!(),
                     // Ty::Tuple(obj) => todo!(),
@@ -361,10 +530,7 @@ impl CheckCx<'_> {
                     adt: *adt,
                 }));
 
-                TaggedTy::new(
-                    self.tcx.intern_ty(Ty::MetaTy),
-                    TyTag::MetaTyKnown(type_represented),
-                )
+                self.tcx.intern_ty(Ty::FixedMetaTy(type_represented))
             }
             ExprKind::Func(func) => {
                 if func.r(s).inner.generics.is_empty() {
@@ -372,12 +538,10 @@ impl CheckCx<'_> {
 
                     self.tcx.queue_wf(WfRequirement::TypeCheck(instance));
 
-                    let (Ok(ty) | Err(ty)) =
-                        self.tcx.instance_fn_ty(instance).map_err(|v| self.err(v));
-
-                    TaggedTy::untagged(ty)
+                    self.tcx
+                        .intern_ty(Ty::FixedFunc(AnyFuncValue::Instance(instance)))
                 } else {
-                    TaggedTy::untagged(self.tcx.intern_ty(Ty::MetaFunc))
+                    self.tcx.intern_ty(Ty::MetaFunc)
                 }
             }
             ExprKind::Instantiate(callee, args) => {
@@ -387,25 +551,26 @@ impl CheckCx<'_> {
                     self.check_expr(*arg, None);
                 }
 
-                TaggedTy::untagged(self.tcx.intern_ty(Ty::MetaAny))
+                self.tcx.intern_ty(Ty::MetaAny)
             }
             ExprKind::Intrinsic(name) => {
                 let Some(intrinsic) = self.tcx.resolve_intrinsic(*name) else {
                     todo!();
                 };
 
-                self.tcx.tagged_ty_from_intern(intrinsic)
+                self.tcx.type_of_intern(intrinsic)
             }
             ExprKind::NewTuple(fields) => {
                 let tys = fields
                     .iter()
-                    .map(|expr| self.check_expr(*expr, None).ty)
+                    .map(|expr| self.check_expr(*expr, None))
                     .collect::<Vec<_>>();
 
-                TaggedTy::untagged(self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&tys))))
+                self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&tys)))
             }
-            ExprKind::NewTupleType(_) => TaggedTy::untagged(self.tcx.intern_ty(Ty::MetaTy)),
-            ExprKind::Error(err) => TaggedTy::untagged(self.err(*err)),
+            // TODO
+            ExprKind::NewTupleType(_) => self.tcx.intern_ty(Ty::DynMetaTy),
+            ExprKind::Error(err) => self.err(*err),
         }
     }
 
@@ -422,15 +587,46 @@ impl CheckCx<'_> {
 
 #[derive(Debug)]
 pub struct TypeCheckFacts {
-    pub expr_types: FxHashMap<Obj<Expr>, Obj<Ty>>,
+    pub expr_types_pre_coerce: FxHashMap<Obj<Expr>, Obj<Ty>>,
     pub local_types: FxHashMap<Obj<Local>, Obj<Ty>>,
-    pub index_exprs: FxHashMap<Obj<Expr>, IndexKind>,
+    pub index_exprs: FxHashMap<Obj<Expr>, IndexExprKind>,
+    pub call_exprs: FxHashMap<Obj<Expr>, CallExprKind>,
+    pub coercions: FxHashMap<Obj<Expr>, TyCoercion>,
     pub return_ty: Obj<Ty>,
 }
 
+impl TypeCheckFacts {
+    pub fn expr_type_post_coerce(&self, expr: Obj<Expr>) -> Obj<Ty> {
+        match self.coercions.get(&expr) {
+            Some(coercion) => coercion.out_ty,
+            None => self.expr_types_pre_coerce[&expr],
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub enum IndexKind {
+pub enum IndexExprKind {
     AdtField(u32),
     TupleField(u32),
-    ConstMember(Obj<FuncInstance>),
+    ConstMember(ValuePlace),
+}
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub enum CallExprKind {
+    Dynamic,
+    Fixed(AnyFuncValue),
+}
+
+pub struct IncompatibleTypes;
+
+#[derive(Debug, Copy, Clone)]
+pub struct TyCoercion {
+    pub out_ty: Obj<Ty>,
+    pub kind: TyCoercionKind,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum TyCoercionKind {
+    FixedFuncToDyn(AnyFuncValue),
+    FixedMetaTypeToDyn(Obj<Ty>),
 }

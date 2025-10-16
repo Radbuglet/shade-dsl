@@ -1,0 +1,22 @@
+const fol = mod { ... };
+
+const Box = {
+    const TName = fol.GenericName.new("T");
+
+    fol.make_struct([TName], [], fn<T: type> {
+        // TODO
+    });
+};
+
+const my_deref = {
+    const TName = fol.GenericName.new("T");
+    const VName = fol.GenericName.new("V");
+
+    fol.make_func(
+        [TName, VName],
+        [fol.Constraint.new(derefs_to_proposition, [TName, VName])],
+        fn<T: type, V: type>(input: *mut T) -> *mut V {
+            ...
+        },
+    );
+};

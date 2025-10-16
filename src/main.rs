@@ -8,7 +8,7 @@ use shade_dsl::{
     parse::{ast::parse_file, lower::lower_file, token::tokenize},
     typeck::{
         analysis::{IntrinsicResolver, TyCtxt, WfRequirement},
-        syntax::{AnyFuncValue, FuncIntrinsic, ScalarKind, Ty, ValueKind},
+        syntax::{FuncIntrinsic, ScalarKind, Ty, ValueKind},
     },
 };
 
@@ -38,34 +38,30 @@ fn main() {
                     let s = &tcx.session;
 
                     tcx.intern_from_scratch_arena(|arena| {
-                        arena.alloc_terminal(
-                            tcx.intern_ty(Ty::Func(
-                                tcx.intern_tys(&[tcx.intern_ty(Ty::MetaString)]),
-                                tcx.intern_ty(Ty::MetaTy),
-                            )),
-                            ValueKind::Func(Some(AnyFuncValue::Intrinsic(FuncIntrinsic::new(
-                                move |tcx, arena, args| {
-                                    let ValueKind::MetaString(Some(str)) = arena.read(args[0]).kind
-                                    else {
-                                        unreachable!()
-                                    };
-                                    let str = str.as_str(&tcx.session);
+                        arena.alloc_intrinsic_fn(FuncIntrinsic::new(
+                            tcx.intern_tys(&[tcx.intern_ty(Ty::MetaString)]),
+                            tcx.intern_ty(Ty::DynMetaTy),
+                            move |tcx, arena, args| {
+                                let ValueKind::MetaString(Some(str)) = arena.read(args[0]).kind
+                                else {
+                                    unreachable!()
+                                };
+                                let str = str.as_str(&tcx.session);
 
-                                    let ty = match str {
-                                        "bool" => tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
-                                        "u32" => tcx.intern_ty(Ty::Scalar(ScalarKind::U32)),
-                                        "type" => tcx.intern_ty(Ty::MetaTy),
-                                        _ => todo!(),
-                                    };
+                                let ty = match str {
+                                    "bool" => tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
+                                    "u32" => tcx.intern_ty(Ty::Scalar(ScalarKind::U32)),
+                                    "type" => tcx.intern_ty(Ty::DynMetaTy),
+                                    _ => todo!(),
+                                };
 
-                                    Ok(arena.alloc_terminal(
-                                        tcx.intern_ty(Ty::MetaTy),
-                                        ValueKind::MetaType(Some(ty)),
-                                    ))
-                                },
-                                s,
-                            )))),
-                        )
+                                Ok(arena.alloc_terminal(
+                                    tcx.intern_ty(Ty::DynMetaTy),
+                                    ValueKind::DynMetaType(Some(ty)),
+                                ))
+                            },
+                            s,
+                        ))
                     })
                 }),
             )]),

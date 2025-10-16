@@ -108,6 +108,10 @@ impl TyCtxt {
         }
     }
 
+    pub fn type_of_intern(&self, intern: ValuePlace) -> Obj<Ty> {
+        self.value_interner.read(intern).ty
+    }
+
     pub fn intern_ty(&self, ty: Ty) -> Obj<Ty> {
         self.ty_interner.intern(ty, &self.session)
     }
@@ -180,13 +184,13 @@ impl TyCtxt {
                     _ = self.eval_paramless(instance);
                 }
                 WfRequirement::EvaluateType(instance) => {
-                    _ = self.eval_paramless_for_meta_ty(instance);
+                    _ = self.eval_paramless_for_returned_ty(instance);
                 }
                 WfRequirement::ValidateAdt(instance) => {
                     let lexical = instance.adt.r(s);
 
                     for field in &lexical.fields {
-                        _ = self.eval_paramless_for_meta_ty(
+                        _ = self.eval_paramless_for_returned_ty(
                             self.intern_fn_instance(field.ty, Some(instance.owner)),
                         );
                     }
@@ -198,7 +202,7 @@ impl TyCtxt {
                     }
                 }
                 WfRequirement::EvalGeneric(generic, instance) => {
-                    _ = self.eval_generic_ensuring_conformance(generic, instance);
+                    _ = self.eval_generic_ensuring_conformance_no_reveal(generic, instance);
                 }
             }
         }

@@ -4,11 +4,11 @@ use crate::{
     base::{ErrorGuaranteed, arena::Obj},
     parse::ast::LiteralKind,
     typeck::{
-        analysis::{IndexKind, TypeCheckFacts, tcx::TyCtxt},
+        analysis::{CallExprKind, IndexExprKind, TypeCheckFacts, tcx::TyCtxt},
         syntax::{
-            AdtInstance, AnyFuncValue, AnyMetaFuncValue, AnyName, BycDepth, BycFunction, BycInstr,
-            Expr, ExprKind, FuncInstance, Local, MetaFuncInstance, Pat, PatKind, Stmt, Ty,
-            ValueKind, ValueScalar, byc_instr, visit_named_places,
+            AdtInstance, AnyMetaFuncValue, AnyName, BycDepth, BycFunction, BycInstr, Expr,
+            ExprKind, FuncInstance, Local, MetaFuncInstance, Pat, PatKind, Stmt, Ty, ValueKind,
+            ValueScalar, byc_instr, visit_named_places,
         },
     },
     utils::hash::FxHashMap,
@@ -136,7 +136,7 @@ impl<'a> BycBuilderCtxt<'a> {
 
     fn lower_expr_for_direct(&mut self, expr: Obj<Expr>) {
         let old_depth = self.depth.place;
-        self.lower_expr_inner(ExprLowerMode::Place, expr);
+        self.lower_expr_no_checks_perform_coerce(ExprLowerMode::Place, expr);
         debug_assert_eq!(
             self.depth.place,
             old_depth + 1,
@@ -146,7 +146,7 @@ impl<'a> BycBuilderCtxt<'a> {
 
     fn lower_expr_for_operand(&mut self, expr: Obj<Expr>) {
         let old_depth = self.depth.place;
-        self.lower_expr_inner(ExprLowerMode::Operand, expr);
+        self.lower_expr_no_checks_perform_coerce(ExprLowerMode::Operand, expr);
         debug_assert_eq!(
             self.depth.place, old_depth,
             "stack broken while lowering for operand (dt = 0)...\n{expr:#?}"
@@ -155,16 +155,33 @@ impl<'a> BycBuilderCtxt<'a> {
 
     fn lower_expr_for_copy(&mut self, expr: Obj<Expr>) {
         self.push(byc_instr::Allocate {
-            ty: self.facts.expr_types[&expr],
+            ty: self.facts.expr_type_post_coerce(expr),
         });
         self.push(byc_instr::Reference { at: 0 });
         self.lower_expr_for_operand(expr);
     }
 
-    fn lower_expr_inner(&mut self, expected_mode: ExprLowerMode, expr: Obj<Expr>) {
+    fn lower_expr_no_checks_perform_coerce(
+        &mut self,
+        expected_mode: ExprLowerMode,
+        expr: Obj<Expr>,
+    ) {
+        if let Some(coercion) = self.facts.coercions.get(&expr) {
+            self.adapt_operand(coercion.out_ty, expected_mode, |this| {
+                this.lower_expr_no_checks_no_coerce(ExprLowerMode::Place, expr);
+                this.push(byc_instr::Coerce {
+                    coercion: *coercion,
+                });
+            });
+        } else {
+            self.lower_expr_no_checks_no_coerce(expected_mode, expr);
+        }
+    }
+
+    fn lower_expr_no_checks_no_coerce(&mut self, expected_mode: ExprLowerMode, expr: Obj<Expr>) {
         let s = &self.tcx.session;
 
-        let expr_ty = self.facts.expr_types[&expr];
+        let expr_ty = self.facts.expr_types_pre_coerce[&expr];
 
         match &expr.r(s).kind {
             ExprKind::Name(name) => match name {
@@ -178,7 +195,7 @@ impl<'a> BycBuilderCtxt<'a> {
                 AnyName::Generic(generic) => {
                     let cst = self
                         .tcx
-                        .eval_generic_ensuring_conformance(*generic, self.instance)
+                        .eval_generic_ensuring_conformance_with_reveal(*generic, self.instance)
                         .unwrap();
 
                     self.adapt_operand(expr_ty, expected_mode, |this| {
@@ -261,9 +278,20 @@ impl<'a> BycBuilderCtxt<'a> {
                         this.lower_expr_for_copy(arg);
                     }
 
-                    this.push(byc_instr::Call {
-                        args: args.len() as u32,
-                    });
+                    match self.facts.call_exprs[&expr] {
+                        CallExprKind::Dynamic => {
+                            this.push(byc_instr::CallDyn {
+                                args: args.len() as u32,
+                            });
+                        }
+                        CallExprKind::Fixed(callee) => {
+                            this.push(byc_instr::CallFixed {
+                                callee,
+                                args: args.len() as u32,
+                            });
+                        }
+                    }
+
                     this.push(byc_instr::Forget {
                         count: args.len() as u32 + 1,
                     });
@@ -287,25 +315,32 @@ impl<'a> BycBuilderCtxt<'a> {
                 });
             }
             ExprKind::NamedIndex(lhs, _name) => match self.facts.index_exprs[&expr] {
-                IndexKind::AdtField(_) => todo!(),
-                IndexKind::TupleField(_) => todo!(),
-                IndexKind::ConstMember(inst) => {
+                IndexExprKind::AdtField(_) => todo!(),
+                IndexExprKind::TupleField(_) => todo!(),
+                IndexExprKind::ConstMember(intern) => {
                     self.lower_expr_for_direct(*lhs);
                     self.push(byc_instr::Forget { count: 1 });
 
                     self.adapt_operand(expr_ty, expected_mode, |this| {
-                        this.push(byc_instr::AssignConstExpr { func: inst });
+                        this.push(byc_instr::AssignConst { intern });
                     });
                 }
             },
             ExprKind::Match(expr_match) => todo!(),
             ExprKind::Adt(adt) => {
+                let adt = self.tcx.intern_ty(Ty::Adt(AdtInstance {
+                    owner: self.instance,
+                    adt: *adt,
+                }));
+
                 self.adapt_operand(expr_ty, expected_mode, |this| {
-                    this.push(byc_instr::AssignTypeLiteral {
-                        ty: this.tcx.intern_ty(Ty::Adt(AdtInstance {
-                            owner: this.instance,
-                            adt: *adt,
-                        })),
+                    this.push(byc_instr::AssignConst {
+                        intern: this.tcx.intern_from_scratch_arena(|arena| {
+                            arena.alloc_terminal(
+                                self.tcx.intern_ty(Ty::FixedMetaTy(adt)),
+                                ValueKind::FixedMetaType,
+                            )
+                        }),
                     });
                 });
             }
@@ -332,9 +367,7 @@ impl<'a> BycBuilderCtxt<'a> {
             }
             ExprKind::Func(func) => {
                 let value = if func.r(s).inner.generics.is_empty() {
-                    let instance = self.tcx.intern_fn_instance(*func, Some(self.instance));
-
-                    ValueKind::Func(Some(AnyFuncValue::Instance(instance)))
+                    ValueKind::FixedFunc
                 } else {
                     ValueKind::MetaFunc(Some(AnyMetaFuncValue::Instance(MetaFuncInstance {
                         func: *func,

@@ -24,6 +24,7 @@ impl TyCtxt {
                     self,
                     &id.as_str(&self.session).split(".").collect::<Vec<_>>(),
                 )?;
+                let value = self.reveal_rich_value(value);
                 entry.insert(value);
                 Some(value)
             }

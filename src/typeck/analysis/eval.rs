@@ -7,7 +7,7 @@ use crate::{
         analysis::{TyCtxt, WfRequirement},
         syntax::{
             AnyFuncValue, AnyMetaFuncValue, BycDepth, BycFunction, BycInstr, BycInstrHandler,
-            CopyDepth, FuncInstance, TaggedTy, Ty, TyTag, ValueArena, ValueKind, ValuePlace,
+            CopyDepth, FuncInstance, Ty, ValueArena, ValueArenaLike, ValueKind, ValuePlace,
             ValueScalar, byc_instr,
         },
     },
@@ -27,47 +27,43 @@ impl TyCtxt {
         })
     }
 
-    pub fn eval_paramless_unwrap_any(
+    pub fn eval_paramless_reveal_rich(
         &self,
         instance: Obj<FuncInstance>,
     ) -> Result<ValuePlace, ErrorGuaranteed> {
-        let mut out = self.eval_paramless(instance)?;
+        self.eval_paramless(instance)
+            .map(|v| self.reveal_rich_value(v))
+    }
 
-        while let ValueKind::MetaAny(Some(curr)) = self.value_interner.read(out).kind {
-            out = curr;
+    pub fn reveal_rich_value(&self, mut intern: ValuePlace) -> ValuePlace {
+        while let ValueKind::MetaAny(Some(curr)) = self.value_interner.read(intern).kind {
+            intern = curr;
         }
 
-        Ok(out)
-    }
-
-    pub fn tagged_ty_for_eval_paramless_unwrap_any(
-        &self,
-        instance: Obj<FuncInstance>,
-    ) -> Result<TaggedTy, ErrorGuaranteed> {
-        let value = self.eval_paramless_unwrap_any(instance)?;
-
-        Ok(self.tagged_ty_from_intern(value))
-    }
-
-    pub fn tagged_ty_from_intern(&self, intern: ValuePlace) -> TaggedTy {
-        let intern = self.value_interner.read(intern);
-
-        TaggedTy {
-            ty: intern.ty,
-            tag: match &intern.kind {
-                ValueKind::MetaType(Some(ty)) => TyTag::MetaTyKnown(*ty),
-                _ => TyTag::Nothing,
-            },
+        match self.value_interner.read(intern).kind {
+            ValueKind::DynMetaType(Some(ty)) => self.intern_from_scratch_arena(|arena| {
+                arena.alloc_terminal(
+                    self.intern_ty(Ty::FixedMetaTy(ty)),
+                    ValueKind::FixedMetaType,
+                )
+            }),
+            ValueKind::DynFunc(Some(instance)) => self.intern_from_scratch_arena(|arena| {
+                arena.alloc_terminal(
+                    self.intern_ty(Ty::FixedFunc(instance)),
+                    ValueKind::FixedFunc,
+                )
+            }),
+            _ => intern,
         }
     }
 
-    pub fn eval_paramless_for_meta_ty(
+    pub fn eval_paramless_for_returned_ty(
         &self,
         instance: Obj<FuncInstance>,
     ) -> Result<Obj<Ty>, ErrorGuaranteed> {
-        let value = self.eval_paramless(instance)?;
+        let value = self.eval_paramless_reveal_rich(instance)?;
 
-        let ValueKind::MetaType(Some(ty)) = self.value_interner.read(value).kind else {
+        let Some(ty) = self.value_interner.arena().read_ty(self, value) else {
             todo!();
         };
 
@@ -137,7 +133,7 @@ impl InterpretCx<'_> {
                 },
             )?;
 
-            if !matches!(curr_instr, BycInstr::Call(_)) {
+            if !matches!(curr_instr, BycInstr::CallDyn(_)) {
                 debug_assert_eq!(
                     expected_depth,
                     BycDepth {
@@ -222,13 +218,19 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         Ok([])
     }
 
-    fn assign_type_literal<'a>(
+    fn coerce<'a>(
         &mut self,
-        instr: &'a byc_instr::AssignTypeLiteral,
-        target: ValuePlace,
+        instr: &'a byc_instr::Coerce,
+        src: ValuePlace,
+        dst: ValuePlace,
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
-        self.arena
-            .write_terminal(target, ValueKind::MetaType(Some(instr.ty)));
+        self.tcx.apply_coercion(
+            instr.coercion.kind,
+            None::<&ValueArena>,
+            src,
+            self.arena,
+            dst,
+        );
 
         Ok([])
     }
@@ -255,7 +257,7 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         instr: &'a byc_instr::AssignConstExpr,
         target: ValuePlace,
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
-        let intern = self.tcx.eval_paramless_unwrap_any(instr.func)?;
+        let intern = self.tcx.eval_paramless_reveal_rich(instr.func)?;
 
         let temp = self.arena.copy_from(
             Some(self.tcx.value_interner.arena()),
@@ -279,7 +281,7 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
             &fields
                 .iter()
                 .map(|place| {
-                    let ValueKind::MetaType(Some(ty)) = self.arena.read(*place).kind else {
+                    let ValueKind::DynMetaType(Some(ty)) = self.arena.read(*place).kind else {
                         unreachable!()
                     };
 
@@ -290,7 +292,7 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         let ty = self.tcx.intern_ty(Ty::Tuple(ty));
 
         self.arena
-            .write_terminal(assign_to, ValueKind::MetaType(Some(ty)));
+            .write_terminal(assign_to, ValueKind::DynMetaType(Some(ty)));
 
         Ok([])
     }
@@ -317,37 +319,38 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         Ok([])
     }
 
-    fn call<'a>(
+    fn call_fixed<'a>(
         &mut self,
-        _instr: &'a byc_instr::Call,
+        instr: &'a byc_instr::CallFixed,
         args: &'a [ValuePlace],
         callee: ValuePlace,
         return_to: ValuePlace,
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
         let callee = self.arena.read(callee);
 
-        let ValueKind::Func(Some(callee)) = callee.kind else {
+        let ValueKind::FixedFunc = callee.kind else {
             unreachable!()
         };
 
-        match callee {
-            AnyFuncValue::Intrinsic(callee) => {
-                let temp = callee.invoke(
-                    self.tcx,
-                    self.arena,
-                    &args.iter().copied().rev().collect::<Vec<_>>(),
-                )?;
+        self.call(instr.callee, args, return_to)?;
 
-                self.arena.assign(temp, return_to);
-                self.arena.free(temp);
-            }
-            AnyFuncValue::Instance(callee) => {
-                self.call_stack.push((
-                    self.tcx.build_bytecode(callee)?.r(&self.tcx.session),
-                    0usize,
-                ));
-            }
-        }
+        Ok([])
+    }
+
+    fn call_dyn<'a>(
+        &mut self,
+        _instr: &'a byc_instr::CallDyn,
+        args: &'a [ValuePlace],
+        callee: ValuePlace,
+        return_to: ValuePlace,
+    ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
+        let callee = self.arena.read(callee);
+
+        let ValueKind::DynFunc(Some(callee)) = callee.kind else {
+            unreachable!()
+        };
+
+        self.call(callee, args, return_to)?;
 
         Ok([])
     }
@@ -394,11 +397,13 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
                 if target.func.r(&self.tcx.session).inner.params.is_some() {
                     self.tcx.queue_wf(WfRequirement::TypeCheck(instance));
 
-                    let temp = self.arena.reserve(self.tcx.instance_fn_ty(instance)?);
-                    self.arena.write_terminal(
-                        temp,
-                        ValueKind::Func(Some(AnyFuncValue::Instance(instance))),
+                    let temp = self.arena.reserve(
+                        self.tcx
+                            .intern_ty(Ty::FixedFunc(AnyFuncValue::Instance(instance))),
                     );
+
+                    self.arena.write_terminal(temp, ValueKind::FixedFunc);
+
                     temp
                 } else {
                     let intern = self.tcx.eval_paramless(instance)?;
@@ -511,5 +516,35 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         }
 
         Ok([])
+    }
+}
+
+impl InterpretCxHandler<'_, '_> {
+    pub fn call(
+        &mut self,
+        callee: AnyFuncValue,
+        args: &[ValuePlace],
+        return_to: ValuePlace,
+    ) -> Result<(), ErrorGuaranteed> {
+        match callee {
+            AnyFuncValue::Intrinsic(callee) => {
+                let temp = callee.invoke(
+                    self.tcx,
+                    self.arena,
+                    &args.iter().copied().rev().collect::<Vec<_>>(),
+                )?;
+
+                self.arena.assign(temp, return_to);
+                self.arena.free(temp);
+            }
+            AnyFuncValue::Instance(callee) => {
+                self.call_stack.push((
+                    self.tcx.build_bytecode(callee)?.r(&self.tcx.session),
+                    0usize,
+                ));
+            }
+        }
+
+        Ok(())
     }
 }

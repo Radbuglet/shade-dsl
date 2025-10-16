@@ -1,14 +1,25 @@
-const builtins = mod {
+pub const builtins = mod {
     const get_builtin_type = intrinsic("core.get_builtin_type");
 
     pub const bool = get_builtin_type("bool");
     pub const u32 = get_builtin_type("u32");
     pub const metatype = get_builtin_type("type");
+
+    pub const special = mod {
+        pub const get_builtin_type = builtins.get_builtin_type;
+    };
 };
 
-const Vec = fn<T: builtins.metatype> -> builtins.metatype {
+pub const Vec = fn<T: builtins.metatype> -> builtins.metatype {
     struct {
         pub const Elem = T;
+
+        cap: builtins.u32;
+        len: builtins.u32;
+
+        // pub const push = fn(self: *mut Self, item: Elem) {
+
+        // };
     }
 };
 
