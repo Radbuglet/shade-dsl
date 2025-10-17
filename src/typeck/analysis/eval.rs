@@ -7,8 +7,8 @@ use crate::{
         analysis::{TyCtxt, WfRequirement},
         syntax::{
             AnyFuncValue, AnyMetaFuncValue, BycDepth, BycFunction, BycInstr, BycInstrHandler,
-            CopyDepth, FuncInstance, Ty, ValueArena, ValueArenaLike, ValueKind, ValuePlace,
-            ValueScalar, byc_instr,
+            FuncInstance, Ty, ValueArena, ValueArenaLike, ValueKind, ValuePlace, ValueScalar,
+            byc_instr,
         },
     },
 };
@@ -83,9 +83,10 @@ impl TyCtxt {
 
         let place_stack = [return_place, ValuePlace::DANGLING]
             .into_iter()
-            .chain(args.iter().map(|intern| {
-                arena.copy_from(Some(self.value_interner.arena()), *intern, CopyDepth::Deep)
-            }))
+            .chain(
+                args.iter()
+                    .map(|intern| arena.copy_from(self.value_interner.arena(), *intern)),
+            )
             .collect::<Vec<_>>();
 
         InterpretCx {
@@ -240,11 +241,9 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
         instr: &'a byc_instr::AssignConst,
         target: ValuePlace,
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
-        let temp = self.arena.copy_from(
-            Some(self.tcx.value_interner.arena()),
-            instr.intern,
-            CopyDepth::Deep,
-        );
+        let temp = self
+            .arena
+            .copy_from(self.tcx.value_interner.arena(), instr.intern);
 
         self.arena.assign(temp, target);
         self.arena.free(temp);
@@ -259,11 +258,9 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
     ) -> Result<[ValuePlace; 0], ErrorGuaranteed> {
         let intern = self.tcx.eval_paramless_reveal_rich(instr.func)?;
 
-        let temp = self.arena.copy_from(
-            Some(self.tcx.value_interner.arena()),
-            intern,
-            CopyDepth::Deep,
-        );
+        let temp = self
+            .arena
+            .copy_from(self.tcx.value_interner.arena(), intern);
 
         self.arena.assign(temp, target);
         self.arena.free(temp);
@@ -377,11 +374,8 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
                     .tcx
                     .eval_intrinsic_meta_fn(target, &args.as_slice().raw)?;
 
-                self.arena.copy_from(
-                    Some(self.tcx.value_interner.arena()),
-                    intern,
-                    CopyDepth::Deep,
-                )
+                self.arena
+                    .copy_from(self.tcx.value_interner.arena(), intern)
             }
             AnyMetaFuncValue::Instance(target) => {
                 let expected_count = target.func.r(&self.tcx.session).inner.generics.len();
@@ -408,11 +402,8 @@ impl BycInstrHandler for InterpretCxHandler<'_, '_> {
                 } else {
                     let intern = self.tcx.eval_paramless(instance)?;
 
-                    self.arena.copy_from(
-                        Some(self.tcx.value_interner.arena()),
-                        intern,
-                        CopyDepth::Deep,
-                    )
+                    self.arena
+                        .copy_from(self.tcx.value_interner.arena(), intern)
                 }
             }
         };

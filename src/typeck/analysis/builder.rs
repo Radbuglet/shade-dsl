@@ -211,34 +211,38 @@ impl<'a> BycBuilderCtxt<'a> {
                 }
             },
             ExprKind::Block(block) => {
-                self.scope_locals(|this| {
-                    for stmt in &block.r(s).stmts {
-                        match stmt {
-                            Stmt::Live(local) => {
-                                this.push(byc_instr::Allocate {
-                                    ty: self.facts.local_types[local],
-                                });
-                                this.locals.insert(*local, this.depth.local as u32);
-                            }
-                            Stmt::Expr(expr) => {
-                                this.scope_locals(|this| {
-                                    this.lower_expr_for_direct(*expr);
-                                    this.push(byc_instr::Forget { count: 1 });
-                                });
+                // N.B. if we're being lowered for a place, ensure that the output place is above
+                // all the locals we allocate within the block so we can free them without also
+                // freeing the return place.
+                self.adapt_operand(expr_ty, expected_mode, |this| {
+                    this.scope_locals(|this| {
+                        for stmt in &block.r(s).stmts {
+                            match stmt {
+                                Stmt::Live(local) => {
+                                    this.push(byc_instr::Allocate {
+                                        ty: self.facts.local_types[local],
+                                    });
+                                    this.locals.insert(*local, this.depth.local as u32);
+                                }
+                                Stmt::Expr(expr) => {
+                                    this.scope_locals(|this| {
+                                        this.lower_expr_for_direct(*expr);
+                                        this.push(byc_instr::Forget { count: 1 });
+                                    });
+                                }
                             }
                         }
-                    }
 
-                    if let Some(last_expr) = block.r(s).last_expr {
-                        match expected_mode {
-                            ExprLowerMode::Place => this.lower_expr_for_direct(last_expr),
-                            ExprLowerMode::Operand => this.lower_expr_for_operand(last_expr),
-                        }
-                    } else {
-                        this.adapt_operand(expr_ty, expected_mode, |_this| {
+                        if let Some(last_expr) = block.r(s).last_expr {
+                            // N.B. we don't want to destroy the local into which the value is written
+                            // if this expression is being lowered for a place but we want to destroy all
+                            // temporaries used to lower the expression.
+
+                            this.lower_expr_for_operand(last_expr)
+                        } else {
                             // (tuples are initialized at reservation time)
-                        });
-                    }
+                        }
+                    });
                 });
             }
             ExprKind::Lit(lit) => {

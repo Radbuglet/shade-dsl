@@ -24,6 +24,12 @@ pub const Vec = fn<T: builtins.metatype> -> builtins.metatype {
     }
 };
 
+const funky = fn<foo: builtins.any> -> builtins.any {
+    true
+};
+
+const funky2 = funky.<builtins.u32>;
+
 const demo = {
     let mut foo = builtins.u32;
     foo = const { builtins.special.get_builtin_type("u32") };

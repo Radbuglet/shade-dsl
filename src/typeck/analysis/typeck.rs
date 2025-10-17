@@ -227,6 +227,10 @@ impl TyCtxt {
                 out_ty: target,
                 kind: TyCoercionKind::FixedMetaTypeToDyn(ty),
             })),
+            (_, Ty::MetaAny) => Ok(Some(TyCoercion {
+                out_ty: target,
+                kind: TyCoercionKind::ToAny,
+            })),
             _ => Err(IncompatibleTypes),
         }
     }
@@ -263,8 +267,6 @@ impl TyCtxt {
         dst_arena: &mut ValueArena,
         dst_place: ValuePlace,
     ) {
-        _ = (src_arena, src_place);
-
         match coercion {
             TyCoercionKind::FixedFuncToDyn(fv) => {
                 dst_arena.write_terminal(dst_place, ValueKind::DynFunc(Some(fv)));
@@ -272,6 +274,23 @@ impl TyCtxt {
             TyCoercionKind::FixedMetaTypeToDyn(ty) => {
                 dst_arena.write_terminal(dst_place, ValueKind::DynMetaType(Some(ty)));
             }
+            TyCoercionKind::ToAny => match src_arena {
+                Some(src_arena) => {
+                    let dst_place =
+                        dst_arena.write_meta_any_some(dst_place, src_arena.read(src_place).ty);
+
+                    let src_place = dst_arena.copy_from(src_arena, src_place);
+
+                    dst_arena.assign(src_place, dst_place);
+                    dst_arena.free(src_place);
+                }
+                None => {
+                    let dst_place =
+                        dst_arena.write_meta_any_some(dst_place, dst_arena.read(src_place).ty);
+
+                    dst_arena.assign(src_place, dst_place);
+                }
+            },
         }
     }
 }
@@ -631,4 +650,5 @@ pub struct TyCoercion {
 pub enum TyCoercionKind {
     FixedFuncToDyn(AnyFuncValue),
     FixedMetaTypeToDyn(Obj<Ty>),
+    ToAny,
 }

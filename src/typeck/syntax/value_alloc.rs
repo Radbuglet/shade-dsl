@@ -451,27 +451,24 @@ impl ValueArena {
     }
 
     pub fn copy(&mut self, target: ValuePlace, depth: CopyDepth) -> ValuePlace {
-        self.copy_from(Option::<&Self>::None, target, depth)
+        self.copy_from_inner(Option::<&Self>::None, target, depth)
     }
 
     pub fn copy_from(
+        &mut self,
+        from_arena: &impl ValueArenaLike,
+        target: ValuePlace,
+    ) -> ValuePlace {
+        self.copy_from_inner(Some(from_arena), target, CopyDepth::Deep)
+    }
+
+    fn copy_from_inner(
         &mut self,
         from_arena: Option<&impl ValueArenaLike>,
         from_root: ValuePlace,
         depth: CopyDepth,
     ) -> ValuePlace {
         let to_root = self.reserve_placeholder_value_and_ty();
-        self.copy_from_with_initial_root(from_arena, from_root, to_root, depth);
-        to_root
-    }
-
-    pub fn copy_from_with_initial_root(
-        &mut self,
-        from_arena: Option<&impl ValueArenaLike>,
-        from_root: ValuePlace,
-        to_root: ValuePlace,
-        depth: CopyDepth,
-    ) {
         let mut stack = vec![(from_root, to_root)];
         let mut mapping = FxHashMap::from_iter([(from_root, to_root)]);
 
@@ -494,6 +491,8 @@ impl ValueArena {
 
             *self.mutate_unchecked(to) = value;
         }
+
+        to_root
     }
 }
 
