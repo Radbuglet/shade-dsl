@@ -6,8 +6,8 @@ use index_vec::IndexVec;
 use crate::{
     base::{ErrorGuaranteed, Session, arena::Obj, syntax::Symbol},
     typeck::{
-        analysis::TyCtxt,
-        syntax::{ExprAdt, Func, ValueArena},
+        analysis::{TyCtxt, ValueArena},
+        syntax::{ExprAdt, Func},
     },
 };
 

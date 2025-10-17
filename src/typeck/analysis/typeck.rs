@@ -4,11 +4,10 @@ use crate::{
     base::{ErrorGuaranteed, arena::Obj},
     parse::ast::{LiteralKind, Mutability},
     typeck::{
-        analysis::{WfRequirement, tcx::TyCtxt},
+        analysis::{ValueArena, ValueArenaLike, WfRequirement, tcx::TyCtxt},
         syntax::{
             AdtInstance, AnyFuncValue, AnyName, Expr, ExprKind, FuncInstance, Generic, Local, Pat,
-            PatKind, ScalarKind, Stmt, Ty, TyList, ValueArena, ValueArenaLike, ValueKind,
-            ValuePlace,
+            PatKind, ScalarKind, Stmt, Ty, TyList, ValueKind, ValuePlace,
         },
     },
     utils::hash::FxHashMap,

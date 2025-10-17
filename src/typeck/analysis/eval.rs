@@ -4,11 +4,10 @@ use crate::{
     base::{ErrorGuaranteed, arena::Obj},
     parse::ast::BinOpKind,
     typeck::{
-        analysis::{TyCtxt, WfRequirement},
+        analysis::{TyCtxt, ValueArena, ValueArenaLike as _, WfRequirement},
         syntax::{
             AnyFuncValue, AnyMetaFuncValue, BycDepth, BycFunction, BycInstr, BycInstrHandler,
-            FuncInstance, Ty, ValueArena, ValueArenaLike, ValueKind, ValuePlace, ValueScalar,
-            byc_instr,
+            FuncInstance, Ty, ValueKind, ValuePlace, ValueScalar, byc_instr,
         },
     },
 };

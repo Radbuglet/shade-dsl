@@ -10,10 +10,10 @@ use crate::{
         syntax::Symbol,
     },
     typeck::{
-        analysis::{IntrinsicResolver, TypeCheckFacts},
+        analysis::{IntrinsicResolver, TypeCheckFacts, ValueArena, ValueInterner},
         syntax::{
             AdtInstance, BycFunction, Func, FuncInstance, Generic, MetaFuncIntrinsic,
-            OwnGenericIdx, Ty, TyList, ValueArena, ValueInterner, ValuePlace,
+            OwnGenericIdx, Ty, TyList, ValuePlace,
         },
     },
     utils::hash::{FxHashMap, FxHashSet},
