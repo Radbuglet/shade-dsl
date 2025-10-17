@@ -4,6 +4,7 @@ pub const builtins = mod {
     pub const bool = get_builtin_type("bool");
     pub const u32 = get_builtin_type("u32");
     pub const metatype = get_builtin_type("type");
+    pub const any = get_builtin_type("any");
 
     pub const special = mod {
         pub const get_builtin_type = builtins.get_builtin_type;
@@ -21,6 +22,22 @@ pub const Vec = fn<T: builtins.metatype> -> builtins.metatype {
 
         // };
     }
+};
+
+const demo = {
+    let mut foo = builtins.u32;
+    foo = const { builtins.special.get_builtin_type("u32") };
+
+    let funny = const {
+        fn(v: builtins.u32) {}
+    };
+
+    // let funky = fn<foo: builtins.any> -> builtins.any {
+    //     fn(v: foo) {}
+    // }
+    // .<<foo>>;
+
+    foo
 };
 
 const whee = fn<T: builtins.metatype>(v: T) -> Vec.<T>.Elem {

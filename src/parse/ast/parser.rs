@@ -178,9 +178,11 @@ bitflags::bitflags! {
     #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
     struct ExprParseFlags : u32 {
         const NO_RESTRICTIONS = !0;
-        const IN_SCRUTINEE = 0;
+        const IN_BLOCK = Self::ALLOW_STRUCT_CTOR.bits();
+        const IN_SCRUTINEE = Self::ALLOW_CONST_BLOCK.bits();
 
         const ALLOW_STRUCT_CTOR = 1 << 0;
+        const ALLOW_CONST_BLOCK = 1 << 1;
     }
 }
 
@@ -214,146 +216,189 @@ fn parse_expr_pratt_inner(
     is_optional: bool,
     flags: ExprParseFlags,
 ) -> Option<AstExpr> {
+    let seed = parse_expr_pratt_inner_seed(p, is_optional, flags)?;
+
+    Some(parse_expr_pratt_inner_chain(p, min_bp, flags, seed))
+}
+
+fn parse_expr_pratt_inner_seed(p: P, is_optional: bool, flags: ExprParseFlags) -> Option<AstExpr> {
     // Parse seed expression
     let seed_start = p.next_span();
-    let build_expr = move |expr: AstExprKind, p: P| AstExpr {
-        span: seed_start.to(p.prev_span()),
-        kind: expr,
+    let build_expr = move |expr: AstExprKind, p: P| {
+        Some(AstExpr {
+            span: seed_start.to(p.prev_span()),
+            kind: expr,
+        })
     };
 
-    let mut lhs = 'seed: {
-        // Parse seeds common with type expressions.
-        if let Some(expr) = parse_common_expr_seeds(p) {
-            break 'seed build_expr(expr, p);
-        }
+    // Parse seeds common with type expressions.
+    if let Some(expr) = parse_common_expr_seeds(p, flags) {
+        return Some(expr);
+    }
 
-        // Parse a parenthesis or tuple.
-        if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
-            let res = parse_comma_group(&mut p.enter(&paren), |p| {
-                parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
-            });
+    // Parse a parenthesis or tuple.
+    if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
+        let res = parse_comma_group(&mut p.enter(&paren), |p| {
+            parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
+        });
 
-            break 'seed build_expr(
-                match res.into_singleton() {
-                    Ok(expr) => AstExprKind::Paren(Box::new(expr)),
-                    Err(exprs) => AstExprKind::Tuple(exprs),
-                },
+        return build_expr(
+            match res.into_singleton() {
+                Ok(expr) => AstExprKind::Paren(Box::new(expr)),
+                Err(exprs) => AstExprKind::Tuple(exprs),
+            },
+            p,
+        );
+    }
+
+    // Parse an array.
+    if let Some(array) = match_group(GroupDelimiter::Bracket).expect(p) {
+        return build_expr(
+            AstExprKind::Array(
+                parse_comma_group(&mut p.enter(&array), |p| {
+                    parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
+                })
+                .elems,
+            ),
+            p,
+        );
+    }
+
+    // Parse a block expression
+    if let Some(block) = parse_brace_block(p) {
+        // TODO: Labels
+        return build_expr(AstExprKind::Block(Box::new(block)), p);
+    }
+
+    // Parse a function expression
+    if match_kw(kw!("fn")).expect(p).is_some() {
+        let sig_start = p.next_span();
+
+        let generics = match_punct(punct!('<')).expect(p).map(|_| {
+            parse_delimited(
                 p,
-            );
-        }
+                &mut (),
+                |p, _| parse_func_generic(p),
+                |p, _| match_punct(punct!(',')).expect(p).is_some(),
+                |p, _| match_punct(punct!('>')).expect(p).is_some(),
+            )
+            .elems
+        });
 
-        // Parse an array.
-        if let Some(array) = match_group(GroupDelimiter::Bracket).expect(p) {
-            break 'seed build_expr(
-                AstExprKind::Array(
-                    parse_comma_group(&mut p.enter(&array), |p| {
-                        parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
-                    })
-                    .elems,
-                ),
-                p,
-            );
-        }
+        let params = match_group(GroupDelimiter::Paren)
+            .expect(p)
+            .map(|group| parse_comma_group(&mut p.enter(&group), parse_func_param).elems);
 
-        // Parse a block expression
-        if let Some(block) = parse_brace_block(p) {
-            // TODO: Labels
-            break 'seed build_expr(AstExprKind::Block(Box::new(block)), p);
-        }
-
-        // Parse a function expression
-        if match_kw(kw!("fn")).expect(p).is_some() {
-            let sig_start = p.next_span();
-
-            let generics = match_punct(punct!('<')).expect(p).map(|_| {
-                parse_delimited(
-                    p,
-                    &mut (),
-                    |p, _| parse_func_generic(p),
-                    |p, _| match_punct(punct!(',')).expect(p).is_some(),
-                    |p, _| match_punct(punct!('>')).expect(p).is_some(),
-                )
-                .elems
-            });
-
-            let params = match_group(GroupDelimiter::Paren)
-                .expect(p)
-                .map(|group| parse_comma_group(&mut p.enter(&group), parse_func_param).elems);
-
-            if generics.is_none() && params.is_none() {
-                p.hint(LeafDiag::new(
+        if generics.is_none() && params.is_none() {
+            p.hint(LeafDiag::new(
                     Level::Note,
                     "both generic and runtime arguments are optional for a function but at least one must be present",
                 ));
 
+            // Recovery strategy: ignore
+            p.stuck_recover_with(|_| {});
+        }
+
+        let ret_ty = match_punct_seq(puncts!("->"))
+            .expect(p)
+            .map(|_| Box::new(parse_ty(p)));
+
+        let sig_span = sig_start.to(p.prev_span());
+
+        let Some(body) = parse_brace_block(p) else {
+            // Recovery strategy: ignore
+            return build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+        };
+
+        return build_expr(
+            AstExprKind::FuncDef(Box::new(AstFuncDef {
+                sig_span,
+                generics: generics.unwrap_or_default(),
+                params,
+                ret_ty,
+                body: Box::new(body),
+            })),
+            p,
+        );
+    }
+
+    // Parse a `use` expression
+    if match_kw(kw!("use")).expect(p).is_some() {
+        let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
+            // Recovery strategy: do nothing
+            return build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+        };
+
+        let mut p2 = p.enter(&block);
+
+        let Some(name) = match_str_lit().expect(&mut p2) else {
+            // Recovery strategy: do nothing
+            return build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+        };
+
+        if !match_eos(&mut p2) {
+            p2.stuck_recover_with(|_| {
                 // Recovery strategy: ignore
-                p.stuck_recover_with(|_| {});
-            }
-
-            let ret_ty = match_punct_seq(puncts!("->"))
-                .expect(p)
-                .map(|_| Box::new(parse_ty(p)));
-
-            let sig_span = sig_start.to(p.prev_span());
-
-            let Some(body) = parse_brace_block(p) else {
-                // Recovery strategy: ignore
-                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
-            };
-
-            break 'seed build_expr(
-                AstExprKind::FuncDef(Box::new(AstFuncDef {
-                    sig_span,
-                    generics: generics.unwrap_or_default(),
-                    params,
-                    ret_ty,
-                    body: Box::new(body),
-                })),
-                p,
-            );
+            });
         }
 
-        // Parse a `use` expression
-        if match_kw(kw!("use")).expect(p).is_some() {
-            let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
+        return build_expr(AstExprKind::Use(Box::new(name)), p);
+    }
+
+    // Parse a `type` expression
+    if match_kw(kw!("type")).expect(p).is_some() {
+        let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
+            // Recovery strategy: do nothing
+            return build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+        };
+
+        let ty = parse_ty_full(&mut p.enter(&block));
+
+        return build_expr(AstExprKind::TypeExpr(Box::new(ty)), p);
+    }
+
+    // Parse an `if` expression
+    if match_kw(kw!("if")).expect(p).is_some() {
+        fn parse_after_if(if_span: Span, p: P) -> AstExpr {
+            let cond = parse_expr(p, ExprParseFlags::IN_SCRUTINEE);
+
+            let Some(truthy) = parse_brace_block(p) else {
                 // Recovery strategy: do nothing
-                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+                return AstExpr {
+                    span: if_span.to(p.next_span()),
+                    kind: AstExprKind::Error(p.stuck().0),
+                };
             };
 
-            let mut p2 = p.enter(&block);
+            let self_span = if_span.to(p.prev_span());
 
-            let Some(name) = match_str_lit().expect(&mut p2) else {
-                // Recovery strategy: do nothing
-                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+            // Match `else`
+            let Some(_) = match_kw(kw!("else")).expect(p) else {
+                // No `if` branch
+                return AstExpr {
+                    span: self_span,
+                    kind: AstExprKind::If {
+                        cond: Box::new(cond),
+                        truthy: Box::new(truthy),
+                        falsy: None,
+                    },
+                };
             };
 
-            if !match_eos(&mut p2) {
-                p2.stuck_recover_with(|_| {
-                    // Recovery strategy: ignore
-                });
-            }
+            // Match `if`
+            let else_if_start = p.next_span();
+            let falsy = if match_kw(kw!("if")).expect(p).is_some() {
+                let falsy = parse_after_if(else_if_start, p);
 
-            break 'seed build_expr(AstExprKind::Use(Box::new(name)), p);
-        }
-
-        // Parse a `type` expression
-        if match_kw(kw!("type")).expect(p).is_some() {
-            let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
-                // Recovery strategy: do nothing
-                break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
-            };
-
-            let ty = parse_ty_full(&mut p.enter(&block));
-
-            break 'seed build_expr(AstExprKind::TypeExpr(Box::new(ty)), p);
-        }
-
-        // Parse an `if` expression
-        if match_kw(kw!("if")).expect(p).is_some() {
-            fn parse_after_if(if_span: Span, p: P) -> AstExpr {
-                let cond = parse_expr(p, ExprParseFlags::IN_SCRUTINEE);
-
-                let Some(truthy) = parse_brace_block(p) else {
+                AstBlock {
+                    label: None,
+                    span: falsy.span,
+                    stmts: vec![],
+                    last_expr: Some(falsy),
+                }
+            } else {
+                // Match bare `else`
+                let Some(falsy) = parse_brace_block(p) else {
                     // Recovery strategy: do nothing
                     return AstExpr {
                         span: if_span.to(p.next_span()),
@@ -361,164 +406,131 @@ fn parse_expr_pratt_inner(
                     };
                 };
 
-                let self_span = if_span.to(p.prev_span());
-
-                // Match `else`
-                let Some(_) = match_kw(kw!("else")).expect(p) else {
-                    // No `if` branch
-                    return AstExpr {
-                        span: self_span,
-                        kind: AstExprKind::If {
-                            cond: Box::new(cond),
-                            truthy: Box::new(truthy),
-                            falsy: None,
-                        },
-                    };
-                };
-
-                // Match `if`
-                let else_if_start = p.next_span();
-                let falsy = if match_kw(kw!("if")).expect(p).is_some() {
-                    let falsy = parse_after_if(else_if_start, p);
-
-                    AstBlock {
-                        label: None,
-                        span: falsy.span,
-                        stmts: vec![],
-                        last_expr: Some(falsy),
-                    }
-                } else {
-                    // Match bare `else`
-                    let Some(falsy) = parse_brace_block(p) else {
-                        // Recovery strategy: do nothing
-                        return AstExpr {
-                            span: if_span.to(p.next_span()),
-                            kind: AstExprKind::Error(p.stuck().0),
-                        };
-                    };
-
-                    falsy
-                };
-
-                AstExpr {
-                    span: self_span,
-                    kind: AstExprKind::If {
-                        cond: Box::new(cond),
-                        truthy: Box::new(truthy),
-                        falsy: Some(Box::new(falsy)),
-                    },
-                }
-            }
-
-            break 'seed parse_after_if(seed_start, p);
-        }
-
-        // Parse a `while` expression
-        if match_kw(kw!("while")).expect(p).is_some() {
-            // TODO: Labels
-
-            let cond = parse_expr(p, ExprParseFlags::IN_SCRUTINEE);
-
-            let Some(block) = parse_brace_block(p) else {
-                // Recovery strategy: do nothing
-                break 'seed build_expr(AstExprKind::Error(p.stuck().0), p);
+                falsy
             };
 
-            break 'seed build_expr(
-                AstExprKind::While {
+            AstExpr {
+                span: self_span,
+                kind: AstExprKind::If {
                     cond: Box::new(cond),
-                    block: Box::new(block),
+                    truthy: Box::new(truthy),
+                    falsy: Some(Box::new(falsy)),
                 },
-                p,
-            );
+            }
         }
 
-        // Parse a `loop` expression
-        if match_kw(kw!("loop")).expect(p).is_some() {
-            // TODO: Labels
+        return Some(parse_after_if(seed_start, p));
+    }
 
-            let Some(block) = parse_brace_block(p) else {
-                // Recovery strategy: do nothing
-                break 'seed build_expr(AstExprKind::Error(p.stuck().0), p);
-            };
+    // Parse a `while` expression
+    if match_kw(kw!("while")).expect(p).is_some() {
+        // TODO: Labels
 
-            break 'seed build_expr(AstExprKind::Loop(Box::new(block)), p);
-        }
+        let cond = parse_expr(p, ExprParseFlags::IN_SCRUTINEE);
 
-        // Parse a `match` expression
-        if match_kw(kw!("match")).expect(p).is_some() {
-            let scrutinee = parse_expr(p, ExprParseFlags::IN_SCRUTINEE);
+        let Some(block) = parse_brace_block(p) else {
+            // Recovery strategy: do nothing
+            return build_expr(AstExprKind::Error(p.stuck().0), p);
+        };
 
-            let Some(braced) = match_group(GroupDelimiter::Brace).expect(p) else {
-                // Recovery strategy: do nothing
-                break 'seed build_expr(AstExprKind::Error(p.stuck().0), p);
-            };
+        return build_expr(
+            AstExprKind::While {
+                cond: Box::new(cond),
+                block: Box::new(block),
+            },
+            p,
+        );
+    }
 
-            let arms = parse_delimited(
-                &mut p.enter(&braced),
-                &mut (),
-                |p, _| parse_match_arm(p),
-                |p, _| match_punct(punct!(',')).expect(p).is_some(),
-                |p, _| match_eos(p),
-            )
-            .elems;
+    // Parse a `loop` expression
+    if match_kw(kw!("loop")).expect(p).is_some() {
+        // TODO: Labels
 
-            break 'seed build_expr(
-                AstExprKind::Match {
-                    scrutinee: Box::new(scrutinee),
-                    arms,
-                },
-                p,
-            );
-        }
+        let Some(block) = parse_brace_block(p) else {
+            // Recovery strategy: do nothing
+            return build_expr(AstExprKind::Error(p.stuck().0), p);
+        };
 
-        // Parse a `return` expression
-        if match_kw(kw!("return")).expect(p).is_some() {
-            let expr = parse_expr_pratt_opt(p, expr_bp::PRE_RETURN.right, flags);
+        return build_expr(AstExprKind::Loop(Box::new(block)), p);
+    }
 
-            break 'seed build_expr(AstExprKind::Return(expr.map(Box::new)), p);
-        }
+    // Parse a `match` expression
+    if match_kw(kw!("match")).expect(p).is_some() {
+        let scrutinee = parse_expr(p, ExprParseFlags::IN_SCRUTINEE);
 
-        // Parse a `continue` expression
-        if match_kw(kw!("continue")).expect(p).is_some() {
-            break 'seed build_expr(AstExprKind::Continue, p);
-        }
+        let Some(braced) = match_group(GroupDelimiter::Brace).expect(p) else {
+            // Recovery strategy: do nothing
+            return build_expr(AstExprKind::Error(p.stuck().0), p);
+        };
 
-        // Parse a `break` expression
-        if match_kw(kw!("break")).expect(p).is_some() {
-            // TODO: Labels
+        let arms = parse_delimited(
+            &mut p.enter(&braced),
+            &mut (),
+            |p, _| parse_match_arm(p),
+            |p, _| match_punct(punct!(',')).expect(p).is_some(),
+            |p, _| match_eos(p),
+        )
+        .elems;
 
-            let expr = parse_expr_pratt_opt(p, expr_bp::PRE_BREAK.right, flags);
+        return build_expr(
+            AstExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms,
+            },
+            p,
+        );
+    }
 
-            break 'seed build_expr(AstExprKind::Break(expr.map(Box::new)), p);
-        }
+    // Parse a `return` expression
+    if match_kw(kw!("return")).expect(p).is_some() {
+        let expr = parse_expr_pratt_opt(p, expr_bp::PRE_RETURN.right, flags);
 
-        // Parse unary neg.
-        if match_punct(punct!('-')).expect(p).is_some() {
-            let lhs = parse_expr_pratt(p, expr_bp::PRE_NEG.right, flags);
+        return build_expr(AstExprKind::Return(expr.map(Box::new)), p);
+    }
 
-            break 'seed build_expr(AstExprKind::Unary(UnaryOpKind::Neg, Box::new(lhs)), p);
-        }
+    // Parse a `continue` expression
+    if match_kw(kw!("continue")).expect(p).is_some() {
+        return build_expr(AstExprKind::Continue, p);
+    }
 
-        // Parse unary not.
-        if match_punct(punct!('!')).expect(p).is_some() {
-            let lhs = parse_expr_pratt(p, expr_bp::PRE_NOT.right, flags);
+    // Parse a `break` expression
+    if match_kw(kw!("break")).expect(p).is_some() {
+        // TODO: Labels
 
-            break 'seed build_expr(AstExprKind::Unary(UnaryOpKind::Not, Box::new(lhs)), p);
-        }
+        let expr = parse_expr_pratt_opt(p, expr_bp::PRE_BREAK.right, flags);
 
-        if is_optional {
-            return None;
-        } else {
-            // Recovery strategy: eat a token
-            build_expr(
-                AstExprKind::Error(p.stuck_recover_with(|c| {
-                    c.eat();
-                })),
-                p,
-            )
-        }
-    };
+        return build_expr(AstExprKind::Break(expr.map(Box::new)), p);
+    }
+
+    // Parse unary neg.
+    if match_punct(punct!('-')).expect(p).is_some() {
+        let lhs = parse_expr_pratt(p, expr_bp::PRE_NEG.right, flags);
+
+        return build_expr(AstExprKind::Unary(UnaryOpKind::Neg, Box::new(lhs)), p);
+    }
+
+    // Parse unary not.
+    if match_punct(punct!('!')).expect(p).is_some() {
+        let lhs = parse_expr_pratt(p, expr_bp::PRE_NOT.right, flags);
+
+        return build_expr(AstExprKind::Unary(UnaryOpKind::Not, Box::new(lhs)), p);
+    }
+
+    if is_optional {
+        None
+    } else {
+        // Recovery strategy: eat a token
+        build_expr(
+            AstExprKind::Error(p.stuck_recover_with(|c| {
+                c.eat();
+            })),
+            p,
+        )
+    }
+}
+
+fn parse_expr_pratt_inner_chain(p: P, min_bp: Bp, flags: ExprParseFlags, seed: AstExpr) -> AstExpr {
+    let mut lhs = seed;
 
     // Parse postfix and infix operations that bind tighter than our caller.
     'chaining: loop {
@@ -638,7 +650,23 @@ fn parse_expr_pratt_inner(
         break;
     }
 
-    Some(lhs)
+    lhs
+}
+
+fn parse_expr_const_block(p: P, const_kw: Ident) -> Option<AstExpr> {
+    let group = match_group(GroupDelimiter::Brace).expect(p)?;
+
+    let seed = AstExpr {
+        span: Span::new(const_kw.span.lo, group.span.hi),
+        kind: AstExprKind::ConstBlock(Box::new(parse_block(&mut p.enter(&group), None))),
+    };
+
+    Some(parse_expr_pratt_inner_chain(
+        p,
+        Bp::MIN,
+        ExprParseFlags::NO_RESTRICTIONS,
+        seed,
+    ))
 }
 
 fn parse_match_arm(p: P) -> AstMatchArm {
@@ -670,110 +698,116 @@ fn parse_ty(p: P) -> AstExpr {
 }
 
 fn parse_ty_pratt(p: P, min_bp: Bp) -> AstExpr {
-    // Parse seed type
+    let seed = parse_ty_pratt_seed(p);
+
+    parse_ty_pratt_chain(p, min_bp, seed)
+}
+
+fn parse_ty_pratt_seed(p: P) -> AstExpr {
     let seed_start = p.next_span();
     let build_expr = move |ty: AstExprKind, p: P| AstExpr {
         span: seed_start.to(p.prev_span()),
         kind: ty,
     };
 
-    let mut lhs = 'seed: {
-        // Parse seeds common with value expressions.
-        if let Some(expr) = parse_common_expr_seeds(p) {
-            break 'seed build_expr(expr, p);
+    // Parse seeds common with value expressions.
+    if let Some(expr) = parse_common_expr_seeds(p, ExprParseFlags::NO_RESTRICTIONS) {
+        return expr;
+    }
+
+    // Parse a parenthesis or tuple type constructor.
+    if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
+        let res = parse_comma_group(&mut p.enter(&paren), parse_ty);
+
+        return build_expr(
+            match res.into_singleton() {
+                Ok(expr) => AstExprKind::Paren(Box::new(expr)),
+                Err(exprs) => AstExprKind::TypeTuple(exprs),
+            },
+            p,
+        );
+    }
+
+    // Parse a block expression.
+    if let Some(block) = parse_brace_block(p) {
+        return build_expr(AstExprKind::Block(Box::new(block)), p);
+    }
+
+    // Parse an array type constructor.
+    if let Some(arr) = match_group(GroupDelimiter::Bracket).expect(p) {
+        let mut p2 = p.enter(&arr);
+
+        let ty = parse_ty(&mut p2);
+
+        if match_punct(punct!(';')).expect(&mut p2).is_none() {
+            // Recovery strategy: ignore and continue
+            p2.stuck_recover_with(|_c| {});
         }
 
-        // Parse a parenthesis or tuple type constructor.
-        if let Some(paren) = match_group(GroupDelimiter::Paren).expect(p) {
-            let res = parse_comma_group(&mut p.enter(&paren), parse_ty);
+        let count = parse_expr_full(&mut p2);
 
-            break 'seed build_expr(
-                match res.into_singleton() {
-                    Ok(expr) => AstExprKind::Paren(Box::new(expr)),
-                    Err(exprs) => AstExprKind::TypeTuple(exprs),
-                },
+        return build_expr(AstExprKind::TypeArray(Box::new(ty), Box::new(count)), p);
+    }
+
+    // Parse a pointer type constructor.
+    if match_punct(punct!('*')).expect(p).is_some() {
+        let Some(muta) = parse_ptr_mutability(p) else {
+            return build_expr(
+                AstExprKind::Error(p.stuck_recover_with(|c| {
+                    // Recovery strategy: eat the bad identifier; otherwise ignore.
+                    match_any_ident(c);
+                })),
                 p,
             );
+        };
+
+        let ty = parse_ty_pratt(p, ty_bp::PRE_POINTER.right);
+
+        return build_expr(AstExprKind::TypePointer(muta, Box::new(ty)), p);
+    }
+
+    // Parse various single-keyword types.
+    if match_kw(kw!("type")).expect(p).is_some() {
+        return build_expr(AstExprKind::TypeMeta(MetaTypeKind::Type), p);
+    }
+
+    if match_kw(kw!("Self")).expect(p).is_some() {
+        return build_expr(AstExprKind::TypeSelf, p);
+    }
+
+    // Parse a function type constructor.
+    if match_kw(kw!("fn")).expect(p).is_some() {
+        if let Some(group) = match_group(GroupDelimiter::Paren).expect(p) {
+            let args = parse_comma_group(&mut p.enter(&group), parse_ty).elems;
+
+            let return_ty = match_punct_seq(puncts!("->"))
+                .expect(p)
+                .map(|_| parse_ty_pratt(p, ty_bp::PRE_FUNC_RETVAL.right))
+                .map(Box::new);
+
+            return build_expr(AstExprKind::TypeFn(args, return_ty), p);
         }
 
-        // Parse a block expression.
-        if let Some(block) = parse_brace_block(p) {
-            break 'seed build_expr(AstExprKind::Block(Box::new(block)), p);
+        if match_punct_seq(puncts!("...")).expect(p).is_some() {
+            return build_expr(AstExprKind::TypeMeta(MetaTypeKind::Fn), p);
         }
 
-        // Parse an array type constructor.
-        if let Some(arr) = match_group(GroupDelimiter::Bracket).expect(p) {
-            let mut p2 = p.enter(&arr);
+        // Recovery strategy: ignore
+        return build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
+    }
 
-            let ty = parse_ty(&mut p2);
+    // Recovery strategy: eat a token
+    build_expr(
+        AstExprKind::Error(p.stuck_recover_with(|c| {
+            c.eat();
+        })),
+        p,
+    )
+}
 
-            if match_punct(punct!(';')).expect(&mut p2).is_none() {
-                // Recovery strategy: ignore and continue
-                p2.stuck_recover_with(|_c| {});
-            }
+fn parse_ty_pratt_chain(p: P, min_bp: Bp, seed: AstExpr) -> AstExpr {
+    let mut lhs = seed;
 
-            let count = parse_expr_full(&mut p2);
-
-            break 'seed build_expr(AstExprKind::TypeArray(Box::new(ty), Box::new(count)), p);
-        }
-
-        // Parse a pointer type constructor.
-        if match_punct(punct!('*')).expect(p).is_some() {
-            let Some(muta) = parse_ptr_mutability(p) else {
-                break 'seed build_expr(
-                    AstExprKind::Error(p.stuck_recover_with(|c| {
-                        // Recovery strategy: eat the bad identifier; otherwise ignore.
-                        match_any_ident(c);
-                    })),
-                    p,
-                );
-            };
-
-            let ty = parse_ty_pratt(p, ty_bp::PRE_POINTER.right);
-
-            break 'seed build_expr(AstExprKind::TypePointer(muta, Box::new(ty)), p);
-        }
-
-        // Parse various single-keyword types.
-        if match_kw(kw!("type")).expect(p).is_some() {
-            break 'seed build_expr(AstExprKind::TypeMeta(MetaTypeKind::Type), p);
-        }
-
-        if match_kw(kw!("Self")).expect(p).is_some() {
-            break 'seed build_expr(AstExprKind::TypeSelf, p);
-        }
-
-        // Parse a function type constructor.
-        if match_kw(kw!("fn")).expect(p).is_some() {
-            if let Some(group) = match_group(GroupDelimiter::Paren).expect(p) {
-                let args = parse_comma_group(&mut p.enter(&group), parse_ty).elems;
-
-                let return_ty = match_punct_seq(puncts!("->"))
-                    .expect(p)
-                    .map(|_| parse_ty_pratt(p, ty_bp::PRE_FUNC_RETVAL.right))
-                    .map(Box::new);
-
-                break 'seed build_expr(AstExprKind::TypeFn(args, return_ty), p);
-            }
-
-            if match_punct_seq(puncts!("...")).expect(p).is_some() {
-                break 'seed build_expr(AstExprKind::TypeMeta(MetaTypeKind::Fn), p);
-            }
-
-            // Recovery strategy: ignore
-            break 'seed build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
-        }
-
-        // Recovery strategy: eat a token
-        build_expr(
-            AstExprKind::Error(p.stuck_recover_with(|c| {
-                c.eat();
-            })),
-            p,
-        )
-    };
-
-    // Parse postfix and infix operations that bind tighter than our caller.
     'chaining: loop {
         // Match chaining syntaxes common with types.
         {
@@ -791,66 +825,93 @@ fn parse_ty_pratt(p: P, min_bp: Bp) -> AstExpr {
     lhs
 }
 
-fn parse_common_expr_seeds(p: P) -> Option<AstExprKind> {
+fn parse_common_expr_seeds(p: P, flags: ExprParseFlags) -> Option<AstExpr> {
+    let seed_start = p.next_span();
+    let build_expr = move |expr: AstExprKind, p: P| {
+        Some(AstExpr {
+            span: seed_start.to(p.prev_span()),
+            kind: expr,
+        })
+    };
+
     // Parse a name.
     if let Some(ident) = match_ident().expect(p) {
-        return Some(AstExprKind::Name(ident));
+        return build_expr(AstExprKind::Name(ident), p);
     }
 
     // Parse an intrinsic.
     if match_kw(kw!("intrinsic")).expect(p).is_some() {
         let Some(block) = match_group(GroupDelimiter::Paren).expect(p) else {
             // Recovery strategy: do nothing
-            return Some(AstExprKind::Error(p.stuck_recover_with(|_| {})));
+            return build_expr(AstExprKind::Error(p.stuck_recover_with(|_| {})), p);
         };
 
-        let mut p = p.enter(&block);
+        let mut p2 = p.enter(&block);
 
-        let Some(intrinsic) = match_str_lit().expect(&mut p) else {
+        let Some(intrinsic) = match_str_lit().expect(&mut p2) else {
             // Recovery strategy: do nothing
-            return Some(AstExprKind::Error(p.stuck_recover_with(|_| {})));
+            return build_expr(AstExprKind::Error(p2.stuck_recover_with(|_| {})), p);
         };
 
-        _ = match_eos(&mut p);
+        _ = match_eos(&mut p2);
 
-        return Some(AstExprKind::Intrinsic(intrinsic.value));
+        return build_expr(AstExprKind::Intrinsic(intrinsic.value), p);
     }
 
     // Parse a boolean literal.
     if match_kw(kw!("true")).expect(p).is_some() {
-        return Some(AstExprKind::Lit(LiteralKind::BoolLit(true)));
+        return build_expr(AstExprKind::Lit(LiteralKind::BoolLit(true)), p);
     }
 
     if match_kw(kw!("false")).expect(p).is_some() {
-        return Some(AstExprKind::Lit(LiteralKind::BoolLit(false)));
+        return build_expr(AstExprKind::Lit(LiteralKind::BoolLit(false)), p);
     }
 
     // Parse a string literal.
     if let Some(lit) = match_str_lit().expect(p) {
-        return Some(AstExprKind::Lit(LiteralKind::StrLit(lit)));
+        return build_expr(AstExprKind::Lit(LiteralKind::StrLit(lit)), p);
     }
 
     // Parse a character literal.
     if let Some(lit) = match_char_lit().expect(p) {
-        return Some(AstExprKind::Lit(LiteralKind::CharLit(lit)));
+        return build_expr(AstExprKind::Lit(LiteralKind::CharLit(lit)), p);
     }
 
     // Parse a numeric literal.
     if let Some(lit) = match_num_lit().expect(p) {
-        return Some(AstExprKind::Lit(LiteralKind::NumLit(lit)));
+        return build_expr(AstExprKind::Lit(LiteralKind::NumLit(lit)), p);
     }
 
     // Parse ADTs.
     if let Some(kind) = parse_adt_kind(p) {
         let Some(group) = match_group(GroupDelimiter::Brace).expect(p) else {
-            return Some(AstExprKind::Error(p.stuck_recover_with(|_| {
-                // Recovery strategy: ignore
-            })));
+            return build_expr(
+                AstExprKind::Error(p.stuck_recover_with(|_| {
+                    // Recovery strategy: ignore
+                })),
+                p,
+            );
         };
 
         let contents = parse_adt_contents(&mut p.enter(&group), kind);
 
-        return Some(AstExprKind::AdtDef(Box::new(contents)));
+        return build_expr(AstExprKind::AdtDef(Box::new(contents)), p);
+    }
+
+    // Parse `const` blocks.
+    if flags.contains(ExprParseFlags::ALLOW_CONST_BLOCK)
+        && let Some(const_kw) = match_kw(kw!("const")).expect(p)
+    {
+        let Some(expr) = parse_expr_const_block(p, const_kw) else {
+            return build_expr(
+                AstExprKind::Error(p.stuck_recover_with(|_| {
+                    // Recovery strategy: ignore
+                })),
+                p,
+            );
+        };
+
+        return Some(expr);
     }
 
     None
@@ -1007,78 +1068,100 @@ fn parse_block(p: P, label: Option<Ident>) -> AstBlock {
 
     let mut stmts = Vec::new();
 
-    let last_expr = loop {
+    let last_expr = 'stmt: loop {
         // Match EOS without unterminated expression.
         if match_eos(p) {
-            break None;
+            break 'stmt None;
         }
 
-        // Match empty statements.
-        if match_punct(punct!(';')).expect(p).is_some() {
-            continue;
-        }
-
-        // Match `let` statements
-        if let Some(let_kw) = match_kw(kw!("let")).expect(p) {
-            let binding = parse_pat(p);
-
-            if match_punct(punct!('=')).expect(p).is_none() {
-                // Recovery strategy: ignore
-                let _ = p.stuck_recover();
+        // Match an expression or a statement.
+        let expr = 'expr: {
+            // Match empty statements.
+            if match_punct(punct!(';')).expect(p).is_some() {
+                continue 'stmt;
             }
 
-            let init = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
+            // Match `let` statements
+            if let Some(let_kw) = match_kw(kw!("let")).expect(p) {
+                let binding = parse_pat(p);
 
-            if match_punct(punct!(';')).expect(p).is_none() {
-                // Recovery strategy: ignore
-                let _ = p.stuck_recover();
+                if match_punct(punct!('=')).expect(p).is_none() {
+                    // Recovery strategy: ignore
+                    let _ = p.stuck_recover();
+                }
+
+                let init = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
+
+                if match_punct(punct!(';')).expect(p).is_none() {
+                    // Recovery strategy: ignore
+                    let _ = p.stuck_recover();
+                }
+
+                stmts.push(AstStmt {
+                    span: let_kw.span.to(p.prev_span()),
+                    kind: AstStmtKind::Let {
+                        binding,
+                        init: Box::new(init),
+                    },
+                });
+
+                continue 'stmt;
             }
 
-            stmts.push(AstStmt {
-                span: let_kw.span.to(p.prev_span()),
-                kind: AstStmtKind::Let {
-                    binding,
-                    init: Box::new(init),
-                },
-            });
+            // Match `const` statements and expressions.
+            if let Some(const_kw) = match_kw(kw!("const")).expect(p) {
+                // Attempt to parse it as an expression.
+                if let Some(group) = match_group(GroupDelimiter::Brace).expect(p) {
+                    let seed = AstExpr {
+                        span: Span::new(const_kw.span.lo, group.span.hi),
+                        kind: AstExprKind::ConstBlock(Box::new(parse_block(
+                            &mut p.enter(&group),
+                            None,
+                        ))),
+                    };
 
-            continue;
-        }
+                    break 'expr parse_expr_pratt_inner_chain(
+                        p,
+                        Bp::MIN,
+                        ExprParseFlags::NO_RESTRICTIONS,
+                        seed,
+                    );
+                }
 
-        // Match `const` statements
-        if let Some(const_kw) = match_kw(kw!("const")).expect(p) {
-            let Some(name) = match_ident().expect(p) else {
-                // Recovery strategy: ignore
-                let _ = p.stuck_recover();
-                continue;
-            };
+                let Some(name) = match_ident().expect(p) else {
+                    // Recovery strategy: ignore
+                    let _ = p.stuck_recover();
+                    continue 'stmt;
+                };
 
-            if match_punct(punct!('=')).expect(p).is_none() {
-                // Recovery strategy: ignore
-                let _ = p.stuck_recover();
+                if match_punct(punct!('=')).expect(p).is_none() {
+                    // Recovery strategy: ignore
+                    let _ = p.stuck_recover();
+                }
+
+                let init = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
+
+                if match_punct(punct!(';')).expect(p).is_none() {
+                    // Recovery strategy: ignore
+                    let _ = p.stuck_recover();
+                }
+
+                stmts.push(AstStmt {
+                    span: const_kw.span.to(p.prev_span()),
+                    kind: AstStmtKind::Const {
+                        name,
+                        init: Box::new(init),
+                    },
+                });
+
+                continue 'stmt;
             }
 
-            let init = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
+            // Parse as an expression.
+            parse_expr(p, ExprParseFlags::NO_RESTRICTIONS)
+        };
 
-            if match_punct(punct!(';')).expect(p).is_none() {
-                // Recovery strategy: ignore
-                let _ = p.stuck_recover();
-            }
-
-            stmts.push(AstStmt {
-                span: const_kw.span.to(p.prev_span()),
-                kind: AstStmtKind::Const {
-                    name,
-                    init: Box::new(init),
-                },
-            });
-
-            continue;
-        }
-
-        // Match expressions
-        let expr = parse_expr(p, ExprParseFlags::NO_RESTRICTIONS);
-
+        // If it's an expression, handle semicolons.
         if match_eos(p) {
             break Some(expr);
         }

@@ -82,6 +82,7 @@ define_keywords! {
     Loop = "loop",
     Match = "match",
     Mod = "mod",
+    Move = "move",
     Mut = "mut",
     Pub = "pub",
     Return = "return",

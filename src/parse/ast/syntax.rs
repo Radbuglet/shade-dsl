@@ -66,6 +66,12 @@ pub enum AstExprKind {
     /// an expression context.
     Block(Box<AstBlock>),
 
+    /// A constant block expression (e.g. `const { let x = 2; x }`).
+    ///
+    /// Can be parsed in both type and expression parsing contexts. Always parses its contents in
+    /// an expression context.
+    ConstBlock(Box<AstBlock>),
+
     /// An ADT literal (e.g. `struct {}`, `mod {}`).
     ///
     /// Can be parsed in both type and expression parsing contexts.
@@ -248,6 +254,7 @@ impl AstExprKind {
     pub fn needs_semi(&self) -> bool {
         match self {
             AstExprKind::Block(..)
+            | AstExprKind::ConstBlock(..)
             | AstExprKind::If { .. }
             | AstExprKind::While { .. }
             | AstExprKind::Loop(..)

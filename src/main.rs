@@ -52,6 +52,7 @@ fn main() {
                                     "bool" => tcx.intern_ty(Ty::Scalar(ScalarKind::Bool)),
                                     "u32" => tcx.intern_ty(Ty::Scalar(ScalarKind::U32)),
                                     "type" => tcx.intern_ty(Ty::DynMetaTy),
+                                    "any" => tcx.intern_ty(Ty::MetaAny),
                                     _ => todo!(),
                                 };
 

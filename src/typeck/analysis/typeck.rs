@@ -389,10 +389,7 @@ impl CheckCx<'_> {
                             // (nothing to do)
                         }
                         Stmt::Expr(expr) => {
-                            self.check_expr(
-                                *expr,
-                                Some(self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&[])))),
-                            );
+                            self.check_expr(*expr, None);
                         }
                     }
                 }
@@ -568,8 +565,13 @@ impl CheckCx<'_> {
 
                 self.tcx.intern_ty(Ty::Tuple(self.tcx.intern_tys(&tys)))
             }
-            // TODO
-            ExprKind::NewTupleType(_) => self.tcx.intern_ty(Ty::DynMetaTy),
+            ExprKind::NewTupleType(args) => {
+                for &arg in args {
+                    self.check_expr(arg, Some(self.tcx.intern_ty(Ty::DynMetaTy)));
+                }
+
+                self.tcx.intern_ty(Ty::DynMetaTy)
+            }
             ExprKind::Error(err) => self.err(*err),
         }
     }

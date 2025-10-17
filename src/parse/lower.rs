@@ -161,6 +161,47 @@ impl<'a> LowerCtxt<'a> {
             AstExprKind::Paren(expr) | AstExprKind::TypeExpr(expr) => {
                 return self.lower_expr(owner, owner_consts, expr);
             }
+            AstExprKind::ConstBlock(block) => {
+                let child = Obj::new(
+                    Func {
+                        parent: Some(owner),
+                        name: symbol!("<???>"), // TODO
+                        span: expr.span,
+                        inner: LateInit::uninit(),
+                    },
+                    self.session,
+                );
+
+                let mut child_consts = Vec::new();
+
+                let body = Obj::new(
+                    Expr {
+                        span: expr.span,
+                        kind: ExprKind::Block(self.lower_block(
+                            child,
+                            &mut child_consts,
+                            block,
+                            /* consts_already_lowered */ false,
+                        )),
+                    },
+                    self.session,
+                );
+
+                LateInit::init(
+                    &child.r(self.session).inner,
+                    FuncInner {
+                        generics: IndexVec::new(),
+                        consts: child_consts,
+                        params: None,
+                        return_type: None,
+                        body,
+                    },
+                );
+
+                owner_consts.push(child);
+
+                ExprKind::Name(AnyName::Const(child))
+            }
             AstExprKind::Block(block) => {
                 ExprKind::Block(self.lower_block(
                     owner,
@@ -243,6 +284,8 @@ impl<'a> LowerCtxt<'a> {
                             body,
                         },
                     );
+
+                    owner_consts.push(child);
 
                     ExprKind::Name(AnyName::Const(child))
                 } else {

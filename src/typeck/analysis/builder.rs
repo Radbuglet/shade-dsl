@@ -215,7 +215,9 @@ impl<'a> BycBuilderCtxt<'a> {
                     for stmt in &block.r(s).stmts {
                         match stmt {
                             Stmt::Live(local) => {
-                                this.push(byc_instr::Allocate { ty: expr_ty });
+                                this.push(byc_instr::Allocate {
+                                    ty: self.facts.local_types[local],
+                                });
                                 this.locals.insert(*local, this.depth.local as u32);
                             }
                             Stmt::Expr(expr) => {
